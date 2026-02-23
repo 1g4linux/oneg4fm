@@ -10,7 +10,10 @@
 #include <cstring>
 #include <dirent.h>
 #include <array>
+#include <cstdlib>
+#include <deque>
 #include <fcntl.h>
+#include <limits>
 #include <linux/fs.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -195,38 +198,263 @@ void split_parent_and_name(const std::string& path, std::string& parentOut, std:
     }
 }
 
+bool write_all_fd(int fd, const std::uint8_t* data, std::size_t size, Error& err);
+
 struct CopyJournalEntry {
     std::string relPath;
-    bool isDir = false;
+    enum class Kind : std::uint8_t {
+        File = 0,
+        Directory = 1,
+        Staging = 2,
+    };
+    Kind kind = Kind::File;
 };
 
 class CopyJournal {
    public:
-    bool init(int rootFd, Error& err) { return duplicate_fd(rootFd, rootFd_, err); }
+    bool init(int rootFd, Error& err) {
+        maxInMemoryEntries_ = read_max_in_memory_entries();
+        return duplicate_fd(rootFd, rootFd_, err);
+    }
 
-    void recordFile(const std::string& relPath) { entries_.push_back(CopyJournalEntry{relPath, false}); }
-    void recordDir(const std::string& relPath) { entries_.push_back(CopyJournalEntry{relPath, true}); }
+    bool recordFile(const std::string& relPath, Error& err) {
+        return record(CopyJournalEntry::Kind::File, relPath, err);
+    }
+    bool recordDir(const std::string& relPath, Error& err) {
+        return record(CopyJournalEntry::Kind::Directory, relPath, err);
+    }
+    bool recordStaging(const std::string& relPath, Error& err) {
+        return record(CopyJournalEntry::Kind::Staging, relPath, err);
+    }
 
     // Roll back only paths created by this operation.
     void rollback() {
         if (!rootFd_.valid()) {
             return;
         }
-        for (auto it = entries_.rbegin(); it != entries_.rend(); ++it) {
-            Error cleanupErr;
-            if (it->isDir) {
-                LinuxFsSafety::rmdir_under(rootFd_.fd, it->relPath, cleanupErr, true, true);
-            }
-            else {
-                LinuxFsSafety::unlink_under(rootFd_.fd, it->relPath, cleanupErr, true);
-            }
+
+        for (auto it = memoryEntries_.rbegin(); it != memoryEntries_.rend(); ++it) {
+            rollback_entry(*it);
         }
-        entries_.clear();
+
+        for (auto it = spillOffsets_.rbegin(); it != spillOffsets_.rend(); ++it) {
+            CopyJournalEntry spilled;
+            Error readErr;
+            if (!read_spill_entry(*it, spilled, readErr)) {
+                continue;
+            }
+            rollback_entry(spilled);
+        }
+
+        clear();
+    }
+
+    void clear() {
+        memoryEntries_.clear();
+        spillOffsets_.clear();
+        spillFd_ = Fd();
     }
 
    private:
+    static constexpr std::size_t kDefaultMaxInMemoryEntries = 1024;
+    static constexpr const char* kJournalMaxEntriesEnv = "PCMANFM_COPY_JOURNAL_MAX_IN_MEMORY_ENTRIES";
+
+    static std::size_t read_max_in_memory_entries() {
+        const char* raw = std::getenv(kJournalMaxEntriesEnv);
+        if (!raw || raw[0] == '\0') {
+            return kDefaultMaxInMemoryEntries;
+        }
+
+        errno = 0;
+        char* end = nullptr;
+        const unsigned long long parsed = std::strtoull(raw, &end, 10);
+        if (errno != 0 || end == raw || (end && *end != '\0')) {
+            return kDefaultMaxInMemoryEntries;
+        }
+        if (parsed > static_cast<unsigned long long>(std::numeric_limits<std::size_t>::max())) {
+            return std::numeric_limits<std::size_t>::max();
+        }
+        return static_cast<std::size_t>(parsed);
+    }
+
+    static std::string spill_file_name(unsigned int attempt) {
+        return std::string(".pcmanfm.copy-journal.") + std::to_string(::getpid()) + "." + std::to_string(attempt);
+    }
+
+    static bool read_exact_at(int fd, std::uint64_t offset, std::uint8_t* out, std::size_t size, Error& err) {
+        std::size_t total = 0;
+        while (total < size) {
+            const ssize_t n =
+                ::pread(fd, out + total, size - total, static_cast<off_t>(offset + static_cast<std::uint64_t>(total)));
+            if (n < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                set_error(err, "pread");
+                return false;
+            }
+            if (n == 0) {
+                err.code = EIO;
+                err.message = "Short read from journal spill file";
+                return false;
+            }
+            total += static_cast<std::size_t>(n);
+        }
+        return true;
+    }
+
+    bool ensure_spill_file(Error& err) {
+        if (spillDisabled_) {
+            return false;
+        }
+        if (spillFd_.valid()) {
+            return true;
+        }
+
+        int flags = O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC;
+#ifdef O_NOFOLLOW
+        flags |= O_NOFOLLOW;
+#endif
+        for (unsigned int attempt = 0; attempt < 256; ++attempt) {
+            const std::string candidate = spill_file_name(attempt);
+            Fd newSpillFd;
+            if (open_under_fd(rootFd_.fd, candidate.c_str(), flags, 0600, kResolveNoSymlinks, newSpillFd, err)) {
+                if (::unlinkat(rootFd_.fd, candidate.c_str(), 0) != 0) {
+                    set_error(err, "unlinkat");
+                    return false;
+                }
+                spillFd_ = std::move(newSpillFd);
+                return true;
+            }
+            if (err.code == EEXIST) {
+                err = {};
+                continue;
+            }
+            return false;
+        }
+
+        err.code = EEXIST;
+        err.message = "Failed to allocate copy journal spill file";
+        return false;
+    }
+
+    bool append_spill_entry(const CopyJournalEntry& entry, Error& err) {
+        if (!ensure_spill_file(err)) {
+            return false;
+        }
+
+        if (entry.relPath.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
+            err.code = ENAMETOOLONG;
+            err.message = "Journal path entry is too long";
+            return false;
+        }
+
+        const off_t offset = ::lseek(spillFd_.fd, 0, SEEK_END);
+        if (offset < 0) {
+            set_error(err, "lseek");
+            return false;
+        }
+
+        const std::uint32_t pathLen = static_cast<std::uint32_t>(entry.relPath.size());
+        std::array<std::uint8_t, 5> header{};
+        header[0] = static_cast<std::uint8_t>(entry.kind);
+        header[1] = static_cast<std::uint8_t>(pathLen & 0xffU);
+        header[2] = static_cast<std::uint8_t>((pathLen >> 8U) & 0xffU);
+        header[3] = static_cast<std::uint8_t>((pathLen >> 16U) & 0xffU);
+        header[4] = static_cast<std::uint8_t>((pathLen >> 24U) & 0xffU);
+
+        if (!write_all_fd(spillFd_.fd, header.data(), header.size(), err)) {
+            return false;
+        }
+        if (pathLen > 0 &&
+            !write_all_fd(spillFd_.fd, reinterpret_cast<const std::uint8_t*>(entry.relPath.data()), pathLen, err)) {
+            return false;
+        }
+
+        spillOffsets_.push_back(static_cast<std::uint64_t>(offset));
+        return true;
+    }
+
+    bool read_spill_entry(std::uint64_t offset, CopyJournalEntry& out, Error& err) const {
+        if (!spillFd_.valid()) {
+            err.code = EBADF;
+            err.message = "Copy journal spill file is not open";
+            return false;
+        }
+
+        std::array<std::uint8_t, 5> header{};
+        if (!read_exact_at(spillFd_.fd, offset, header.data(), header.size(), err)) {
+            return false;
+        }
+
+        switch (header[0]) {
+            case static_cast<std::uint8_t>(CopyJournalEntry::Kind::File):
+                out.kind = CopyJournalEntry::Kind::File;
+                break;
+            case static_cast<std::uint8_t>(CopyJournalEntry::Kind::Directory):
+                out.kind = CopyJournalEntry::Kind::Directory;
+                break;
+            case static_cast<std::uint8_t>(CopyJournalEntry::Kind::Staging):
+                out.kind = CopyJournalEntry::Kind::Staging;
+                break;
+            default:
+                err.code = EINVAL;
+                err.message = "Invalid journal spill entry kind";
+                return false;
+        }
+
+        const std::uint32_t pathLen =
+            static_cast<std::uint32_t>(header[1]) | (static_cast<std::uint32_t>(header[2]) << 8U) |
+            (static_cast<std::uint32_t>(header[3]) << 16U) | (static_cast<std::uint32_t>(header[4]) << 24U);
+        out.relPath.assign(pathLen, '\0');
+        if (pathLen == 0) {
+            return true;
+        }
+        return read_exact_at(spillFd_.fd, offset + header.size(), reinterpret_cast<std::uint8_t*>(out.relPath.data()),
+                             pathLen, err);
+    }
+
+    bool maybe_spill(Error& err) {
+        if (spillDisabled_) {
+            return true;
+        }
+        if (memoryEntries_.size() <= maxInMemoryEntries_) {
+            return true;
+        }
+
+        const std::size_t retain = (maxInMemoryEntries_ == 0) ? 0 : (maxInMemoryEntries_ / 2);
+        while (memoryEntries_.size() > retain) {
+            Error spillErr;
+            if (!append_spill_entry(memoryEntries_.front(), spillErr)) {
+                spillDisabled_ = true;
+                err = {};
+                return true;
+            }
+            memoryEntries_.pop_front();
+        }
+        return true;
+    }
+
+    bool record(CopyJournalEntry::Kind kind, const std::string& relPath, Error& err) {
+        memoryEntries_.push_back(CopyJournalEntry{relPath, kind});
+        return maybe_spill(err);
+    }
+
+    void rollback_entry(const CopyJournalEntry& entry) {
+        Error cleanupErr;
+        if (entry.kind == CopyJournalEntry::Kind::Directory) {
+            LinuxFsSafety::rmdir_under(rootFd_.fd, entry.relPath, cleanupErr, true, true);
+            return;
+        }
+        LinuxFsSafety::unlink_under(rootFd_.fd, entry.relPath, cleanupErr, true);
+    }
+
     Fd rootFd_;
-    std::vector<CopyJournalEntry> entries_;
+    Fd spillFd_;
+    std::deque<CopyJournalEntry> memoryEntries_;
+    std::vector<std::uint64_t> spillOffsets_;
+    std::size_t maxInMemoryEntries_ = kDefaultMaxInMemoryEntries;
+    bool spillDisabled_ = false;
 };
 
 bool blake3_file_impl(const std::string& path, std::string& hexHash, Error& err) {
@@ -452,6 +680,117 @@ bool read_symlink_target(int symlinkFd, int srcDir, const char* srcName, std::st
     return false;
 }
 
+std::string parent_rel_path(const std::string& relPath) {
+    const auto pos = relPath.find_last_of('/');
+    if (pos == std::string::npos) {
+        return std::string();
+    }
+    return relPath.substr(0, pos);
+}
+
+std::string staging_rel_path_for_target(const std::string& targetPath, const std::string& stagingName) {
+    const std::string parent = parent_rel_path(targetPath);
+    if (parent.empty()) {
+        return stagingName;
+    }
+    return join_child_path(parent, stagingName.c_str());
+}
+
+std::string build_staging_file_name(unsigned int attempt) {
+    return std::string(".pcmanfm.copy-stage.") + std::to_string(::getpid()) + "." + std::to_string(attempt);
+}
+
+bool create_staging_file_under(int dstDir, mode_t mode, Fd& outFd, std::string& outName, Error& err) {
+    int flags = O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC;
+#ifdef O_NOFOLLOW
+    flags |= O_NOFOLLOW;
+#endif
+
+    for (unsigned int attempt = 0; attempt < 256; ++attempt) {
+        const std::string candidate = build_staging_file_name(attempt);
+        Fd fd;
+        if (open_under_fd(dstDir, candidate.c_str(), flags, mode, kResolveNoSymlinks, fd, err)) {
+            outFd = std::move(fd);
+            outName = candidate;
+            return true;
+        }
+        if (err.code == EEXIST) {
+            err = {};
+            continue;
+        }
+        return false;
+    }
+
+    err.code = EEXIST;
+    err.message = "Failed to allocate staging file name";
+    return false;
+}
+
+bool rename_staging_into_destination(int dstDir,
+                                     const std::string& stagingName,
+                                     const char* dstName,
+                                     bool overwriteExisting,
+                                     bool& destinationCreated,
+                                     Error& err) {
+#ifdef RENAME_NOREPLACE
+    if (LinuxFsSafety::rename_under(dstDir, stagingName, dstDir, dstName, static_cast<unsigned int>(RENAME_NOREPLACE),
+                                    err)) {
+        destinationCreated = true;
+        return true;
+    }
+    if (err.code != EEXIST) {
+        return false;
+    }
+#else
+    err.code = ENOSYS;
+    err.message = "renameat2 RENAME_NOREPLACE is required but unavailable on this kernel";
+    return false;
+#endif
+
+    if (!overwriteExisting) {
+        return false;
+    }
+    err = {};
+
+    int probeFlags = O_PATH | O_CLOEXEC;
+#ifdef O_NOFOLLOW
+    probeFlags |= O_NOFOLLOW;
+#endif
+
+    Fd probeFd;
+    if (!open_under_fd(dstDir, dstName, probeFlags, 0, kResolveNoSymlinks, probeFd, err)) {
+#ifdef RENAME_NOREPLACE
+        if (err.code == ENOENT) {
+            err = {};
+            if (LinuxFsSafety::rename_under(dstDir, stagingName, dstDir, dstName,
+                                            static_cast<unsigned int>(RENAME_NOREPLACE), err)) {
+                destinationCreated = true;
+                return true;
+            }
+        }
+#endif
+        return false;
+    }
+
+    struct stat dstInfo{};
+    if (::fstat(probeFd.fd, &dstInfo) < 0) {
+        set_error(err, "fstat");
+        return false;
+    }
+    if (!S_ISREG(dstInfo.st_mode)) {
+        err.code = EISDIR;
+        err.message = "Destination exists and is not a regular file";
+        return false;
+    }
+
+    if (!LinuxFsSafety::rename_under(dstDir, stagingName, dstDir, dstName, 0, err)) {
+        return false;
+    }
+
+    destinationCreated = false;
+    return true;
+}
+
 bool copy_symlink_at(int srcDir,
                      const char* srcName,
                      int srcLinkFd,
@@ -489,7 +828,9 @@ bool copy_symlink_at(int srcDir,
     }
 
     if (createdNewPath && journal) {
-        journal->recordFile(dstPath);
+        if (!journal->recordFile(dstPath, err)) {
+            return false;
+        }
     }
     // Preserve timestamps if possible
     struct timespec times[2];
@@ -524,44 +865,30 @@ bool copy_file_at(int srcFd,
         return false;
     }
 
-    int createFlags = O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC;
-#ifdef O_NOFOLLOW
-    createFlags |= O_NOFOLLOW;
-#endif
-
-    Fd out_fd;
-    if (open_under_fd(dstDir, dstName, createFlags, info.st.st_mode & 0777, kResolveNoSymlinks, out_fd, err)) {
-        if (journal) {
-            journal->recordFile(dstPath);
-        }
-    }
-    else if (err.code == EEXIST) {
-        if (!overwriteExisting) {
-            return false;
-        }
-        err = {};
-        int truncFlags = O_WRONLY | O_TRUNC | O_CLOEXEC;
-#ifdef O_NOFOLLOW
-        truncFlags |= O_NOFOLLOW;
-#endif
-        if (!open_under_fd(dstDir, dstName, truncFlags, 0, kResolveNoSymlinks, out_fd, err)) {
-            return false;
-        }
-
-        struct stat dstSt{};
-        if (::fstat(out_fd.fd, &dstSt) < 0) {
-            set_error(err, "fstat");
-            return false;
-        }
-        if (!S_ISREG(dstSt.st_mode)) {
-            err.code = EISDIR;
-            err.message = "Destination exists and is not a regular file";
-            return false;
-        }
-    }
-    else {
+    Fd stagingFd;
+    std::string stagingName;
+    if (!create_staging_file_under(dstDir, info.st.st_mode & 0777, stagingFd, stagingName, err)) {
         return false;
     }
+
+    const std::string stagingJournalPath = staging_rel_path_for_target(dstPath, stagingName);
+    bool stagingRecorded = false;
+    if (journal) {
+        if (!journal->recordStaging(stagingJournalPath, err)) {
+            Error cleanupErr;
+            LinuxFsSafety::unlink_under(dstDir, stagingName, cleanupErr, true);
+            return false;
+        }
+        stagingRecorded = true;
+    }
+
+    const auto cleanup_staging_if_untracked = [&]() {
+        if (journal && stagingRecorded) {
+            return;
+        }
+        Error cleanupErr;
+        LinuxFsSafety::unlink_under(dstDir, stagingName, cleanupErr, true);
+    };
 
     constexpr std::size_t chunk = 128 * 1024;  // a bit larger for throughput
     std::vector<std::uint8_t> buffer(chunk);
@@ -573,13 +900,15 @@ bool copy_file_at(int srcFd,
                 continue;
             }
             set_error(err, "read");
+            cleanup_staging_if_untracked();
             return false;
         }
         if (n == 0) {
             break;
         }
 
-        if (!write_all_fd(out_fd.fd, buffer.data(), static_cast<std::size_t>(n), err)) {
+        if (!write_all_fd(stagingFd.fd, buffer.data(), static_cast<std::size_t>(n), err)) {
+            cleanup_staging_if_untracked();
             return false;
         }
 
@@ -587,6 +916,7 @@ bool copy_file_at(int srcFd,
         if (!should_continue(cb, progress)) {
             err.code = ECANCELED;
             err.message = "Cancelled";
+            cleanup_staging_if_untracked();
             return false;
         }
     }
@@ -594,16 +924,33 @@ bool copy_file_at(int srcFd,
     struct timespec times[2];
     times[0] = info.st.st_atim;
     times[1] = info.st.st_mtim;
-    ::futimens(out_fd.fd, times);  // best effort; ignore errors
+    ::futimens(stagingFd.fd, times);  // best effort; ignore errors
 
     if (preserveOwnership) {
-        ::fchown(out_fd.fd, info.st.st_uid, info.st.st_gid);  // best effort
+        ::fchown(stagingFd.fd, info.st.st_uid, info.st.st_gid);  // best effort
     }
-    ::fchmod(out_fd.fd, info.st.st_mode & 07777);  // best effort to match source mode, ignore umask
+    ::fchmod(stagingFd.fd, info.st.st_mode & 07777);  // best effort to match source mode, ignore umask
 
-    if (::fsync(out_fd.fd) < 0) {
+    if (::fsync(stagingFd.fd) < 0) {
         set_error(err, "fsync");
+        cleanup_staging_if_untracked();
         return false;
+    }
+
+    stagingFd = Fd();
+
+    bool destinationCreated = false;
+    if (!rename_staging_into_destination(dstDir, stagingName, dstName, overwriteExisting, destinationCreated, err)) {
+        cleanup_staging_if_untracked();
+        return false;
+    }
+
+    if (destinationCreated && journal) {
+        if (!journal->recordFile(dstPath, err)) {
+            Error cleanupErr;
+            LinuxFsSafety::unlink_under(dstDir, dstName, cleanupErr, true);
+            return false;
+        }
     }
 
     return true;
@@ -700,7 +1047,9 @@ bool copy_dir_at(int srcDirFd,
     }
     else {
         if (journal) {
-            journal->recordDir(dstPath);
+            if (!journal->recordDir(dstPath, err)) {
+                return false;
+            }
         }
     }
 

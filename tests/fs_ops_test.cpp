@@ -16,6 +16,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <limits.h>
+#include <cstdlib>
 #include <fstream>
 
 using namespace PCManFM::FsOps;
@@ -44,6 +45,38 @@ QString writeTempFile(const QTemporaryDir& dir, const QString& name, const QByte
     return path;
 }
 
+class ScopedEnvVar {
+   public:
+    explicit ScopedEnvVar(const char* name, const char* value) : name_(name) {
+        const char* current = ::getenv(name_);
+        if (current) {
+            hadOriginal_ = true;
+            original_ = current;
+        }
+
+        if (value) {
+            ::setenv(name_, value, 1);
+        }
+        else {
+            ::unsetenv(name_);
+        }
+    }
+
+    ~ScopedEnvVar() {
+        if (hadOriginal_) {
+            ::setenv(name_, original_.c_str(), 1);
+        }
+        else {
+            ::unsetenv(name_);
+        }
+    }
+
+   private:
+    const char* name_;
+    std::string original_;
+    bool hadOriginal_ = false;
+};
+
 }  // namespace
 
 class FsOpsTest : public QObject {
@@ -65,6 +98,8 @@ class FsOpsTest : public QObject {
     void copyIntoExistingDestinationCancelledPreservesPreexisting();
     void copyIntoExistingDestinationErrorPreservesPreexisting();
     void copyRollbackRemovesOnlyCreatedPaths();
+    void copyOverwriteExistingFileCancelledPreservesOriginalData();
+    void copyRollbackWithForcedJournalSpill();
     void copyRenameSwapRaceDoesNotFollowSymlink();
     void readMissingFileFails();
     void makeDirParentsFailsOnExistingFile();
@@ -452,6 +487,68 @@ void FsOpsTest::copyRollbackRemovesOnlyCreatedPaths() {
     QVERIFY(!QFileInfo(dstDir + QLatin1String("/nested/child.bin")).exists());
     QVERIFY(!QFileInfo(dstDir + QLatin1String("/nested")).exists());
     QVERIFY(QFileInfo(dstDir).isDir());
+}
+
+void FsOpsTest::copyOverwriteExistingFileCancelledPreservesOriginalData() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcPath = makePath(dir, QStringLiteral("src.bin"));
+    const QString dstPath = makePath(dir, QStringLiteral("dst.bin"));
+
+    Error err;
+    QByteArray srcPayload(512 * 1024, 'n');
+    QVERIFY(write_file_atomic(srcPath.toLocal8Bit().toStdString(),
+                              reinterpret_cast<const std::uint8_t*>(srcPayload.constData()),
+                              static_cast<std::size_t>(srcPayload.size()), err));
+
+    const QByteArray originalDestination("original-destination");
+    QVERIFY(write_file_atomic(dstPath.toLocal8Bit().toStdString(),
+                              reinterpret_cast<const std::uint8_t*>(originalDestination.constData()),
+                              static_cast<std::size_t>(originalDestination.size()), err));
+
+    ProgressInfo progress;
+    progress.filesTotal = 1;
+    auto cancelAfterFirstWrite = [](const ProgressInfo& info) { return info.bytesDone == 0; };
+
+    QVERIFY(!copy_path(srcPath.toLocal8Bit().toStdString(), dstPath.toLocal8Bit().toStdString(), progress,
+                       cancelAfterFirstWrite, err, /*preserveOwnership=*/false, /*overwriteExisting=*/true));
+    QCOMPARE(err.code, ECANCELED);
+    QCOMPARE(readQtFile(srcPath), srcPayload);
+    QCOMPARE(readQtFile(dstPath), originalDestination);
+}
+
+void FsOpsTest::copyRollbackWithForcedJournalSpill() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    ScopedEnvVar forceSpill("PCMANFM_COPY_JOURNAL_MAX_IN_MEMORY_ENTRIES", "1");
+
+    const QString srcDir = makePath(dir, QStringLiteral("src"));
+    const QString srcNestedDir = srcDir + QLatin1String("/nested");
+    const QString dstDir = makePath(dir, QStringLiteral("dst"));
+
+    Error err;
+    QVERIFY(make_dir_parents(srcNestedDir.toLocal8Bit().toStdString(), err));
+    QVERIFY(make_dir_parents(dstDir.toLocal8Bit().toStdString(), err));
+
+    QVERIFY(write_file_atomic((srcDir + QLatin1String("/a.bin")).toLocal8Bit().toStdString(),
+                              reinterpret_cast<const std::uint8_t*>("aaaaaaaa"), std::size_t{8}, err));
+    QVERIFY(write_file_atomic((srcNestedDir + QLatin1String("/b.bin")).toLocal8Bit().toStdString(),
+                              reinterpret_cast<const std::uint8_t*>("bbbbbbbb"), std::size_t{8}, err));
+
+    const QString keepPath = writeTempFile(dir, QStringLiteral("dst/keep.txt"), "keep");
+
+    ProgressInfo progress;
+    auto cancelOnSecondFile = [](const ProgressInfo& info) { return info.bytesDone < std::uint64_t{16}; };
+
+    QVERIFY(!copy_path(srcDir.toLocal8Bit().toStdString(), dstDir.toLocal8Bit().toStdString(), progress,
+                       cancelOnSecondFile, err, /*preserveOwnership=*/false, /*overwriteExisting=*/true));
+    QCOMPARE(err.code, ECANCELED);
+    QCOMPARE(readQtFile(keepPath), QByteArray("keep"));
+    QVERIFY(!QFileInfo(dstDir + QLatin1String("/a.bin")).exists());
+    QVERIFY(!QFileInfo(dstDir + QLatin1String("/nested/b.bin")).exists());
+    QVERIFY(!QFileInfo(dstDir + QLatin1String("/nested")).exists());
 }
 
 void FsOpsTest::copyRenameSwapRaceDoesNotFollowSymlink() {
