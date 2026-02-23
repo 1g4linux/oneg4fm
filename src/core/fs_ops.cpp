@@ -75,6 +75,51 @@ inline void set_error(Error& err, const char* context) {
     err.message = std::string(context) + ": " + std::strerror(errno);
 }
 
+std::string join_child_path(const std::string& parent, const char* child) {
+    if (parent.empty()) {
+        return std::string(child);
+    }
+    if (parent.back() == '/') {
+        return parent + child;
+    }
+    return parent + "/" + child;
+}
+
+struct CopyJournalEntry {
+    std::string path;
+    bool isDir = false;
+};
+
+class CopyJournal {
+   public:
+    void recordFile(const std::string& path) { entries_.push_back(CopyJournalEntry{path, false}); }
+    void recordDir(const std::string& path) { entries_.push_back(CopyJournalEntry{path, true}); }
+
+    // Roll back only paths created by this operation.
+    void rollback() {
+        for (auto it = entries_.rbegin(); it != entries_.rend(); ++it) {
+            if (it->isDir) {
+                if (::rmdir(it->path.c_str()) < 0) {
+                    if (errno == ENOENT || errno == ENOTEMPTY) {
+                        continue;
+                    }
+                }
+            }
+            else {
+                if (::unlink(it->path.c_str()) < 0) {
+                    if (errno == ENOENT) {
+                        continue;
+                    }
+                }
+            }
+        }
+        entries_.clear();
+    }
+
+   private:
+    std::vector<CopyJournalEntry> entries_;
+};
+
 bool blake3_file_impl(const std::string& path, std::string& hexHash, Error& err) {
     hexHash.clear();
 
@@ -205,6 +250,8 @@ bool copy_symlink_at(int srcDir,
                      const char* dstName,
                      const StatInfo& info,
                      Error& err,
+                     const std::string& dstPath,
+                     CopyJournal* journal,
                      bool preserveOwnership) {
     std::vector<char> buf(static_cast<std::size_t>(info.st.st_size) + 1);
     ssize_t len = ::readlinkat(srcDir, srcName, buf.data(), buf.size());
@@ -216,6 +263,9 @@ bool copy_symlink_at(int srcDir,
     if (::symlinkat(buf.data(), dstDir, dstName) < 0) {
         set_error(err, "symlinkat");
         return false;
+    }
+    if (journal) {
+        journal->recordFile(dstPath);
     }
     // Preserve timestamps if possible
     struct timespec times[2];
@@ -236,6 +286,8 @@ bool copy_file_at(int srcDir,
                   ProgressInfo& progress,
                   const ProgressCallback& cb,
                   Error& err,
+                  const std::string& dstPath,
+                  CopyJournal* journal,
                   bool preserveOwnership) {
     progress.bytesTotal += static_cast<std::uint64_t>(info.st.st_size);
 
@@ -245,8 +297,20 @@ bool copy_file_at(int srcDir,
         return false;
     }
 
-    Fd out_fd(::openat(dstDir, dstName, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, info.st.st_mode & 0777));
-    if (!out_fd.valid()) {
+    Fd out_fd(::openat(dstDir, dstName, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, info.st.st_mode & 0777));
+    if (out_fd.valid()) {
+        if (journal) {
+            journal->recordFile(dstPath);
+        }
+    }
+    else if (errno == EEXIST) {
+        out_fd = Fd(::openat(dstDir, dstName, O_WRONLY | O_TRUNC | O_CLOEXEC));
+        if (!out_fd.valid()) {
+            set_error(err, "openat");
+            return false;
+        }
+    }
+    else {
         set_error(err, "openat");
         return false;
     }
@@ -305,6 +369,8 @@ bool copy_dir_at(int srcDir,
                  const ProgressCallback& cb,
                  Error& err,
                  int depth,
+                 const std::string& dstPath,
+                 CopyJournal* journal,
                  bool preserveOwnership);
 
 bool copy_entry_at(int srcDir,
@@ -315,6 +381,8 @@ bool copy_entry_at(int srcDir,
                    const ProgressCallback& cb,
                    Error& err,
                    int depth,
+                   const std::string& dstPath,
+                   CopyJournal* journal,
                    bool preserveOwnership) {
     if (depth > kMaxRecursionDepth) {
         err.code = ELOOP;
@@ -334,13 +402,15 @@ bool copy_entry_at(int srcDir,
     }
 
     if (S_ISDIR(info.st.st_mode)) {
-        return copy_dir_at(srcDir, srcName, dstDir, dstName, progress, cb, err, depth + 1, preserveOwnership);
+        return copy_dir_at(srcDir, srcName, dstDir, dstName, progress, cb, err, depth + 1, dstPath, journal,
+                           preserveOwnership);
     }
     if (S_ISREG(info.st.st_mode)) {
-        return copy_file_at(srcDir, srcName, dstDir, dstName, info, progress, cb, err, preserveOwnership);
+        return copy_file_at(srcDir, srcName, dstDir, dstName, info, progress, cb, err, dstPath, journal,
+                            preserveOwnership);
     }
     if (S_ISLNK(info.st.st_mode)) {
-        return copy_symlink_at(srcDir, srcName, dstDir, dstName, info, err, preserveOwnership);
+        return copy_symlink_at(srcDir, srcName, dstDir, dstName, info, err, dstPath, journal, preserveOwnership);
     }
 
     // Unsupported special file types
@@ -357,6 +427,8 @@ bool copy_dir_at(int srcDir,
                  const ProgressCallback& cb,
                  Error& err,
                  int depth,
+                 const std::string& dstPath,
+                 CopyJournal* journal,
                  bool preserveOwnership) {
     StatInfo info;
     if (!stat_at(srcDir, srcName, /*follow=*/false, info, err)) {
@@ -373,6 +445,11 @@ bool copy_dir_at(int srcDir,
         if (errno != EEXIST) {
             set_error(err, "mkdirat");
             return false;
+        }
+    }
+    else {
+        if (journal) {
+            journal->recordDir(dstPath);
         }
     }
 
@@ -411,7 +488,9 @@ bool copy_dir_at(int srcDir,
             continue;
         }
 
-        if (!copy_entry_at(dirfd(dir.dir), child, newDst.fd, child, progress, cb, err, depth + 1, preserveOwnership)) {
+        const std::string childDstPath = join_child_path(dstPath, child);
+        if (!copy_entry_at(dirfd(dir.dir), child, newDst.fd, child, progress, cb, err, depth + 1, childDstPath, journal,
+                           preserveOwnership)) {
             return false;
         }
     }
@@ -684,28 +763,25 @@ bool copy_path(const std::string& source,
         return false;
     }
 
+    CopyJournal journal;
+
     bool ok = false;
     if (srcIsDir) {
         ok = copy_dir_at(srcParentFd.fd, srcName.c_str(), destParentFd.fd, destName.c_str(), progress, callback, err, 0,
-                         preserveOwnership);
-        if (!ok) {
-            // best-effort cleanup
-            Error cleanupErr;
-            delete_path(destination, progress, ProgressCallback(), cleanupErr);
-        }
+                         destination, &journal, preserveOwnership);
     }
     else if (S_ISREG(rootInfo.st.st_mode) || S_ISLNK(rootInfo.st.st_mode)) {
         ok = copy_entry_at(srcParentFd.fd, srcName.c_str(), destParentFd.fd, destName.c_str(), progress, callback, err,
-                           0, preserveOwnership);
-        if (!ok) {
-            Error cleanupErr;
-            delete_path(destination, progress, ProgressCallback(), cleanupErr);
-        }
+                           0, destination, &journal, preserveOwnership);
     }
     else {
         err.code = ENOTSUP;
         err.message = "Unsupported file type";
         return false;
+    }
+
+    if (!ok) {
+        journal.rollback();
     }
 
     if (ok) {
@@ -741,8 +817,7 @@ bool move_path(const std::string& source,
     }
 
     if (!delete_path(source, progress, callback, err)) {
-        // best-effort cleanup
-        delete_path(destination, progress, callback, err);
+        // Keep copied destination content; never remove destination as recovery.
         return false;
     }
 

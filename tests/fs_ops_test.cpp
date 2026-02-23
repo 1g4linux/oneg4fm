@@ -54,10 +54,14 @@ class FsOpsTest : public QObject {
     void copyDirectoryRecursive();
     void moveFileRenamePath();
     void moveFileCopyFallback();
+    void moveFallbackSourceDeleteFailurePreservesDestination();
     void deletePathRecursive();
     void makeDirParentsCreatesHierarchy();
     void setPermissionsChangesMode();
     void copyCancelledViaCallback();
+    void copyIntoExistingDestinationCancelledPreservesPreexisting();
+    void copyIntoExistingDestinationErrorPreservesPreexisting();
+    void copyRollbackRemovesOnlyCreatedPaths();
     void readMissingFileFails();
     void makeDirParentsFailsOnExistingFile();
     void setPermissionsFailsOnMissing();
@@ -182,6 +186,40 @@ void FsOpsTest::moveFileCopyFallback() {
     QCOMPARE(readQtFile(dstPath), payload);
 }
 
+void FsOpsTest::moveFallbackSourceDeleteFailurePreservesDestination() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString lockedDir = makePath(dir, QStringLiteral("locked"));
+    const QString srcDir = lockedDir + QLatin1String("/src");
+    const QString dstDir = makePath(dir, QStringLiteral("dst"));
+
+    Error err;
+    QVERIFY(make_dir_parents(srcDir.toLocal8Bit().toStdString(), err));
+    QVERIFY(make_dir_parents(dstDir.toLocal8Bit().toStdString(), err));
+
+    const QString srcFile = srcDir + QLatin1String("/new.txt");
+    QVERIFY(write_file_atomic(srcFile.toLocal8Bit().toStdString(), reinterpret_cast<const std::uint8_t*>("moved-data"),
+                              std::size_t{10}, err));
+
+    const QString keepPath = writeTempFile(dir, QStringLiteral("dst/keep.txt"), "keep");
+
+    // Block deleting the source root from its parent after the copy succeeds.
+    QVERIFY(::chmod(lockedDir.toLocal8Bit().constData(), 0555) == 0);
+
+    ProgressInfo progress;
+    auto progressCb = [](const ProgressInfo&) { return true; };
+    QVERIFY(!move_path(srcDir.toLocal8Bit().toStdString(), dstDir.toLocal8Bit().toStdString(), progress, progressCb,
+                       err, /*forceCopyFallbackForTests=*/true));
+
+    // Restore permissions so QTemporaryDir can clean up.
+    QVERIFY(::chmod(lockedDir.toLocal8Bit().constData(), 0755) == 0);
+
+    QCOMPARE(readQtFile(keepPath), QByteArray("keep"));
+    QCOMPARE(readQtFile(dstDir + QLatin1String("/new.txt")), QByteArray("moved-data"));
+    QVERIFY(QFileInfo(dstDir).isDir());
+}
+
 void FsOpsTest::deletePathRecursive() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -254,6 +292,92 @@ void FsOpsTest::copyCancelledViaCallback() {
         !copy_path(srcPath.toLocal8Bit().toStdString(), dstPath.toLocal8Bit().toStdString(), progress, cancelCb, err));
     QVERIFY(err.code == ECANCELED);
     QVERIFY(cancelled);
+}
+
+void FsOpsTest::copyIntoExistingDestinationCancelledPreservesPreexisting() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcDir = makePath(dir, QStringLiteral("src"));
+    const QString dstDir = makePath(dir, QStringLiteral("dst"));
+
+    Error err;
+    QVERIFY(make_dir_parents(srcDir.toLocal8Bit().toStdString(), err));
+    QVERIFY(make_dir_parents(dstDir.toLocal8Bit().toStdString(), err));
+
+    const QString srcFile = srcDir + QLatin1String("/new.bin");
+    QByteArray payload(512 * 1024, 'x');
+    QVERIFY(write_file_atomic(srcFile.toLocal8Bit().toStdString(),
+                              reinterpret_cast<const std::uint8_t*>(payload.constData()),
+                              static_cast<std::size_t>(payload.size()), err));
+
+    const QString keepPath = writeTempFile(dir, QStringLiteral("dst/keep.txt"), "keep");
+
+    ProgressInfo progress;
+    auto cancelCb = [](const ProgressInfo& info) { return info.bytesDone == 0; };
+
+    QVERIFY(
+        !copy_path(srcDir.toLocal8Bit().toStdString(), dstDir.toLocal8Bit().toStdString(), progress, cancelCb, err));
+    QCOMPARE(err.code, ECANCELED);
+    QCOMPARE(readQtFile(keepPath), QByteArray("keep"));
+    QVERIFY(!QFileInfo(dstDir + QLatin1String("/new.bin")).exists());
+}
+
+void FsOpsTest::copyIntoExistingDestinationErrorPreservesPreexisting() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcPath = makePath(dir, QStringLiteral("src.bin"));
+    const QString dstDir = makePath(dir, QStringLiteral("dst"));
+
+    Error err;
+    QVERIFY(make_dir_parents(dstDir.toLocal8Bit().toStdString(), err));
+    QVERIFY(write_file_atomic(srcPath.toLocal8Bit().toStdString(), reinterpret_cast<const std::uint8_t*>("source-data"),
+                              std::size_t{11}, err));
+
+    const QString keepPath = writeTempFile(dir, QStringLiteral("dst/keep.txt"), "keep");
+
+    ProgressInfo progress;
+    auto progressCb = [](const ProgressInfo&) { return true; };
+
+    QVERIFY(
+        !copy_path(srcPath.toLocal8Bit().toStdString(), dstDir.toLocal8Bit().toStdString(), progress, progressCb, err));
+    QVERIFY(err.isSet());
+    QVERIFY(err.code == EISDIR || err.code == EACCES);
+    QCOMPARE(readQtFile(keepPath), QByteArray("keep"));
+    QVERIFY(QFileInfo(dstDir).isDir());
+}
+
+void FsOpsTest::copyRollbackRemovesOnlyCreatedPaths() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcDir = makePath(dir, QStringLiteral("src"));
+    const QString srcNestedDir = srcDir + QLatin1String("/nested");
+    const QString dstDir = makePath(dir, QStringLiteral("dst"));
+
+    Error err;
+    QVERIFY(make_dir_parents(srcNestedDir.toLocal8Bit().toStdString(), err));
+    QVERIFY(make_dir_parents(dstDir.toLocal8Bit().toStdString(), err));
+
+    QByteArray payload(512 * 1024, 'y');
+    const QString srcNestedFile = srcNestedDir + QLatin1String("/child.bin");
+    QVERIFY(write_file_atomic(srcNestedFile.toLocal8Bit().toStdString(),
+                              reinterpret_cast<const std::uint8_t*>(payload.constData()),
+                              static_cast<std::size_t>(payload.size()), err));
+
+    const QString keepPath = writeTempFile(dir, QStringLiteral("dst/keep.txt"), "keep");
+
+    ProgressInfo progress;
+    auto cancelCb = [](const ProgressInfo& info) { return info.bytesDone == 0; };
+
+    QVERIFY(
+        !copy_path(srcDir.toLocal8Bit().toStdString(), dstDir.toLocal8Bit().toStdString(), progress, cancelCb, err));
+    QCOMPARE(err.code, ECANCELED);
+    QCOMPARE(readQtFile(keepPath), QByteArray("keep"));
+    QVERIFY(!QFileInfo(dstDir + QLatin1String("/nested/child.bin")).exists());
+    QVERIFY(!QFileInfo(dstDir + QLatin1String("/nested")).exists());
+    QVERIFY(QFileInfo(dstDir).isDir());
 }
 
 void FsOpsTest::readMissingFileFails() {
