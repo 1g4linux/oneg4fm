@@ -34,6 +34,7 @@ class QtFileOpsTest : public QObject {
     void copyRejectsPromptAndOverwriteTogether();
     void deleteRejectsPromptOnConflictField();
     void cancelRequestsStopCopyThroughCoreContract();
+    void adapterRemainsThinAndDelegatesPlanningToCore();
 };
 
 static QString writeTempFile(const QTemporaryDir& dir, const QString& name, const QByteArray& data) {
@@ -522,6 +523,23 @@ void QtFileOpsTest::cancelRequestsStopCopyThroughCoreContract() {
     QVERIFY(!args.at(0).toBool());
     QVERIFY(args.at(1).toString().contains(QStringLiteral("cancel"), Qt::CaseInsensitive));
     QVERIFY(!QFileInfo::exists(dstPath));
+}
+
+void QtFileOpsTest::adapterRemainsThinAndDelegatesPlanningToCore() {
+    const QString adapterSourcePath = QFINDTESTDATA("../src/backends/qt/qt_fileops.cpp");
+    QVERIFY2(!adapterSourcePath.isEmpty(), "Unable to locate src/backends/qt/qt_fileops.cpp from test");
+
+    QFile adapterSource(adapterSourcePath);
+    QVERIFY(adapterSource.open(QIODevice::ReadOnly));
+    const QByteArray source = adapterSource.readAll();
+
+    QVERIFY(source.contains("FileOpsContract::run(contractReq, handlers)"));
+
+    // Keep planning/scan semantics centralized in src/core.
+    QVERIFY(!source.contains("QDirIterator"));
+    QVERIFY(!source.contains("QFileInfo"));
+    QVERIFY(!source.contains("scan_path_stats"));
+    QVERIFY(!source.contains("g_file_enumerate_children"));
 }
 
 QTEST_MAIN(QtFileOpsTest)
