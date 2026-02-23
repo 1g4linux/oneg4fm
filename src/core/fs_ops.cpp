@@ -11,6 +11,7 @@
 #include <dirent.h>
 #include <array>
 #include <fcntl.h>
+#include <linux/fs.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -460,17 +461,34 @@ bool copy_symlink_at(int srcDir,
                      Error& err,
                      const std::string& dstPath,
                      CopyJournal* journal,
-                     bool preserveOwnership) {
+                     bool preserveOwnership,
+                     bool overwriteExisting) {
     std::string target;
     if (!read_symlink_target(srcLinkFd, srcDir, srcName, target, err)) {
         return false;
     }
 
-    if (::symlinkat(target.c_str(), dstDir, dstName) < 0) {
-        set_error(err, "symlinkat");
-        return false;
+    bool createdNewPath = false;
+    if (::symlinkat(target.c_str(), dstDir, dstName) == 0) {
+        createdNewPath = true;
     }
-    if (journal) {
+    else {
+        if (errno != EEXIST || !overwriteExisting) {
+            set_error(err, "symlinkat");
+            return false;
+        }
+
+        if (::unlinkat(dstDir, dstName, 0) < 0) {
+            set_error(err, "unlinkat");
+            return false;
+        }
+        if (::symlinkat(target.c_str(), dstDir, dstName) < 0) {
+            set_error(err, "symlinkat");
+            return false;
+        }
+    }
+
+    if (createdNewPath && journal) {
         journal->recordFile(dstPath);
     }
     // Preserve timestamps if possible
@@ -493,7 +511,8 @@ bool copy_file_at(int srcFd,
                   Error& err,
                   const std::string& dstPath,
                   CopyJournal* journal,
-                  bool preserveOwnership) {
+                  bool preserveOwnership,
+                  bool overwriteExisting) {
     progress.bytesTotal += static_cast<std::uint64_t>(info.st.st_size);
 
     Fd in_fd;
@@ -517,6 +536,9 @@ bool copy_file_at(int srcFd,
         }
     }
     else if (err.code == EEXIST) {
+        if (!overwriteExisting) {
+            return false;
+        }
         err = {};
         int truncFlags = O_WRONLY | O_TRUNC | O_CLOEXEC;
 #ifdef O_NOFOLLOW
@@ -597,7 +619,8 @@ bool copy_dir_at(int srcDirFd,
                  int depth,
                  const std::string& dstPath,
                  CopyJournal* journal,
-                 bool preserveOwnership);
+                 bool preserveOwnership,
+                 bool overwriteExisting);
 
 bool copy_entry_at(int srcDir,
                    const char* srcName,
@@ -609,7 +632,8 @@ bool copy_entry_at(int srcDir,
                    int depth,
                    const std::string& dstPath,
                    CopyJournal* journal,
-                   bool preserveOwnership) {
+                   bool preserveOwnership,
+                   bool overwriteExisting) {
     if (depth > kMaxRecursionDepth) {
         err.code = ELOOP;
         err.message = "Maximum recursion depth exceeded";
@@ -632,13 +656,13 @@ bool copy_entry_at(int srcDir,
     switch (type) {
         case SourceEntryType::Directory:
             return copy_dir_at(srcFd.fd, info, dstDir, dstName, progress, cb, err, depth + 1, dstPath, journal,
-                               preserveOwnership);
+                               preserveOwnership, overwriteExisting);
         case SourceEntryType::RegularFile:
-            return copy_file_at(srcFd.fd, dstDir, dstName, info, progress, cb, err, dstPath, journal,
-                                preserveOwnership);
+            return copy_file_at(srcFd.fd, dstDir, dstName, info, progress, cb, err, dstPath, journal, preserveOwnership,
+                                overwriteExisting);
         case SourceEntryType::Symlink:
             return copy_symlink_at(srcDir, srcName, srcFd.fd, dstDir, dstName, info, err, dstPath, journal,
-                                   preserveOwnership);
+                                   preserveOwnership, overwriteExisting);
     }
 
     err.code = ENOTSUP;
@@ -656,7 +680,8 @@ bool copy_dir_at(int srcDirFd,
                  int depth,
                  const std::string& dstPath,
                  CopyJournal* journal,
-                 bool preserveOwnership) {
+                 bool preserveOwnership,
+                 bool overwriteExisting) {
     if (!S_ISDIR(info.st.st_mode)) {
         err.code = ENOTDIR;
         err.message = "Not a directory";
@@ -666,6 +691,9 @@ bool copy_dir_at(int srcDirFd,
     // Create dest dir
     if (!LinuxFsSafety::mkdir_under(dstDir, dstName, info.st.st_mode & 0777, err)) {
         if (err.code != EEXIST) {
+            return false;
+        }
+        if (!overwriteExisting) {
             return false;
         }
         err = {};
@@ -710,7 +738,7 @@ bool copy_dir_at(int srcDirFd,
 
         const std::string childDstPath = join_child_path(dstPath, child);
         if (!copy_entry_at(::dirfd(dir.dir), child, newDst.fd, child, progress, cb, err, depth + 1, childDstPath,
-                           journal, preserveOwnership)) {
+                           journal, preserveOwnership, overwriteExisting)) {
             return false;
         }
     }
@@ -941,7 +969,8 @@ bool copy_path(const std::string& source,
                ProgressInfo& progress,
                const ProgressCallback& callback,
                Error& err,
-               bool preserveOwnership) {
+               bool preserveOwnership,
+               bool overwriteExisting) {
     err = {};
 
     std::string srcParent, srcName;
@@ -976,7 +1005,7 @@ bool copy_path(const std::string& source,
     }
 
     const bool ok = copy_entry_at(srcParentFd.fd, srcName.c_str(), destParentFd.fd, destName.c_str(), progress,
-                                  callback, err, 0, destName, &journal, preserveOwnership);
+                                  callback, err, 0, destName, &journal, preserveOwnership, overwriteExisting);
 
     if (!ok) {
         journal.rollback();
@@ -994,7 +1023,8 @@ bool move_path(const std::string& source,
                const ProgressCallback& callback,
                Error& err,
                bool forceCopyFallbackForTests,
-               bool preserveOwnership) {
+               bool preserveOwnership,
+               bool overwriteExisting) {
     err = {};
 
     if (!forceCopyFallbackForTests) {
@@ -1027,7 +1057,18 @@ bool move_path(const std::string& source,
             return false;
         }
 
-        if (LinuxFsSafety::rename_under(srcParentFd.fd, srcName, destParentFd.fd, destName, 0, err)) {
+        unsigned int renameFlags = 0;
+        if (!overwriteExisting) {
+#ifdef RENAME_NOREPLACE
+            renameFlags = static_cast<unsigned int>(RENAME_NOREPLACE);
+#else
+            err.code = ENOSYS;
+            err.message = "renameat2 RENAME_NOREPLACE is required but unavailable on this kernel";
+            return false;
+#endif
+        }
+
+        if (LinuxFsSafety::rename_under(srcParentFd.fd, srcName, destParentFd.fd, destName, renameFlags, err)) {
             progress.filesDone += 1;
             progress.currentPath = source;
             should_continue(callback, progress);
@@ -1041,7 +1082,7 @@ bool move_path(const std::string& source,
     }
 
     // Cross-device or forced fallback: copy then delete
-    if (!copy_path(source, destination, progress, callback, err, preserveOwnership)) {
+    if (!copy_path(source, destination, progress, callback, err, preserveOwnership, overwriteExisting)) {
         return false;
     }
 

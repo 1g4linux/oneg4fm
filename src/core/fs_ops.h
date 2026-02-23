@@ -50,7 +50,8 @@ bool copy_path(const std::string& source,
                ProgressInfo& progress,
                const ProgressCallback& callback,
                Error& err,
-               bool preserveOwnership = false);
+               bool preserveOwnership = false,
+               bool overwriteExisting = true);
 
 bool move_path(const std::string& source,
                const std::string& destination,
@@ -58,7 +59,8 @@ bool move_path(const std::string& source,
                const ProgressCallback& callback,
                Error& err,
                bool forceCopyFallbackForTests = false,
-               bool preserveOwnership = false);
+               bool preserveOwnership = false,
+               bool overwriteExisting = true);
 
 bool delete_path(const std::string& path, ProgressInfo& progress, const ProgressCallback& callback, Error& err);
 

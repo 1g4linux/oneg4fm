@@ -14,6 +14,9 @@
 
 #include <atomic>
 #include <cerrno>
+#include <limits.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 using namespace PCManFM::FileOpsContract;
 
@@ -50,6 +53,7 @@ class FileOpsContractTest : public QObject {
     void copyReportsMonotonicProgressAndStableTotals();
     void cancelReturnsEcanceled();
     void promptConflictCanSkipWithStructuredEvent();
+    void promptConflictOverwriteReplacesDestinationForSymlinkSource();
     void unsupportedOperationRejected();
     void requireLandlockFailsFast();
 };
@@ -185,6 +189,51 @@ void FileOpsContractTest::promptConflictCanSkipWithStructuredEvent() {
 
     QCOMPARE(result.finalProgress.filesTotal, 1);
     QCOMPARE(result.finalProgress.filesDone, 1);
+}
+
+void FileOpsContractTest::promptConflictOverwriteReplacesDestinationForSymlinkSource() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcDir = dir.path() + QLatin1String("/src");
+    const QString dstDir = dir.path() + QLatin1String("/dst");
+    QVERIFY(QDir().mkpath(srcDir));
+    QVERIFY(QDir().mkpath(dstDir));
+
+    const QString linkTarget = writeTempFile(srcDir + QLatin1String("/target.txt"), QByteArray("target-data"));
+    const QString srcLink = srcDir + QLatin1String("/item-link");
+    QVERIFY(::symlink(linkTarget.toLocal8Bit().constData(), srcLink.toLocal8Bit().constData()) == 0);
+
+    const QString existing = writeTempFile(dstDir + QLatin1String("/item-link"), QByteArray("old-content"));
+
+    Request req;
+    req.operation = Operation::Copy;
+    req.sources = {toNative(srcLink)};
+    req.destination.targetDir = toNative(dstDir);
+    req.destination.mappingMode = DestinationMappingMode::SourceBasename;
+    req.conflictPolicy = ConflictPolicy::Prompt;
+
+    int conflictCount = 0;
+    EventHandlers handlers;
+    handlers.onConflict = [&conflictCount](const ConflictEvent&) -> ConflictResolution {
+        ++conflictCount;
+        return ConflictResolution::Overwrite;
+    };
+
+    const Result result = run(req, handlers);
+    QVERIFY(result.success);
+    QVERIFY(!result.cancelled);
+    QCOMPARE(conflictCount, 1);
+
+    struct stat st{};
+    QVERIFY(::lstat(existing.toLocal8Bit().constData(), &st) == 0);
+    QVERIFY(S_ISLNK(st.st_mode));
+
+    char linkBuf[PATH_MAX];
+    const ssize_t linkLen = ::readlink(existing.toLocal8Bit().constData(), linkBuf, sizeof(linkBuf) - 1);
+    QVERIFY(linkLen > 0);
+    linkBuf[linkLen] = '\0';
+    QCOMPARE(QString::fromLocal8Bit(linkBuf), linkTarget);
 }
 
 void FileOpsContractTest::unsupportedOperationRejected() {

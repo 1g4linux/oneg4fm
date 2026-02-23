@@ -52,9 +52,11 @@ class FsOpsTest : public QObject {
    private slots:
     void readWriteRoundTrip();
     void copyFile();
+    void copyPathNoOverwriteRejectsExistingDestination();
     void copyDirectoryRecursive();
     void moveFileRenamePath();
     void moveFileCopyFallback();
+    void movePathNoOverwriteRejectsExistingDestination();
     void moveFallbackSourceDeleteFailurePreservesDestination();
     void deletePathRecursive();
     void makeDirParentsCreatesHierarchy();
@@ -114,6 +116,38 @@ void FsOpsTest::copyFile() {
     QVERIFY(!err.isSet());
     QVERIFY(QFileInfo(dstPath).exists());
     QCOMPARE(readQtFile(dstPath), payload);
+}
+
+void FsOpsTest::copyPathNoOverwriteRejectsExistingDestination() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcPath = makePath(dir, QStringLiteral("src-no-overwrite.txt"));
+    const QString dstPath = makePath(dir, QStringLiteral("dst-no-overwrite.txt"));
+
+    Error err;
+    QVERIFY(write_file_atomic(srcPath.toLocal8Bit().toStdString(), reinterpret_cast<const std::uint8_t*>("source-data"),
+                              std::size_t{11}, err));
+    QVERIFY(write_file_atomic(dstPath.toLocal8Bit().toStdString(), reinterpret_cast<const std::uint8_t*>("old-data"),
+                              std::size_t{8}, err));
+
+    ProgressInfo progress;
+    progress.filesTotal = 1;
+    auto progressCb = [](const ProgressInfo&) { return true; };
+
+    QVERIFY(!copy_path(srcPath.toLocal8Bit().toStdString(), dstPath.toLocal8Bit().toStdString(), progress, progressCb,
+                       err, /*preserveOwnership=*/false, /*overwriteExisting=*/false));
+    QCOMPARE(err.code, EEXIST);
+    QCOMPARE(readQtFile(srcPath), QByteArray("source-data"));
+    QCOMPARE(readQtFile(dstPath), QByteArray("old-data"));
+
+    err = {};
+    progress = {};
+    progress.filesTotal = 1;
+    QVERIFY(copy_path(srcPath.toLocal8Bit().toStdString(), dstPath.toLocal8Bit().toStdString(), progress, progressCb,
+                      err, /*preserveOwnership=*/false, /*overwriteExisting=*/true));
+    QVERIFY(!err.isSet());
+    QCOMPARE(readQtFile(dstPath), QByteArray("source-data"));
 }
 
 void FsOpsTest::copyDirectoryRecursive() {
@@ -189,6 +223,41 @@ void FsOpsTest::moveFileCopyFallback() {
     QVERIFY(!err.isSet());
     QVERIFY(!QFileInfo(srcPath).exists());
     QCOMPARE(readQtFile(dstPath), payload);
+}
+
+void FsOpsTest::movePathNoOverwriteRejectsExistingDestination() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcPath = makePath(dir, QStringLiteral("src-no-overwrite-move.txt"));
+    const QString dstPath = makePath(dir, QStringLiteral("dst-no-overwrite-move.txt"));
+
+    Error err;
+    QVERIFY(write_file_atomic(srcPath.toLocal8Bit().toStdString(), reinterpret_cast<const std::uint8_t*>("move-source"),
+                              std::size_t{11}, err));
+    QVERIFY(write_file_atomic(dstPath.toLocal8Bit().toStdString(), reinterpret_cast<const std::uint8_t*>("move-old"),
+                              std::size_t{8}, err));
+
+    auto progressCb = [](const ProgressInfo&) { return true; };
+    ProgressInfo progress;
+    progress.filesTotal = 1;
+
+    QVERIFY(!move_path(srcPath.toLocal8Bit().toStdString(), dstPath.toLocal8Bit().toStdString(), progress, progressCb,
+                       err, /*forceCopyFallbackForTests=*/false, /*preserveOwnership=*/false,
+                       /*overwriteExisting=*/false));
+    QCOMPARE(err.code, EEXIST);
+    QCOMPARE(readQtFile(srcPath), QByteArray("move-source"));
+    QCOMPARE(readQtFile(dstPath), QByteArray("move-old"));
+
+    err = {};
+    progress = {};
+    progress.filesTotal = 1;
+    QVERIFY(!move_path(srcPath.toLocal8Bit().toStdString(), dstPath.toLocal8Bit().toStdString(), progress, progressCb,
+                       err, /*forceCopyFallbackForTests=*/true, /*preserveOwnership=*/false,
+                       /*overwriteExisting=*/false));
+    QCOMPARE(err.code, EEXIST);
+    QCOMPARE(readQtFile(srcPath), QByteArray("move-source"));
+    QCOMPARE(readQtFile(dstPath), QByteArray("move-old"));
 }
 
 void FsOpsTest::moveFallbackSourceDeleteFailurePreservesDestination() {

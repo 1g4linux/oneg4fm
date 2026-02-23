@@ -347,12 +347,32 @@ bool destination_exists(const std::string& path, bool& exists, bool& is_dir, Err
     return false;
 }
 
+void mark_plan_complete_without_execution(const SourcePlan& plan,
+                                          const ProgressSnapshot& totals,
+                                          int& completed_units,
+                                          std::uint64_t& completed_bytes,
+                                          ProgressSnapshot& last_progress,
+                                          const EventHandlers& handlers) {
+    add_int_saturated(completed_units, plan.workUnits);
+    add_u64_saturated(completed_bytes, plan.stats.bytesTotal);
+
+    ProgressSnapshot skipped_progress;
+    skipped_progress.filesTotal = totals.filesTotal;
+    skipped_progress.bytesTotal = totals.bytesTotal;
+    skipped_progress.filesDone = completed_units;
+    skipped_progress.bytesDone = completed_bytes;
+    skipped_progress.currentPath = plan.sourcePath;
+    emit_monotonic_progress(skipped_progress, last_progress, handlers);
+}
+
 bool resolve_conflict_for_plan(const Request& request,
                                const EventHandlers& handlers,
                                const SourcePlan& plan,
                                bool& skip,
+                               bool& allow_overwrite,
                                Error& err) {
     skip = false;
+    allow_overwrite = true;
     if (!is_copy_like(request.operation)) {
         return true;
     }
@@ -363,6 +383,23 @@ bool resolve_conflict_for_plan(const Request& request,
         return false;
     }
     if (!exists) {
+        switch (request.conflictPolicy) {
+            case ConflictPolicy::Overwrite:
+                allow_overwrite = true;
+                return true;
+            case ConflictPolicy::Skip:
+                // Enforce skip semantics for late destination races.
+                allow_overwrite = false;
+                return true;
+            case ConflictPolicy::Prompt:
+                // Defer decision until an actual conflict exists.
+                allow_overwrite = false;
+                return true;
+            case ConflictPolicy::Rename:
+                set_error(err, EngineErrorCode::UnsupportedPolicy, OperationStep::ResolveConflict, ENOTSUP,
+                          "Rename conflict policy is not yet supported");
+                return false;
+        }
         return true;
     }
 
@@ -396,9 +433,11 @@ bool resolve_conflict_for_plan(const Request& request,
     switch (resolution) {
         case ConflictResolution::Overwrite:
             skip = false;
+            allow_overwrite = true;
             return true;
         case ConflictResolution::Skip:
             skip = true;
+            allow_overwrite = false;
             return true;
         case ConflictResolution::Abort:
             set_error(err, EngineErrorCode::ConflictAborted, OperationStep::ResolveConflict, ECANCELED,
@@ -419,14 +458,16 @@ bool execute_plan_operation(const Request& request,
                             const SourcePlan& plan,
                             FsOps::ProgressInfo& source_progress,
                             const FsOps::ProgressCallback& callback,
-                            FsOps::Error& fs_err) {
+                            FsOps::Error& fs_err,
+                            bool overwrite_existing) {
     switch (request.operation) {
         case Operation::Copy:
             return FsOps::copy_path(plan.sourcePath, plan.destinationPath, source_progress, callback, fs_err,
-                                    request.metadata.preserveOwnership);
+                                    request.metadata.preserveOwnership, overwrite_existing);
         case Operation::Move:
             return FsOps::move_path(plan.sourcePath, plan.destinationPath, source_progress, callback, fs_err,
-                                    /*forceCopyFallbackForTests=*/false, request.metadata.preserveOwnership);
+                                    /*forceCopyFallbackForTests=*/false, request.metadata.preserveOwnership,
+                                    overwrite_existing);
         case Operation::Delete:
             return FsOps::delete_path(plan.sourcePath, source_progress, callback, fs_err);
         case Operation::Mkdir:
@@ -478,8 +519,9 @@ Result run(const Request& request, const EventHandlers& handlers) {
         }
 
         bool skip = false;
+        bool allow_overwrite = true;
         Error conflict_error;
-        if (!resolve_conflict_for_plan(request, handlers, plan, skip, conflict_error)) {
+        if (!resolve_conflict_for_plan(request, handlers, plan, skip, allow_overwrite, conflict_error)) {
             if (conflict_error.code == EngineErrorCode::ConflictAborted || conflict_error.sysErrno == ECANCELED) {
                 result.cancelled = true;
                 set_cancelled(result.error, OperationStep::ResolveConflict, conflict_error.message);
@@ -492,25 +534,21 @@ Result run(const Request& request, const EventHandlers& handlers) {
         }
 
         if (skip) {
-            add_int_saturated(completed_units, plan.workUnits);
-            add_u64_saturated(completed_bytes, plan.stats.bytesTotal);
-
-            ProgressSnapshot skipped_progress;
-            skipped_progress.filesTotal = totals.filesTotal;
-            skipped_progress.bytesTotal = totals.bytesTotal;
-            skipped_progress.filesDone = completed_units;
-            skipped_progress.bytesDone = completed_bytes;
-            skipped_progress.currentPath = plan.sourcePath;
-            emit_monotonic_progress(skipped_progress, last_progress, handlers);
+            mark_plan_complete_without_execution(plan, totals, completed_units, completed_bytes, last_progress,
+                                                 handlers);
             continue;
         }
 
         FsOps::ProgressInfo source_progress;
-        source_progress.filesTotal = plan.workUnits;
-        source_progress.filesDone = 0;
-        source_progress.bytesTotal = plan.stats.bytesTotal;
-        source_progress.bytesDone = 0;
-        source_progress.currentPath = plan.sourcePath;
+        auto reset_source_progress = [&source_progress, &plan]() {
+            source_progress = {};
+            source_progress.filesTotal = plan.workUnits;
+            source_progress.filesDone = 0;
+            source_progress.bytesTotal = plan.stats.bytesTotal;
+            source_progress.bytesDone = 0;
+            source_progress.currentPath = plan.sourcePath;
+        };
+        reset_source_progress();
 
         const auto progress_cb = [&request, &handlers, &plan, completed_units, completed_bytes, &totals,
                                   &last_progress](const FsOps::ProgressInfo& source_info) {
@@ -533,7 +571,39 @@ Result run(const Request& request, const EventHandlers& handlers) {
         };
 
         FsOps::Error fs_err;
-        if (!execute_plan_operation(request, plan, source_progress, progress_cb, fs_err)) {
+        bool executed = execute_plan_operation(request, plan, source_progress, progress_cb, fs_err, allow_overwrite);
+        if (!executed && is_copy_like(request.operation) && fs_err.code == EEXIST && !allow_overwrite) {
+            bool late_skip = false;
+            bool late_allow_overwrite = false;
+            Error late_conflict_error;
+            if (!resolve_conflict_for_plan(request, handlers, plan, late_skip, late_allow_overwrite,
+                                           late_conflict_error)) {
+                if (late_conflict_error.code == EngineErrorCode::ConflictAborted ||
+                    late_conflict_error.sysErrno == ECANCELED) {
+                    result.cancelled = true;
+                    set_cancelled(result.error, OperationStep::ResolveConflict, late_conflict_error.message);
+                }
+                else {
+                    result.error = late_conflict_error;
+                }
+                result.finalProgress = last_progress;
+                return result;
+            }
+
+            if (late_skip) {
+                mark_plan_complete_without_execution(plan, totals, completed_units, completed_bytes, last_progress,
+                                                     handlers);
+                continue;
+            }
+
+            if (late_allow_overwrite) {
+                reset_source_progress();
+                fs_err = {};
+                executed = execute_plan_operation(request, plan, source_progress, progress_cb, fs_err, true);
+            }
+        }
+
+        if (!executed) {
             if (is_cancel_requested(request) || fs_err.code == ECANCELED) {
                 result.cancelled = true;
                 set_cancelled(result.error, OperationStep::Execute,
