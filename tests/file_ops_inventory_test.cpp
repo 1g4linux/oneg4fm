@@ -5,10 +5,16 @@
 
 #include <QFile>
 #include <QFileInfo>
+#include <QDir>
+#include <QDirIterator>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPair>
+#include <QProcess>
+#include <QProcessEnvironment>
+#include <QRegularExpression>
+#include <QTemporaryDir>
 #include <QTest>
 
 class FileOpsInventoryTest : public QObject {
@@ -21,12 +27,14 @@ class FileOpsInventoryTest : public QObject {
     void docsForPhaseFiveThreeExistAndAreNonEmpty();
     void dbusCompatibilityAdrExistsAndSpecifiesPolicy();
     void dbusBuildArtifactsEnforceHardCutServiceIdentity();
+    void installArtifactsUseOneg4fmIdentity();
     void hackingDocCoversLinuxSecurityModelAndContract();
     void coreContractDocCoversFieldsEventsAndErrors();
     void adapterDocCoversQtAndLibfmQtBridge();
 
    private:
     QString sourceRoot() const;
+    QString binaryRoot() const;
     QPair<QJsonObject, QString> readInventory() const;
     QPair<QString, QString> readTextFile(const QString& relPath) const;
 };
@@ -34,6 +42,14 @@ class FileOpsInventoryTest : public QObject {
 QString FileOpsInventoryTest::sourceRoot() const {
 #ifdef PCMANFM_SOURCE_DIR
     return QString::fromUtf8(PCMANFM_SOURCE_DIR);
+#else
+    return {};
+#endif
+}
+
+QString FileOpsInventoryTest::binaryRoot() const {
+#ifdef ONEG4FM_BINARY_DIR
+    return QString::fromUtf8(ONEG4FM_BINARY_DIR);
 #else
     return {};
 #endif
@@ -231,6 +247,90 @@ void FileOpsInventoryTest::dbusBuildArtifactsEnforceHardCutServiceIdentity() {
              "application.cpp must consume ONEG4FM_DBUS_APP_INTERFACE");
     QVERIFY2(!appContent.contains(QStringLiteral("org.pcmanfm"), Qt::CaseInsensitive),
              "application.cpp must not reference legacy org.pcmanfm identifiers");
+}
+
+void FileOpsInventoryTest::installArtifactsUseOneg4fmIdentity() {
+    const QString buildRoot = binaryRoot();
+    QVERIFY2(!buildRoot.isEmpty(), "ONEG4FM_BINARY_DIR compile definition is missing");
+
+    QTemporaryDir installStagingRoot;
+    QVERIFY2(installStagingRoot.isValid(), "Failed to create temporary install staging root");
+
+    QProcess installer;
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert(QStringLiteral("DESTDIR"), installStagingRoot.path());
+    installer.setProcessEnvironment(env);
+    installer.setProgram(QStringLiteral("cmake"));
+    installer.setArguments({QStringLiteral("--install"), buildRoot});
+    installer.start();
+
+    QVERIFY2(installer.waitForFinished(120000), "cmake --install timed out");
+    const QString installStdout = QString::fromUtf8(installer.readAllStandardOutput());
+    const QString installStderr = QString::fromUtf8(installer.readAllStandardError());
+    QVERIFY2(installer.exitStatus() == QProcess::NormalExit,
+             qPrintable(QStringLiteral("cmake --install did not exit normally\nstdout:\n%1\nstderr:\n%2")
+                            .arg(installStdout, installStderr)));
+    QVERIFY2(installer.exitCode() == 0,
+             qPrintable(
+                 QStringLiteral("cmake --install failed\nstdout:\n%1\nstderr:\n%2").arg(installStdout, installStderr)));
+
+    const QRegularExpression legacyIdPattern(QStringLiteral("(pcmanfm|org\\.pcmanfm)"),
+                                             QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpression auditedArtifactPathPattern(
+        QStringLiteral("/(applications/.*\\.desktop|appstream/.+\\.(metainfo\\.xml|appdata\\.xml)|"
+                       "icons/.+\\.(svg|png|xpm)|mime/(packages/)?[^/]+\\.xml|"
+                       "glib-2\\.0/schemas/.+\\.xml|dbus-1/services/.+\\.service)$"),
+        QRegularExpression::CaseInsensitiveOption);
+
+    const QDir stagingRoot(installStagingRoot.path());
+    bool foundDesktop = false;
+    bool foundService = false;
+    bool foundIcon = false;
+    bool foundMimePackage = false;
+    int installedFileCount = 0;
+
+    QDirIterator it(installStagingRoot.path(), QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        const QString absPath = it.next();
+        ++installedFileCount;
+        const QString relPath = stagingRoot.relativeFilePath(absPath).replace(QLatin1Char('\\'), QLatin1Char('/'));
+
+        QVERIFY2(!legacyIdPattern.match(relPath).hasMatch(),
+                 qPrintable(QStringLiteral("Installed path contains legacy identifier: %1").arg(relPath)));
+
+        if (relPath.endsWith(QStringLiteral("/share/applications/oneg4fm.desktop"), Qt::CaseInsensitive)) {
+            foundDesktop = true;
+        }
+        else if (relPath.endsWith(QStringLiteral("/share/dbus-1/services/org.oneg4fm.oneg4fm.service"),
+                                  Qt::CaseInsensitive)) {
+            foundService = true;
+        }
+        else if (relPath.endsWith(QStringLiteral("/share/icons/hicolor/scalable/apps/oneg4fm.svg"),
+                                  Qt::CaseInsensitive)) {
+            foundIcon = true;
+        }
+        else if (relPath.endsWith(QStringLiteral("/share/mime/packages/libfm-qt6-mimetypes.xml"),
+                                  Qt::CaseInsensitive)) {
+            foundMimePackage = true;
+        }
+
+        if (!auditedArtifactPathPattern.match(relPath).hasMatch()) {
+            continue;
+        }
+
+        QFile artifact(absPath);
+        QVERIFY2(artifact.open(QIODevice::ReadOnly),
+                 qPrintable(QStringLiteral("Failed to read installed artifact: %1").arg(relPath)));
+        const QString content = QString::fromUtf8(artifact.readAll());
+        QVERIFY2(!legacyIdPattern.match(content).hasMatch(),
+                 qPrintable(QStringLiteral("Installed artifact contains legacy identifier: %1").arg(relPath)));
+    }
+
+    QVERIFY2(installedFileCount > 0, "Install staging tree is empty");
+    QVERIFY2(foundDesktop, "Missing installed desktop artifact: share/applications/oneg4fm.desktop");
+    QVERIFY2(foundService, "Missing installed service artifact: share/dbus-1/services/org.oneg4fm.oneg4fm.service");
+    QVERIFY2(foundIcon, "Missing installed icon artifact: share/icons/hicolor/scalable/apps/oneg4fm.svg");
+    QVERIFY2(foundMimePackage, "Missing installed MIME artifact: share/mime/packages/libfm-qt6-mimetypes.xml");
 }
 
 void FileOpsInventoryTest::hackingDocCoversLinuxSecurityModelAndContract() {

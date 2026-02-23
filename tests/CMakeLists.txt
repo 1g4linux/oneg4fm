@@ -139,6 +139,7 @@ oneg4fm_add_test(oneg4fm-file-ops-inventory-tests
         file_ops_inventory_test.cpp
 )
 target_compile_definitions(oneg4fm-file-ops-inventory-tests PRIVATE "PCMANFM_SOURCE_DIR=\"${CMAKE_SOURCE_DIR}\"")
+target_compile_definitions(oneg4fm-file-ops-inventory-tests PRIVATE "ONEG4FM_BINARY_DIR=\"${CMAKE_BINARY_DIR}\"")
 
 oneg4fm_add_test(oneg4fm-browsehistory-tests
     SOURCES
