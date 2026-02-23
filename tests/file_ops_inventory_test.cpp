@@ -18,10 +18,15 @@ class FileOpsInventoryTest : public QObject {
     void inventoryHasRequiredCategories();
     void inventoryEntriesMapToRealSymbols();
     void legacyNativeCategoryHasNoActiveDuplicates();
+    void docsForPhaseFiveThreeExistAndAreNonEmpty();
+    void hackingDocCoversLinuxSecurityModelAndContract();
+    void coreContractDocCoversFieldsEventsAndErrors();
+    void adapterDocCoversQtAndLibfmQtBridge();
 
    private:
     QString sourceRoot() const;
     QPair<QJsonObject, QString> readInventory() const;
+    QPair<QString, QString> readTextFile(const QString& relPath) const;
 };
 
 QString FileOpsInventoryTest::sourceRoot() const {
@@ -56,6 +61,23 @@ QPair<QJsonObject, QString> FileOpsInventoryTest::readInventory() const {
         return {{}, QStringLiteral("Inventory JSON root must be an object")};
     }
     return {doc.object(), {}};
+}
+
+QPair<QString, QString> FileOpsInventoryTest::readTextFile(const QString& relPath) const {
+    const QString root = sourceRoot();
+    if (root.isEmpty()) {
+        return {{}, QStringLiteral("PCMANFM_SOURCE_DIR compile definition is missing")};
+    }
+
+    const QString absPath = root + QLatin1Char('/') + relPath;
+    QFile file(absPath);
+    if (!file.exists()) {
+        return {{}, QStringLiteral("Missing file: %1").arg(absPath)};
+    }
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return {{}, QStringLiteral("Failed to read file: %1").arg(absPath)};
+    }
+    return {QString::fromUtf8(file.readAll()), {}};
 }
 
 void FileOpsInventoryTest::inventoryHasRequiredCategories() {
@@ -136,6 +158,85 @@ void FileOpsInventoryTest::legacyNativeCategoryHasNoActiveDuplicates() {
             state != QStringLiteral("active-duplicate"),
             qPrintable(
                 QStringLiteral("legacy_native_copy_move_delete contains active duplicate entry at index %1").arg(i)));
+    }
+}
+
+void FileOpsInventoryTest::docsForPhaseFiveThreeExistAndAreNonEmpty() {
+    const QStringList requiredDocs = {
+        QStringLiteral("HACKING.md"),
+        QStringLiteral("docs/file-ops-core-contract.md"),
+        QStringLiteral("docs/file-ops-adapters.md"),
+    };
+
+    for (const QString& relPath : requiredDocs) {
+        const auto [content, error] = readTextFile(relPath);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QVERIFY2(!content.trimmed().isEmpty(),
+                 qPrintable(QStringLiteral("Doc is unexpectedly empty: %1").arg(relPath)));
+    }
+}
+
+void FileOpsInventoryTest::hackingDocCoversLinuxSecurityModelAndContract() {
+    const auto [content, error] = readTextFile(QStringLiteral("HACKING.md"));
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+
+    const QStringList requiredTerms = {
+        QStringLiteral("Linux-only"),
+        QStringLiteral("openat2"),
+        QStringLiteral("renameat2"),
+        QStringLiteral("statx"),
+        QStringLiteral("no-follow"),
+        QStringLiteral("ECANCELED"),
+        QStringLiteral("FileOpsContract::Request"),
+    };
+
+    for (const QString& term : requiredTerms) {
+        QVERIFY2(content.contains(term, Qt::CaseSensitive),
+                 qPrintable(QStringLiteral("HACKING.md is missing required term: %1").arg(term)));
+    }
+}
+
+void FileOpsInventoryTest::coreContractDocCoversFieldsEventsAndErrors() {
+    const auto [content, error] = readTextFile(QStringLiteral("docs/file-ops-core-contract.md"));
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+
+    const QStringList requiredTerms = {
+        QStringLiteral("Request"),
+        QStringLiteral("LinuxSafetyRequirements"),
+        QStringLiteral("ProgressSnapshot"),
+        QStringLiteral("ConflictEvent"),
+        QStringLiteral("onProgress"),
+        QStringLiteral("onConflict"),
+        QStringLiteral("EngineErrorCode"),
+        QStringLiteral("OperationStep"),
+        QStringLiteral("SafetyRequirementUnavailable"),
+        QStringLiteral("Cancelled"),
+    };
+
+    for (const QString& term : requiredTerms) {
+        QVERIFY2(content.contains(term, Qt::CaseSensitive),
+                 qPrintable(QStringLiteral("Core contract doc is missing required term: %1").arg(term)));
+    }
+}
+
+void FileOpsInventoryTest::adapterDocCoversQtAndLibfmQtBridge() {
+    const auto [content, error] = readTextFile(QStringLiteral("docs/file-ops-adapters.md"));
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+
+    const QStringList requiredTerms = {
+        QStringLiteral("QtFileOps"),
+        QStringLiteral("FileOpRequest"),
+        QStringLiteral("FileTransferJob"),
+        QStringLiteral("DeleteJob"),
+        QStringLiteral("classifyPathForFileOps"),
+        QStringLiteral("RoutingClass::CoreLocal"),
+        QStringLiteral("RoutingClass::LegacyGio"),
+        QStringLiteral("RoutingClass::Unsupported"),
+    };
+
+    for (const QString& term : requiredTerms) {
+        QVERIFY2(content.contains(term, Qt::CaseSensitive),
+                 qPrintable(QStringLiteral("Adapter doc is missing required term: %1").arg(term)));
     }
 }
 
