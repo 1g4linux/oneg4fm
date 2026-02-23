@@ -57,7 +57,8 @@ inline void set_error(Error& err, const std::string& context) {
 
 inline void set_archive_error(Error& err, struct archive* ar, const char* context) {
     err.code = EIO;
-    err.message = std::string(context) + ": " + archive_error_string(ar);
+    const char* details = archive_error_string(ar);
+    err.message = std::string(context) + ": " + (details ? details : "libarchive error");
 }
 
 bool should_continue(const ProgressCallback& cb, const ProgressInfo& info) {
@@ -786,12 +787,17 @@ bool extract_tar_zst(const std::string& archivePath,
         progress.filesDone += 1;
     }
 
-    if (ok && readStatus != ARCHIVE_EOF) {
-        set_archive_error(err, ar, "archive_read_next_header");
+    if (ok) {
+        if (readStatus != ARCHIVE_EOF) {
+            set_archive_error(err, ar, "archive_read_next_header");
+            ok = false;
+        }
+    }
+    const int closeStatus = archive_read_close(ar);
+    if (ok && closeStatus != ARCHIVE_OK) {
+        set_archive_error(err, ar, "archive_read_close");
         ok = false;
     }
-
-    archive_read_close(ar);
     archive_read_free(ar);
 
     if (!ok) {

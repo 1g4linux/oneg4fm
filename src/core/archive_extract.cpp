@@ -63,7 +63,8 @@ inline void set_error(Error& err, const std::string& context) {
 
 inline void set_archive_error(Error& err, struct archive* ar, const char* context) {
     err.code = EIO;
-    err.message = std::string(context) + ": " + archive_error_string(ar);
+    const char* details = archive_error_string(ar);
+    err.message = std::string(context) + ": " + (details ? details : "libarchive error");
 }
 
 bool should_continue(const ProgressCallback& cb, const ProgressInfo& info) {
@@ -375,6 +376,14 @@ bool open_reader(const std::string& archivePath, const Options& opts, struct arc
     return true;
 }
 
+bool skip_archive_entry_data(struct archive* ar, Error& err) {
+    if (archive_read_data_skip(ar) != ARCHIVE_OK) {
+        set_archive_error(err, ar, "archive_read_data_skip");
+        return false;
+    }
+    return true;
+}
+
 bool scan_archive(const std::string& archivePath, const Options& opts, ProgressInfo& progress, Error& err) {
     struct archive* ar = nullptr;
     if (!open_reader(archivePath, opts, ar, err)) {
@@ -404,17 +413,25 @@ bool scan_archive(const std::string& archivePath, const Options& opts, ProgressI
             }
         }
         progress.filesTotal += 1;
-        archive_read_data_skip(ar);
+        if (!skip_archive_entry_data(ar, err)) {
+            archive_read_close(ar);
+            archive_read_free(ar);
+            return false;
+        }
     }
 
-    if (r != ARCHIVE_EOF && r != ARCHIVE_OK) {
+    if (r != ARCHIVE_EOF) {
         set_archive_error(err, ar, "archive_read_next_header");
         archive_read_close(ar);
         archive_read_free(ar);
         return false;
     }
 
-    archive_read_close(ar);
+    if (archive_read_close(ar) != ARCHIVE_OK) {
+        set_archive_error(err, ar, "archive_read_close");
+        archive_read_free(ar);
+        return false;
+    }
     archive_read_free(ar);
     return true;
 }
@@ -710,7 +727,10 @@ bool extract_archive(const std::string& archivePath,
                 break;
             }
             extractedEntries.insert(relPath.normalized);
-            archive_read_data_skip(ar);
+            if (!skip_archive_entry_data(ar, err)) {
+                ok = false;
+                break;
+            }
             continue;
         }
 
@@ -732,7 +752,9 @@ bool extract_archive(const std::string& archivePath,
                 else {
                     extractedEntries.insert(relPath.normalized);
                 }
-                archive_read_data_skip(ar);
+                if (ok && !skip_archive_entry_data(ar, err)) {
+                    ok = false;
+                }
                 break;
             }
             case AE_IFLNK: {
@@ -742,11 +764,15 @@ bool extract_archive(const std::string& archivePath,
                 else if (opts.keepSymlinks && archive_entry_symlink(entry)) {
                     extractedEntries.insert(relPath.normalized);
                 }
-                archive_read_data_skip(ar);
+                if (ok && !skip_archive_entry_data(ar, err)) {
+                    ok = false;
+                }
                 break;
             }
             default: {
-                archive_read_data_skip(ar);  // unsupported special files or metadata entries
+                if (!skip_archive_entry_data(ar, err)) {  // unsupported special files or metadata entries
+                    ok = false;
+                }
                 break;
             }
         }
@@ -756,12 +782,17 @@ bool extract_archive(const std::string& archivePath,
         }
     }
 
-    if (ok && readStatus != ARCHIVE_EOF) {
-        set_archive_error(err, ar, "archive_read_next_header");
+    if (ok) {
+        if (readStatus != ARCHIVE_EOF) {
+            set_archive_error(err, ar, "archive_read_next_header");
+            ok = false;
+        }
+    }
+    const int closeStatus = archive_read_close(ar);
+    if (ok && closeStatus != ARCHIVE_OK) {
+        set_archive_error(err, ar, "archive_read_close");
         ok = false;
     }
-
-    archive_read_close(ar);
     archive_read_free(ar);
 
     if (!ok) {

@@ -165,6 +165,24 @@ bool write_archive_with_symlink(const QString& path,
     return write_archive_entries(path, entries, format, filter, errorOut);
 }
 
+bool truncate_archive_tail(const QString& path, qint64 bytesToRemove, QString* errorOut) {
+    QFile f(path);
+    if (!f.open(QIODevice::ReadWrite)) {
+        *errorOut = QStringLiteral("open failed: %1").arg(f.errorString());
+        return false;
+    }
+    const qint64 size = f.size();
+    if (bytesToRemove <= 0 || size <= bytesToRemove) {
+        *errorOut = QStringLiteral("invalid truncation request: size=%1 remove=%2").arg(size).arg(bytesToRemove);
+        return false;
+    }
+    if (!f.resize(size - bytesToRemove)) {
+        *errorOut = QStringLiteral("resize failed: %1").arg(f.errorString());
+        return false;
+    }
+    return true;
+}
+
 QString readFile(const QString& path) {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) {
@@ -208,6 +226,8 @@ class ArchiveExtractTest : public QObject {
     void rejectsParentReplacementWithSymlink();
     void rejectsUnsafeHardlinkTarget();
     void tarExtractorRejectsSymlinkComponentEscape();
+    void truncatedTarFailsWithReadError();
+    void tarExtractorTruncatedTarFails();
 };
 
 void ArchiveExtractTest::extractKnownFormats_data() {
@@ -472,6 +492,50 @@ void ArchiveExtractTest::tarExtractorRejectsSymlinkComponentEscape() {
     const bool ok = extract_with_archive_writer(archivePath, destDir, progress, err);
     QVERIFY(!ok);
     QVERIFY(!QFileInfo::exists(outsideDir + QLatin1String("/escape.txt")));
+}
+
+void ArchiveExtractTest::truncatedTarFailsWithReadError() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString archivePath = dir.path() + QLatin1String("/truncated.tar");
+    QByteArray payload;
+    payload.fill('a', 3000);
+    QString error;
+    QVERIFY2(write_archive_file(archivePath, QStringLiteral("big.bin"), payload, QStringLiteral("gnutar"),
+                                QStringLiteral(""), &error),
+             qPrintable(error));
+    QVERIFY2(truncate_archive_tail(archivePath, 1500, &error), qPrintable(error));
+
+    const QString destDir = dir.path() + QLatin1String("/out-truncated");
+    ProgressInfo progress;
+    Error err;
+    const bool ok = extract_with_archive_extract(archivePath, destDir, progress, err);
+    QVERIFY(!ok);
+    QVERIFY(QString::fromStdString(err.message).contains(QStringLiteral("archive_read_data_skip")));
+    QVERIFY(!QFileInfo::exists(destDir));
+}
+
+void ArchiveExtractTest::tarExtractorTruncatedTarFails() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString archivePath = dir.path() + QLatin1String("/truncated-tar-extractor.tar");
+    QByteArray payload;
+    payload.fill('b', 3000);
+    QString error;
+    QVERIFY2(write_archive_file(archivePath, QStringLiteral("big.bin"), payload, QStringLiteral("gnutar"),
+                                QStringLiteral(""), &error),
+             qPrintable(error));
+    QVERIFY2(truncate_archive_tail(archivePath, 1500, &error), qPrintable(error));
+
+    const QString destDir = dir.path() + QLatin1String("/out-truncated-tar-extractor");
+    ProgressInfo progress;
+    Error err;
+    const bool ok = extract_with_archive_writer(archivePath, destDir, progress, err);
+    QVERIFY(!ok);
+    QVERIFY(QString::fromStdString(err.message).contains(QStringLiteral("archive_read_data")));
+    QVERIFY(!QFileInfo::exists(destDir));
 }
 
 QTEST_MAIN(ArchiveExtractTest)
