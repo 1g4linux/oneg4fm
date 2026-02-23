@@ -10,6 +10,7 @@
 #include <QTest>
 
 #include "../libfm-qt/src/core/deletejob.h"
+#include "../libfm-qt/src/core/fileops_bridge_policy.h"
 #include "../libfm-qt/src/core/filetransferjob.h"
 
 #include <cstdint>
@@ -46,6 +47,8 @@ class LibfmQtFileOpsBridgeTest : public QObject {
    private Q_SLOTS:
     void copyConflictSkipCountsAsCompletedWork();
     void deleteNativeDirectoryTreeTracksCompletion();
+    void coreRoutingEligibilityAcceptsNativeLocalPath();
+    void coreRoutingEligibilityRejectsUriSchemes();
 };
 
 void LibfmQtFileOpsBridgeTest::copyConflictSkipCountsAsCompletedWork() {
@@ -121,6 +124,26 @@ void LibfmQtFileOpsBridgeTest::deleteNativeDirectoryTreeTracksCompletion() {
     QVERIFY(job.finishedAmount(finishedBytes, finishedFiles));
 
     QCOMPARE(finishedFiles, totalFiles);
+}
+
+void LibfmQtFileOpsBridgeTest::coreRoutingEligibilityAcceptsNativeLocalPath() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString filePath = writeFile(dir.path() + QLatin1String("/local.txt"), QByteArray("local"));
+    const Fm::FilePath path = toLocalFilePath(filePath);
+    QVERIFY(path.isNative());
+    QVERIFY(Fm::FileOpsBridgePolicy::isCoreLocalPathEligible(path));
+}
+
+void LibfmQtFileOpsBridgeTest::coreRoutingEligibilityRejectsUriSchemes() {
+    const Fm::FilePath trashRoot = Fm::FilePath::fromUri("trash:///");
+    QVERIFY(!trashRoot.isNative());
+    QVERIFY(!Fm::FileOpsBridgePolicy::isCoreLocalPathEligible(trashRoot));
+
+    const Fm::FilePath remoteUri = Fm::FilePath::fromUri("sftp://example.invalid/path");
+    QVERIFY(!remoteUri.isNative());
+    QVERIFY(!Fm::FileOpsBridgePolicy::isCoreLocalPathEligible(remoteUri));
 }
 
 QTEST_MAIN(LibfmQtFileOpsBridgeTest)

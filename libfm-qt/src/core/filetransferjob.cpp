@@ -1,4 +1,5 @@
 #include "filetransferjob.h"
+#include "fileops_bridge_policy.h"
 #include "totalsizejob.h"
 #include "fileinfo_p.h"
 
@@ -23,7 +24,7 @@ namespace {
 namespace CoreFileOps = PCManFM::FileOpsContract;
 
 bool toNativeLocalPath(const FilePath& path, std::string& out) {
-    if (!path.isNative()) {
+    if (!FileOpsBridgePolicy::isCoreLocalPathEligible(path)) {
         out.clear();
         return false;
     }
@@ -899,7 +900,8 @@ void FileTransferJob::exec() {
         const auto& destPath = destPaths_[i];
 
 #if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
-        if (mode_ != Mode::LINK && srcPath.isNative() && destPath.isNative()) {
+        if (mode_ != Mode::LINK && FileOpsBridgePolicy::isCoreLocalPathEligible(srcPath) &&
+            FileOpsBridgePolicy::isCoreLocalPathEligible(destPath)) {
             runCoreLocalPath(srcPath, destPath);
             continue;
         }

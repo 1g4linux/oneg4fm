@@ -11,6 +11,7 @@ set(libfm_core_SRCS
     # core data structures
     core/gobjectptr.h
     core/filepath.cpp
+    core/fileops_bridge_policy.cpp
     core/iconinfo.cpp
     core/mimetype.cpp
     core/fileinfo.cpp

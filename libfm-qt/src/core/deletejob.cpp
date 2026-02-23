@@ -1,4 +1,5 @@
 #include "deletejob.h"
+#include "fileops_bridge_policy.h"
 #include "totalsizejob.h"
 #include "fileinfo_p.h"
 
@@ -22,7 +23,7 @@ namespace {
 namespace CoreFileOps = PCManFM::FileOpsContract;
 
 bool toNativeLocalPath(const FilePath& path, std::string& out) {
-    if (!path.isNative()) {
+    if (!FileOpsBridgePolicy::isCoreLocalPathEligible(path)) {
         out.clear();
         return false;
     }
@@ -271,7 +272,7 @@ void DeleteJob::exec() {
         }
 
 #if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
-        if (path.isNative()) {
+        if (FileOpsBridgePolicy::isCoreLocalPathEligible(path)) {
             runCoreLocalDelete(path);
             continue;
         }
