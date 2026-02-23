@@ -28,6 +28,7 @@
 #include <QMessageBox>
 #include <QObject>
 #include <QProgressDialog>
+#include <QTimer>
 #include <QtGlobal>
 #include <unistd.h>
 #include <memory>
@@ -287,7 +288,9 @@ void MainWindow::on_actionDelete_triggered() {
     req.preserveOwnership = shouldPreserveOwnershipForOps();
 
     progressDialog->show();
-    fileOpsPtr->start(req);
+    progressDialog->raise();
+    progressDialog->activateWindow();
+    QTimer::singleShot(0, fileOpsPtr, [fileOpsPtr, req]() { fileOpsPtr->start(req); });
 }
 
 void MainWindow::on_actionRename_triggered() {
