@@ -17,6 +17,7 @@ class FileOpsInventoryTest : public QObject {
    private Q_SLOTS:
     void inventoryHasRequiredCategories();
     void inventoryEntriesMapToRealSymbols();
+    void legacyNativeCategoryHasNoActiveDuplicates();
 
    private:
     QString sourceRoot() const;
@@ -113,6 +114,28 @@ void FileOpsInventoryTest::inventoryEntriesMapToRealSymbols() {
             QVERIFY2(fileData.contains(symbol.toUtf8()),
                      qPrintable(QStringLiteral("Inventory symbol not found in file (%1): %2").arg(relFile, symbol)));
         }
+    }
+}
+
+void FileOpsInventoryTest::legacyNativeCategoryHasNoActiveDuplicates() {
+    const auto [root, error] = readInventory();
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+
+    const QJsonObject categories = root.value(QStringLiteral("categories")).toObject();
+    QVERIFY2(categories.contains(QStringLiteral("legacy_native_copy_move_delete")),
+             "Missing legacy_native_copy_move_delete category");
+
+    const QJsonArray entries = categories.value(QStringLiteral("legacy_native_copy_move_delete")).toArray();
+    QVERIFY2(!entries.isEmpty(), "legacy_native_copy_move_delete category must not be empty");
+
+    for (int i = 0; i < entries.size(); ++i) {
+        QVERIFY2(entries.at(i).isObject(), "legacy_native_copy_move_delete entry is not an object");
+        const QJsonObject entry = entries.at(i).toObject();
+        const QString state = entry.value(QStringLiteral("state")).toString();
+        QVERIFY2(
+            state != QStringLiteral("active-duplicate"),
+            qPrintable(
+                QStringLiteral("legacy_native_copy_move_delete contains active duplicate entry at index %1").arg(i)));
     }
 }
 

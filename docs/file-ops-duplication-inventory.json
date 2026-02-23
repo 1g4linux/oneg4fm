@@ -6,50 +6,50 @@
       {
         "file": "libfm-qt/src/core/filetransferjob.cpp",
         "symbol": "bool FileTransferJob::processPath(",
-        "state": "active-duplicate",
-        "notes": "Legacy native copy/move path remains for non-core-eligible operations."
+        "state": "gio-only-shim",
+        "notes": "Legacy copy/move branch is retained only for GIO-only (non-core-local) routing."
       },
       {
         "file": "libfm-qt/src/core/filetransferjob.cpp",
         "symbol": "bool FileTransferJob::moveFile(",
-        "state": "active-duplicate",
-        "notes": "Legacy move implementation with same-fs and cross-fs branches."
+        "state": "gio-only-shim",
+        "notes": "Legacy move implementation remains only for GIO compatibility paths."
       },
       {
         "file": "libfm-qt/src/core/filetransferjob.cpp",
         "symbol": "bool FileTransferJob::copyFile(",
-        "state": "active-duplicate",
-        "notes": "Legacy recursive copy implementation."
+        "state": "gio-only-shim",
+        "notes": "Legacy recursive copy implementation remains only for GIO compatibility paths."
       },
       {
         "file": "libfm-qt/src/core/filetransferjob.cpp",
         "symbol": "bool FileTransferJob::moveFileSameFs(",
-        "state": "active-duplicate",
-        "notes": "Legacy same-filesystem move path."
+        "state": "gio-only-shim",
+        "notes": "Legacy same-filesystem move path remains only for GIO compatibility paths."
       },
       {
         "file": "libfm-qt/src/core/filetransferjob.cpp",
-        "symbol": "if (mode_ != Mode::LINK && FileOpsBridgePolicy::isCoreLocalPathEligible(srcPath) &&",
+        "symbol": "const auto srcRouting = FileOpsBridgePolicy::classifyPathForFileOps(srcPath);",
         "state": "routing-gate",
-        "notes": "Core routing gate; LINK and non-eligible paths fall back to legacy implementation."
+        "notes": "Explicit routing classification gate: core-local paths must use core contract."
       },
       {
         "file": "libfm-qt/src/core/deletejob.cpp",
         "symbol": "bool DeleteJob::deleteFile(",
-        "state": "active-duplicate",
-        "notes": "Legacy delete implementation still used for non-core-eligible paths."
+        "state": "gio-only-shim",
+        "notes": "Legacy delete implementation remains only for GIO compatibility paths."
       },
       {
         "file": "libfm-qt/src/core/deletejob.cpp",
         "symbol": "bool DeleteJob::deleteDirContent(",
-        "state": "active-duplicate",
-        "notes": "Legacy recursive delete traversal."
+        "state": "gio-only-shim",
+        "notes": "Legacy recursive delete traversal remains only for GIO compatibility paths."
       },
       {
         "file": "libfm-qt/src/core/deletejob.cpp",
-        "symbol": "if (FileOpsBridgePolicy::isCoreLocalPathEligible(path)) {",
+        "symbol": "const auto pathRouting = FileOpsBridgePolicy::classifyPathForFileOps(path);",
         "state": "routing-gate",
-        "notes": "Core routing gate for delete; non-eligible paths use legacy delete recursion."
+        "notes": "Explicit routing classification gate: core-local delete paths must use core contract."
       }
     ],
     "redundant_planners": [

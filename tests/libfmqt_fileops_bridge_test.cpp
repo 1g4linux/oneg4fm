@@ -56,6 +56,7 @@ class LibfmQtFileOpsBridgeTest : public QObject {
     void noSpaceErrorPreservesDestinationWithOverwrite();
     void createShortcutFailureIsReportedAsFailure();
     void copyFilesWithExplicitDestPathsAcceptsEmptyLists();
+    void nativeCopyMoveDeleteRoutingUsesExplicitClassification();
 };
 
 void LibfmQtFileOpsBridgeTest::copyConflictSkipCountsAsCompletedWork() {
@@ -227,6 +228,30 @@ void LibfmQtFileOpsBridgeTest::copyFilesWithExplicitDestPathsAcceptsEmptyLists()
     Fm::FileOperation::copyFiles(std::move(srcFiles), std::move(destFiles), nullptr);
     QTest::qWait(10);
     QVERIFY(true);
+}
+
+void LibfmQtFileOpsBridgeTest::nativeCopyMoveDeleteRoutingUsesExplicitClassification() {
+    const QString transferPath = QFINDTESTDATA("../libfm-qt/src/core/filetransferjob.cpp");
+    QVERIFY2(!transferPath.isEmpty(), "Unable to locate libfm-qt/src/core/filetransferjob.cpp");
+    QFile transferSource(transferPath);
+    QVERIFY(transferSource.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QByteArray transferBytes = transferSource.readAll();
+
+    QVERIFY(transferBytes.contains("classifyPathForFileOps(srcPath)"));
+    QVERIFY(transferBytes.contains("classifyPathForFileOps(destPath)"));
+    QVERIFY(transferBytes.contains("RoutingClass::CoreLocal"));
+    QVERIFY(transferBytes.contains("RoutingClass::Unsupported"));
+    QVERIFY(!transferBytes.contains("mode_ != Mode::LINK && FileOpsBridgePolicy::isCoreLocalPathEligible(srcPath) &&"));
+
+    const QString deletePath = QFINDTESTDATA("../libfm-qt/src/core/deletejob.cpp");
+    QVERIFY2(!deletePath.isEmpty(), "Unable to locate libfm-qt/src/core/deletejob.cpp");
+    QFile deleteSource(deletePath);
+    QVERIFY(deleteSource.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QByteArray deleteBytes = deleteSource.readAll();
+
+    QVERIFY(deleteBytes.contains("classifyPathForFileOps(path)"));
+    QVERIFY(deleteBytes.contains("RoutingClass::CoreLocal"));
+    QVERIFY(deleteBytes.contains("RoutingClass::Unsupported"));
 }
 
 QTEST_MAIN(LibfmQtFileOpsBridgeTest)

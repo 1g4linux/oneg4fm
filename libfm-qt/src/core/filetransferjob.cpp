@@ -83,6 +83,51 @@ GErrorPtr coreResultToError(const CoreFileOps::Result& result, const char* fallb
     g_set_error(&err, G_IO_ERROR, code, "%s", message);
     return err;
 }
+
+const char* routingClassName(FileOpsBridgePolicy::RoutingClass routingClass) {
+    switch (routingClass) {
+        case FileOpsBridgePolicy::RoutingClass::CoreLocal:
+            return "CoreLocal";
+        case FileOpsBridgePolicy::RoutingClass::LegacyGio:
+            return "LegacyGio";
+        case FileOpsBridgePolicy::RoutingClass::Unsupported:
+            return "Unsupported";
+    }
+    return "Unknown";
+}
+
+std::string describePathForRoutingError(const FilePath& path) {
+    if (!path) {
+        return "<invalid>";
+    }
+
+    const auto localPath = path.localPath();
+    if (localPath && localPath.get()[0] != '\0') {
+        return localPath.get();
+    }
+
+    const auto uri = path.uri();
+    if (uri && uri.get()[0] != '\0') {
+        return uri.get();
+    }
+    return "<unresolved>";
+}
+
+GErrorPtr unsupportedRoutingError(const FilePath& source,
+                                  const FilePath& destination,
+                                  FileOpsBridgePolicy::RoutingClass sourceRouting,
+                                  FileOpsBridgePolicy::RoutingClass destinationRouting) {
+    const std::string sourcePath = describePathForRoutingError(source);
+    const std::string destinationPath = describePathForRoutingError(destination);
+
+    GErrorPtr err;
+    g_set_error(&err, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+                "Refusing legacy local copy/move fallback: unsafe routing classification (source=%s, destination=%s, "
+                "sourceClass=%s, destinationClass=%s)",
+                sourcePath.c_str(), destinationPath.c_str(), routingClassName(sourceRouting),
+                routingClassName(destinationRouting));
+    return err;
+}
 #endif
 
 }  // namespace
@@ -900,10 +945,22 @@ void FileTransferJob::exec() {
         const auto& destPath = destPaths_[i];
 
 #if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
-        if (mode_ != Mode::LINK && FileOpsBridgePolicy::isCoreLocalPathEligible(srcPath) &&
-            FileOpsBridgePolicy::isCoreLocalPathEligible(destPath)) {
-            runCoreLocalPath(srcPath, destPath);
-            continue;
+        if (mode_ != Mode::LINK) {
+            const auto srcRouting = FileOpsBridgePolicy::classifyPathForFileOps(srcPath);
+            const auto destRouting = FileOpsBridgePolicy::classifyPathForFileOps(destPath);
+            if (srcRouting == FileOpsBridgePolicy::RoutingClass::CoreLocal &&
+                destRouting == FileOpsBridgePolicy::RoutingClass::CoreLocal) {
+                runCoreLocalPath(srcPath, destPath);
+                continue;
+            }
+
+            if (srcRouting == FileOpsBridgePolicy::RoutingClass::Unsupported ||
+                destRouting == FileOpsBridgePolicy::RoutingClass::Unsupported) {
+                GErrorPtr err = unsupportedRoutingError(srcPath, destPath, srcRouting, destRouting);
+                emitError(err, ErrorSeverity::CRITICAL);
+                cancel();
+                break;
+            }
         }
 #endif
 

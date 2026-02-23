@@ -57,6 +57,44 @@ GErrorPtr coreResultToError(const CoreFileOps::Result& result, const char* fallb
     g_set_error(&err, G_IO_ERROR, code, "%s", message);
     return err;
 }
+
+const char* routingClassName(FileOpsBridgePolicy::RoutingClass routingClass) {
+    switch (routingClass) {
+        case FileOpsBridgePolicy::RoutingClass::CoreLocal:
+            return "CoreLocal";
+        case FileOpsBridgePolicy::RoutingClass::LegacyGio:
+            return "LegacyGio";
+        case FileOpsBridgePolicy::RoutingClass::Unsupported:
+            return "Unsupported";
+    }
+    return "Unknown";
+}
+
+std::string describePathForRoutingError(const FilePath& path) {
+    if (!path) {
+        return "<invalid>";
+    }
+
+    const auto localPath = path.localPath();
+    if (localPath && localPath.get()[0] != '\0') {
+        return localPath.get();
+    }
+
+    const auto uri = path.uri();
+    if (uri && uri.get()[0] != '\0') {
+        return uri.get();
+    }
+    return "<unresolved>";
+}
+
+GErrorPtr unsupportedDeleteRoutingError(const FilePath& path, FileOpsBridgePolicy::RoutingClass routingClass) {
+    const std::string routedPath = describePathForRoutingError(path);
+    GErrorPtr err;
+    g_set_error(&err, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+                "Refusing legacy local delete fallback: unsafe routing classification (path=%s, pathClass=%s)",
+                routedPath.c_str(), routingClassName(routingClass));
+    return err;
+}
 #endif
 
 }  // namespace
@@ -272,9 +310,17 @@ void DeleteJob::exec() {
         }
 
 #if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
-        if (FileOpsBridgePolicy::isCoreLocalPathEligible(path)) {
+        const auto pathRouting = FileOpsBridgePolicy::classifyPathForFileOps(path);
+        if (pathRouting == FileOpsBridgePolicy::RoutingClass::CoreLocal) {
             runCoreLocalDelete(path);
             continue;
+        }
+
+        if (pathRouting == FileOpsBridgePolicy::RoutingClass::Unsupported) {
+            GErrorPtr err = unsupportedDeleteRoutingError(path, pathRouting);
+            emitError(err, ErrorSeverity::CRITICAL);
+            cancel();
+            break;
         }
 #endif
 

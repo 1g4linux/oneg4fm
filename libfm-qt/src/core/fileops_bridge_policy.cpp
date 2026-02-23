@@ -26,14 +26,18 @@ bool queryFilesystemRemote(const FilePath& path, bool& remoteOut) {
 
 }  // namespace
 
-bool isCoreLocalPathEligible(const FilePath& path) {
-    if (!path || !path.isNative() || !hasFileScheme(path)) {
-        return false;
+RoutingClass classifyPathForFileOps(const FilePath& path) {
+    if (!path) {
+        return RoutingClass::Unsupported;
+    }
+
+    if (!path.isNative() || !hasFileScheme(path)) {
+        return RoutingClass::LegacyGio;
     }
 
     const auto localPath = path.localPath();
     if (!localPath || localPath.get()[0] == '\0') {
-        return false;
+        return RoutingClass::Unsupported;
     }
 
     // Walk up until filesystem info is available. Destination targets may not exist yet.
@@ -41,12 +45,16 @@ bool isCoreLocalPathEligible(const FilePath& path) {
     for (int depth = 0; probe && depth < 64; ++depth) {
         bool isRemote = false;
         if (queryFilesystemRemote(probe, isRemote)) {
-            return !isRemote;
+            return isRemote ? RoutingClass::LegacyGio : RoutingClass::CoreLocal;
         }
         probe = probe.parent();
     }
 
-    return false;
+    return RoutingClass::Unsupported;
+}
+
+bool isCoreLocalPathEligible(const FilePath& path) {
+    return classifyPathForFileOps(path) == RoutingClass::CoreLocal;
 }
 
 }  // namespace Fm::FileOpsBridgePolicy
