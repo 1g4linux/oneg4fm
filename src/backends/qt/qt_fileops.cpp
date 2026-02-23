@@ -8,11 +8,14 @@
 #include "../../core/file_ops_contract.h"
 
 #include <QFile>
+#include <QMetaMethod>
 #include <QObject>
 #include <QThread>
 
 #include <atomic>
 #include <cerrno>
+#include <condition_variable>
+#include <mutex>
 
 namespace PCManFM {
 
@@ -37,6 +40,14 @@ FileOpProgress toQtProgress(const FileOpsContract::ProgressSnapshot& core) {
     return qt;
 }
 
+FileOpConflict toQtConflict(const FileOpsContract::ConflictEvent& core) {
+    FileOpConflict qt{};
+    qt.sourcePath = fromNativePath(core.sourcePath);
+    qt.destinationPath = fromNativePath(core.destinationPath);
+    qt.destinationIsDirectory = core.destinationIsDirectory;
+    return qt;
+}
+
 bool toContractOperation(FileOpType type, FileOpsContract::Operation& out) {
     switch (type) {
         case FileOpType::Copy:
@@ -53,14 +64,37 @@ bool toContractOperation(FileOpType type, FileOpsContract::Operation& out) {
     return false;
 }
 
+FileOpsContract::ConflictResolution toContractResolution(FileOpConflictResolution resolution) {
+    switch (resolution) {
+        case FileOpConflictResolution::Overwrite:
+            return FileOpsContract::ConflictResolution::Overwrite;
+        case FileOpConflictResolution::Skip:
+            return FileOpsContract::ConflictResolution::Skip;
+        case FileOpConflictResolution::Rename:
+            return FileOpsContract::ConflictResolution::Rename;
+        case FileOpConflictResolution::Abort:
+            return FileOpsContract::ConflictResolution::Abort;
+        case FileOpConflictResolution::OverwriteAll:
+            return FileOpsContract::ConflictResolution::OverwriteAll;
+        case FileOpConflictResolution::SkipAll:
+            return FileOpsContract::ConflictResolution::SkipAll;
+        case FileOpConflictResolution::RenameAll:
+            return FileOpsContract::ConflictResolution::RenameAll;
+    }
+
+    return FileOpsContract::ConflictResolution::Abort;
+}
+
 }  // namespace
 
 class QtFileOps::Worker : public QObject {
     Q_OBJECT
 
    public:
-    explicit Worker(const std::shared_ptr<std::atomic<bool>>& cancelRequested, QObject* parent = nullptr)
-        : QObject(parent), cancelRequested_(cancelRequested) {}
+    explicit Worker(QtFileOps* owner,
+                    const std::shared_ptr<std::atomic<bool>>& cancelRequested,
+                    QObject* parent = nullptr)
+        : QObject(parent), owner_(owner), cancelRequested_(cancelRequested) {}
 
    public Q_SLOTS:
     void processRequest(const FileOpRequest& req) {
@@ -71,11 +105,16 @@ class QtFileOps::Worker : public QObject {
             return;
         }
 
+        if (contractReq.conflictPolicy == FileOpsContract::ConflictPolicy::Prompt && !hasConflictResponder()) {
+            Q_EMIT finished(false, QStringLiteral("Prompt conflict policy requires a connected conflict responder"));
+            return;
+        }
+
         contractReq.cancellationRequested = [flag = cancelRequested_]() { return flag && flag->load(); };
 
         const FileOpsContract::EventHandlers handlers{
             [this](const FileOpsContract::ProgressSnapshot& info) { Q_EMIT progress(toQtProgress(info)); },
-            {},
+            [this](const FileOpsContract::ConflictEvent& event) { return waitForConflictResolution(event); },
         };
 
         const FileOpsContract::Result result = FileOpsContract::run(contractReq, handlers);
@@ -101,13 +140,63 @@ class QtFileOps::Worker : public QObject {
         if (cancelRequested_) {
             cancelRequested_->store(true);
         }
+
+        std::lock_guard<std::mutex> lock(conflictMutex_);
+        if (!waitingForConflictResolution_) {
+            return;
+        }
+        pendingConflictResolution_ = FileOpConflictResolution::Abort;
+        hasConflictResolution_ = true;
+        conflictCv_.notify_one();
+    }
+
+    void resolveConflict(FileOpConflictResolution resolution) {
+        std::lock_guard<std::mutex> lock(conflictMutex_);
+        if (!waitingForConflictResolution_) {
+            return;
+        }
+        pendingConflictResolution_ = resolution;
+        hasConflictResolution_ = true;
+        conflictCv_.notify_one();
     }
 
    Q_SIGNALS:
     void progress(const FileOpProgress& info);
+    void conflictRequested(const FileOpConflict& info);
     void finished(bool success, const QString& errorMessage);
 
    private:
+    bool hasConflictResponder() const {
+        if (!owner_) {
+            return false;
+        }
+
+        bool responderConnected = false;
+        QMetaObject::invokeMethod(
+            owner_, [this, &responderConnected]() { responderConnected = owner_->hasConflictResponder(); },
+            Qt::BlockingQueuedConnection);
+        return responderConnected;
+    }
+
+    FileOpsContract::ConflictResolution waitForConflictResolution(const FileOpsContract::ConflictEvent& event) {
+        {
+            std::lock_guard<std::mutex> lock(conflictMutex_);
+            waitingForConflictResolution_ = true;
+            hasConflictResolution_ = false;
+            pendingConflictResolution_ = FileOpConflictResolution::Abort;
+        }
+
+        Q_EMIT conflictRequested(toQtConflict(event));
+
+        std::unique_lock<std::mutex> lock(conflictMutex_);
+        conflictCv_.wait(lock, [this]() { return hasConflictResolution_; });
+
+        const FileOpConflictResolution resolution = pendingConflictResolution_;
+        hasConflictResolution_ = false;
+        waitingForConflictResolution_ = false;
+        return toContractResolution(resolution);
+    }
+
     bool buildContractRequest(const FileOpRequest& req, FileOpsContract::Request& out, QString& requestError) {
         out = {};
         requestError.clear();
@@ -150,10 +239,24 @@ class QtFileOps::Worker : public QObject {
                 requestError = QStringLiteral("Delete operations do not use overwriteExisting");
                 return false;
             }
+            if (req.promptOnConflict) {
+                requestError = QStringLiteral("Delete operations do not use promptOnConflict");
+                return false;
+            }
         }
         else {
-            out.conflictPolicy = req.overwriteExisting ? FileOpsContract::ConflictPolicy::Overwrite
-                                                       : FileOpsContract::ConflictPolicy::Skip;
+            if (req.promptOnConflict && req.overwriteExisting) {
+                requestError = QStringLiteral("promptOnConflict cannot be combined with overwriteExisting");
+                return false;
+            }
+
+            if (req.promptOnConflict) {
+                out.conflictPolicy = FileOpsContract::ConflictPolicy::Prompt;
+            }
+            else {
+                out.conflictPolicy = req.overwriteExisting ? FileOpsContract::ConflictPolicy::Overwrite
+                                                           : FileOpsContract::ConflictPolicy::Skip;
+            }
         }
 
         if (req.followSymlinks) {
@@ -178,22 +281,47 @@ class QtFileOps::Worker : public QObject {
         return true;
     }
 
+    QtFileOps* owner_;
     std::shared_ptr<std::atomic<bool>> cancelRequested_;
+    std::mutex conflictMutex_;
+    std::condition_variable conflictCv_;
+    bool waitingForConflictResolution_ = false;
+    bool hasConflictResolution_ = false;
+    FileOpConflictResolution pendingConflictResolution_ = FileOpConflictResolution::Abort;
 };
 
 QtFileOps::QtFileOps(QObject* parent)
     : IFileOps(parent),
       cancelRequested_(std::make_shared<std::atomic<bool>>(false)),
-      worker_(new Worker(cancelRequested_)),
+      worker_(new Worker(this, cancelRequested_)),
       workerThread_(new QThread) {
+    qRegisterMetaType<FileOpRequest>("PCManFM::FileOpRequest");
+    qRegisterMetaType<FileOpProgress>("PCManFM::FileOpProgress");
+    qRegisterMetaType<FileOpConflict>("PCManFM::FileOpConflict");
+    qRegisterMetaType<FileOpConflictResolution>("PCManFM::FileOpConflictResolution");
+
     worker_->moveToThread(workerThread_);
 
     connect(this, &QtFileOps::startRequest, worker_, &Worker::processRequest);
     connect(this, &QtFileOps::cancelRequest, worker_, &Worker::cancel);
     connect(worker_, &Worker::progress, this, &QtFileOps::progress);
+    connect(worker_, &Worker::conflictRequested, this, &QtFileOps::onWorkerConflict);
     connect(worker_, &Worker::finished, this, &QtFileOps::onWorkerFinished);
 
     workerThread_->start();
+}
+
+bool QtFileOps::hasConflictResponder() const {
+    return isSignalConnected(QMetaMethod::fromSignal(&IFileOps::conflictRequested));
+}
+
+void QtFileOps::onWorkerConflict(const FileOpConflict& info) {
+    if (!hasConflictResponder()) {
+        resolveConflict(FileOpConflictResolution::Abort);
+        return;
+    }
+
+    Q_EMIT conflictRequested(info);
 }
 
 void QtFileOps::onWorkerFinished(bool success, const QString& errorMessage) {
@@ -216,6 +344,13 @@ void QtFileOps::start(const FileOpRequest& req) {
 void QtFileOps::cancel() {
     cancelRequested_->store(true);
     Q_EMIT cancelRequest();
+}
+
+void QtFileOps::resolveConflict(FileOpConflictResolution resolution) {
+    if (!worker_) {
+        return;
+    }
+    worker_->resolveConflict(resolution);
 }
 
 }  // namespace PCManFM

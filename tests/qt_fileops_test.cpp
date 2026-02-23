@@ -29,6 +29,10 @@ class QtFileOpsTest : public QObject {
     void deleteRejectsDestinationField();
     void deleteRejectsOverwriteExistingField();
     void copyRejectsFollowSymlinks();
+    void copyPromptConflictUsesUiResolution();
+    void copyPromptConflictRequiresResponder();
+    void copyRejectsPromptAndOverwriteTogether();
+    void deleteRejectsPromptOnConflictField();
     void cancelRequestsStopCopyThroughCoreContract();
 };
 
@@ -339,6 +343,7 @@ void QtFileOpsTest::copyRejectsFollowSymlinks() {
     req.destination = dstDir;
     req.followSymlinks = true;
     req.overwriteExisting = false;
+    req.promptOnConflict = false;
 
     ops.start(req);
     QTRY_VERIFY_WITH_TIMEOUT(finishedSpy.count() > 0, 2000);
@@ -346,6 +351,137 @@ void QtFileOpsTest::copyRejectsFollowSymlinks() {
     QVERIFY(!args.at(0).toBool());
     QVERIFY(args.at(1).toString().contains(QStringLiteral("followSymlinks"), Qt::CaseInsensitive));
     QVERIFY(!QFileInfo::exists(dstPath));
+}
+
+void QtFileOpsTest::copyPromptConflictUsesUiResolution() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString src = writeTempFile(dir, QStringLiteral("src.txt"), "new-data");
+    const QString dstDir = dir.path() + QLatin1String("/dst");
+    QVERIFY(QDir().mkpath(dstDir));
+    const QString dstPath = writeTempFile(dir, QStringLiteral("dst/src.txt"), "old-data");
+
+    QtFileOps ops;
+    QSignalSpy finishedSpy(&ops, &QtFileOps::finished);
+
+    int conflictCount = 0;
+    FileOpConflict observedConflict;
+    connect(&ops, &QtFileOps::conflictRequested, &ops,
+            [&ops, &conflictCount, &observedConflict](const FileOpConflict& info) {
+                ++conflictCount;
+                observedConflict = info;
+                ops.resolveConflict(FileOpConflictResolution::Rename);
+            });
+
+    FileOpRequest req;
+    req.type = FileOpType::Copy;
+    req.sources = QStringList{src};
+    req.destination = dstDir;
+    req.followSymlinks = false;
+    req.overwriteExisting = false;
+    req.promptOnConflict = true;
+
+    ops.start(req);
+
+    QTRY_VERIFY_WITH_TIMEOUT(finishedSpy.count() > 0, 2000);
+    const QList<QVariant> args = finishedSpy.takeFirst();
+    QVERIFY(args.at(0).toBool());
+    QCOMPARE(conflictCount, 1);
+    QCOMPARE(observedConflict.sourcePath, src);
+    QCOMPARE(observedConflict.destinationPath, dstPath);
+    QVERIFY(!observedConflict.destinationIsDirectory);
+    QCOMPARE(readFile(dstPath), QByteArray("old-data"));
+
+    const QString renamedPath = dstDir + QLatin1String("/src (copy).txt");
+    QVERIFY(QFileInfo::exists(renamedPath));
+    QCOMPARE(readFile(renamedPath), QByteArray("new-data"));
+}
+
+void QtFileOpsTest::copyPromptConflictRequiresResponder() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString src = writeTempFile(dir, QStringLiteral("src.txt"), "new-data");
+    const QString dstDir = dir.path() + QLatin1String("/dst");
+    QVERIFY(QDir().mkpath(dstDir));
+    const QString dstPath = writeTempFile(dir, QStringLiteral("dst/src.txt"), "old-data");
+
+    QtFileOps ops;
+    QSignalSpy finishedSpy(&ops, &QtFileOps::finished);
+
+    FileOpRequest req;
+    req.type = FileOpType::Copy;
+    req.sources = QStringList{src};
+    req.destination = dstDir;
+    req.followSymlinks = false;
+    req.overwriteExisting = false;
+    req.promptOnConflict = true;
+
+    ops.start(req);
+
+    QTRY_VERIFY_WITH_TIMEOUT(finishedSpy.count() > 0, 2000);
+    const QList<QVariant> args = finishedSpy.takeFirst();
+    QVERIFY(!args.at(0).toBool());
+    QVERIFY(args.at(1).toString().contains(QStringLiteral("conflict responder"), Qt::CaseInsensitive));
+    QCOMPARE(readFile(dstPath), QByteArray("old-data"));
+}
+
+void QtFileOpsTest::copyRejectsPromptAndOverwriteTogether() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString src = writeTempFile(dir, QStringLiteral("src.txt"), "copy-data");
+    const QString dstDir = dir.path() + QLatin1String("/dst");
+    QVERIFY(QDir().mkpath(dstDir));
+    const QString dstPath = dstDir + QLatin1String("/src.txt");
+
+    QtFileOps ops;
+    QSignalSpy finishedSpy(&ops, &QtFileOps::finished);
+    connect(&ops, &QtFileOps::conflictRequested, &ops,
+            [&ops](const FileOpConflict&) { ops.resolveConflict(FileOpConflictResolution::Rename); });
+
+    FileOpRequest req;
+    req.type = FileOpType::Copy;
+    req.sources = QStringList{src};
+    req.destination = dstDir;
+    req.followSymlinks = false;
+    req.overwriteExisting = true;
+    req.promptOnConflict = true;
+
+    ops.start(req);
+
+    QTRY_VERIFY_WITH_TIMEOUT(finishedSpy.count() > 0, 2000);
+    const QList<QVariant> args = finishedSpy.takeFirst();
+    QVERIFY(!args.at(0).toBool());
+    QVERIFY(args.at(1).toString().contains(QStringLiteral("promptOnConflict"), Qt::CaseInsensitive));
+    QVERIFY(!QFileInfo::exists(dstPath));
+}
+
+void QtFileOpsTest::deleteRejectsPromptOnConflictField() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString src = writeTempFile(dir, QStringLiteral("delete.txt"), "delete-data");
+    QVERIFY(QFileInfo::exists(src));
+
+    QtFileOps ops;
+    QSignalSpy finishedSpy(&ops, &QtFileOps::finished);
+
+    FileOpRequest req;
+    req.type = FileOpType::Delete;
+    req.sources = QStringList{src};
+    req.destination.clear();
+    req.followSymlinks = false;
+    req.overwriteExisting = false;
+    req.promptOnConflict = true;
+
+    ops.start(req);
+    QTRY_VERIFY_WITH_TIMEOUT(finishedSpy.count() > 0, 2000);
+    const QList<QVariant> args = finishedSpy.takeFirst();
+    QVERIFY(!args.at(0).toBool());
+    QVERIFY(args.at(1).toString().contains(QStringLiteral("promptOnConflict"), Qt::CaseInsensitive));
+    QVERIFY(QFileInfo::exists(src));
 }
 
 void QtFileOpsTest::cancelRequestsStopCopyThroughCoreContract() {

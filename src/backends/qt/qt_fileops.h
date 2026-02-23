@@ -24,8 +24,10 @@ class QtFileOps : public IFileOps {
 
     void start(const FileOpRequest& req) override;
     void cancel() override;
+    void resolveConflict(FileOpConflictResolution resolution) override;
 
    private Q_SLOTS:
+    void onWorkerConflict(const FileOpConflict& info);
     void onWorkerFinished(bool success, const QString& errorMessage);
 
    Q_SIGNALS:
@@ -33,6 +35,8 @@ class QtFileOps : public IFileOps {
     void cancelRequest();
 
    private:
+    bool hasConflictResponder() const;
+
     class Worker;
     std::shared_ptr<std::atomic<bool>> cancelRequested_;
     Worker* worker_;
