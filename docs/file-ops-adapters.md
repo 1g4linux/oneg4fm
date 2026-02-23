@@ -21,7 +21,9 @@ Primary adapter class: `QtFileOps`.
 | --- | --- |
 | `type` | Maps to core `Operation` (`Copy`, `Move`, `Delete`). |
 | `sources` | Required and converted to native byte paths. |
+| `sources` URI/native shape | Adapter also maps per-source endpoint kind (`routing.sourceKinds`) using URI-shape detection (`"://"`). |
 | `destination` | Required for copy/move; rejected for delete. |
+| `destination` URI/native shape | Mapped to `routing.destinationKind` for copy/move. |
 | `overwriteExisting` | Used for copy/move (`Overwrite` vs `Skip` conflict policy). Rejected for delete. |
 | `promptOnConflict` | Enables core `ConflictPolicy::Prompt`; rejected for delete and rejected when combined with `overwriteExisting=true`. |
 | `followSymlinks` | `true` is rejected; adapter enforces no-follow path. |
@@ -36,6 +38,12 @@ Adapter-fixed core settings:
 - `linuxSafety.requireOpenat2Resolve = true`
 - `linuxSafety.requireLandlock = false`
 - `linuxSafety.workerMode = InProcess`
+- `routing.defaultBackend = Auto`
+- `routing.destinationBackend = Auto`
+
+Before execution, the adapter runs `FileOpsContract::preflight()` so unsupported
+backend/capability combinations (for example URI paths requiring unavailable GIO
+backend integration) fail early with a clear core-generated reason.
 
 ### Signal/Conflict Bridge
 

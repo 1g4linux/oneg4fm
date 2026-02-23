@@ -17,6 +17,8 @@ enum class Operation {
     Copy,
     Move,
     Delete,
+    Trash,
+    Untrash,
     Mkdir,
     Link,
 };
@@ -77,6 +79,25 @@ struct LinuxSafetyRequirements {
     WorkerMode workerMode = WorkerMode::InProcess;
 };
 
+enum class EndpointKind {
+    NativePath,
+    Uri,
+};
+
+enum class Backend {
+    Auto,
+    LocalHardened,
+    Gio,
+};
+
+struct RoutingHints {
+    Backend defaultBackend = Backend::Auto;
+    std::vector<Backend> sourceBackends;
+    Backend destinationBackend = Backend::Auto;
+    std::vector<EndpointKind> sourceKinds;
+    EndpointKind destinationKind = EndpointKind::NativePath;
+};
+
 struct Request {
     Operation operation = Operation::Copy;
     std::vector<std::string> sources;
@@ -88,6 +109,7 @@ struct Request {
     CancelCheckpointGranularity cancelGranularity = CancelCheckpointGranularity::PerChunk;
     std::function<bool()> cancellationRequested;
     LinuxSafetyRequirements linuxSafety;
+    RoutingHints routing;
 };
 
 struct ProgressSnapshot {
@@ -166,6 +188,26 @@ struct EventHandlers {
     ConflictCallback onConflict;
 };
 
+struct BackendCapabilities {
+    Backend backend = Backend::LocalHardened;
+    bool available = false;
+    bool supportsNativePaths = false;
+    bool supportsUriPaths = false;
+    bool supportsCopy = false;
+    bool supportsMove = false;
+    bool supportsDelete = false;
+    bool supportsTrash = false;
+    bool supportsUntrash = false;
+    std::string unavailableReason;
+};
+
+struct CapabilityReport {
+    BackendCapabilities localHardened;
+    BackendCapabilities gio;
+};
+
+CapabilityReport capabilities();
+Result preflight(const Request& request);
 Result run(const Request& request, const EventHandlers& handlers = {});
 
 }  // namespace PCManFM::FileOpsContract

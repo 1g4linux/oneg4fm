@@ -6,7 +6,11 @@ This document defines the behavior of `PCManFM::FileOpsContract` in
 ## Entry Point
 
 - API: `PCManFM::FileOpsContract::run(const Request&, const EventHandlers&)`
-- Supported operations today: `Copy`, `Move`, `Delete`
+- Preflight API: `PCManFM::FileOpsContract::preflight(const Request&)`
+- Capability API: `PCManFM::FileOpsContract::capabilities()`
+- Local hardened backend operations today: `Copy`, `Move`, `Delete`
+- `Trash` and `Untrash` are part of the contract operation enum, but currently
+  require the GIO backend, which is not integrated yet
 - Rejected operations today: `Mkdir`, `Link` (`EngineErrorCode::UnsupportedOperation`)
 
 ## `Request` Fields
@@ -15,9 +19,9 @@ The contract accepts a `Request` and validates it before planning/execution.
 
 | Field | Behavior |
 | --- | --- |
-| `operation` | Must be `Copy`, `Move`, or `Delete`. |
+| `operation` | `Copy`, `Move`, `Delete`, `Trash`, `Untrash`, `Mkdir`, `Link`. `Trash`/`Untrash` currently fail with capability-based `UnsupportedOperation` on local backend. `Mkdir`/`Link` are currently rejected. |
 | `sources` | Must be non-empty; each source must be non-empty and stat-able during plan build. |
-| `destination.targetDir` | Required for `Copy`/`Move`; ignored for `Delete`. |
+| `destination.targetDir` | Required for `Copy`/`Move`; must be empty for `Trash`/`Untrash`. |
 | `destination.mappingMode` | `SourceBasename` or `ExplicitPerSource`. |
 | `destination.explicitTargets` | Required count match when `ExplicitPerSource` is used. |
 | `conflictPolicy` | `Overwrite`, `Rename`, `Skip`, or `Prompt`. |
@@ -34,8 +38,21 @@ The contract accepts a `Request` and validates it before planning/execution.
 | `linuxSafety.requireLandlock` | Requires `workerMode = SandboxedThread`; otherwise request is rejected. |
 | `linuxSafety.requireSeccomp` | Requires `workerMode = SandboxedThread`; otherwise request is rejected. |
 | `linuxSafety.workerMode` | `InProcess` or `SandboxedThread`. |
+| `routing.defaultBackend` | Backend selector (`Auto`, `LocalHardened`, `Gio`) used when per-item selectors are absent. |
+| `routing.sourceBackends` | Optional per-source backend selectors; if present, count must match `sources`. |
+| `routing.destinationBackend` | Backend selector for copy/move destination endpoint. |
+| `routing.sourceKinds` | Optional per-source endpoint kinds (`NativePath`, `Uri`); if present, count must match `sources`. |
+| `routing.destinationKind` | Endpoint kind for copy/move destination (`NativePath` or `Uri`). |
 
 The `linuxSafety.*` fields are the members of `LinuxSafetyRequirements`.
+The `routing.*` fields are the members of `RoutingHints`.
+
+Routing validation currently enforces single-backend execution per request.
+Mixed backend requests are rejected with `EngineErrorCode::UnsupportedPolicy`.
+
+When routing resolves to `LocalHardened`, `linuxSafety.requireOpenat2Resolve`
+is enforced. GIO-routed requests currently fail fast because that backend is
+declared unavailable until Phase 7.2 integration.
 
 ## Conflict and Event Model
 
@@ -61,6 +78,17 @@ The `linuxSafety.*` fields are the members of `LinuxSafetyRequirements`.
 
 If prompt mode is requested without `onConflict`, execution fails with
 `EngineErrorCode::UnsupportedPolicy`.
+
+## Backend Capabilities and Early Checks
+
+`capabilities()` reports backend support matrix and availability:
+
+- `localHardened`: available, supports native-path `Copy`/`Move`/`Delete`
+- `gio`: declared capabilities for URI/non-local workflows, currently marked
+  unavailable with an explicit reason string
+
+Adapters can call `preflight()` to fail early with the same structured contract
+errors used by `run()`, without executing planning or mutations.
 
 ## Linux Safety and Worker Modes
 

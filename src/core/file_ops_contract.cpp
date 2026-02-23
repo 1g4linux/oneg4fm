@@ -205,6 +205,102 @@ bool normalize_conflict_resolution(ConflictResolution input,
     return false;
 }
 
+const char* operation_name(Operation operation) {
+    switch (operation) {
+        case Operation::Copy:
+            return "Copy";
+        case Operation::Move:
+            return "Move";
+        case Operation::Delete:
+            return "Delete";
+        case Operation::Trash:
+            return "Trash";
+        case Operation::Untrash:
+            return "Untrash";
+        case Operation::Mkdir:
+            return "Mkdir";
+        case Operation::Link:
+            return "Link";
+    }
+    return "Unknown";
+}
+
+const char* backend_name(Backend backend) {
+    switch (backend) {
+        case Backend::Auto:
+            return "Auto";
+        case Backend::LocalHardened:
+            return "LocalHardened";
+        case Backend::Gio:
+            return "Gio";
+    }
+    return "Unknown";
+}
+
+bool backend_supports_operation(const BackendCapabilities& backend_capabilities, Operation operation) {
+    switch (operation) {
+        case Operation::Copy:
+            return backend_capabilities.supportsCopy;
+        case Operation::Move:
+            return backend_capabilities.supportsMove;
+        case Operation::Delete:
+            return backend_capabilities.supportsDelete;
+        case Operation::Trash:
+            return backend_capabilities.supportsTrash;
+        case Operation::Untrash:
+            return backend_capabilities.supportsUntrash;
+        case Operation::Mkdir:
+        case Operation::Link:
+            return false;
+    }
+    return false;
+}
+
+CapabilityReport make_capability_report() {
+    CapabilityReport report;
+
+    report.localHardened.backend = Backend::LocalHardened;
+    report.localHardened.available = true;
+    report.localHardened.supportsNativePaths = true;
+    report.localHardened.supportsUriPaths = false;
+    report.localHardened.supportsCopy = true;
+    report.localHardened.supportsMove = true;
+    report.localHardened.supportsDelete = true;
+    report.localHardened.supportsTrash = false;
+    report.localHardened.supportsUntrash = false;
+
+    report.gio.backend = Backend::Gio;
+    report.gio.available = false;
+    report.gio.supportsNativePaths = true;
+    report.gio.supportsUriPaths = true;
+    report.gio.supportsCopy = true;
+    report.gio.supportsMove = true;
+    report.gio.supportsDelete = true;
+    report.gio.supportsTrash = true;
+    report.gio.supportsUntrash = true;
+    report.gio.unavailableReason = "GIO backend is not yet integrated into FileOpsContract";
+
+    return report;
+}
+
+const CapabilityReport& capability_report() {
+    static const CapabilityReport report = make_capability_report();
+    return report;
+}
+
+const BackendCapabilities* backend_capabilities_for(Backend backend) {
+    const CapabilityReport& report = capability_report();
+    switch (backend) {
+        case Backend::LocalHardened:
+            return &report.localHardened;
+        case Backend::Gio:
+            return &report.gio;
+        case Backend::Auto:
+            break;
+    }
+    return nullptr;
+}
+
 #ifndef SYS_seccomp
 #ifdef __NR_seccomp
 #define SYS_seccomp __NR_seccomp
@@ -651,6 +747,162 @@ bool probe_openat2_resolve(Error& err) {
     return false;
 }
 
+EndpointKind source_endpoint_kind(const Request& request, std::size_t index) {
+    if (request.routing.sourceKinds.empty()) {
+        return EndpointKind::NativePath;
+    }
+    return request.routing.sourceKinds[index];
+}
+
+Backend source_backend_selector(const Request& request, std::size_t index) {
+    if (request.routing.sourceBackends.empty()) {
+        return request.routing.defaultBackend;
+    }
+    return request.routing.sourceBackends[index];
+}
+
+Backend destination_backend_selector(const Request& request) {
+    if (request.routing.destinationBackend != Backend::Auto) {
+        return request.routing.destinationBackend;
+    }
+    return request.routing.defaultBackend;
+}
+
+bool resolve_backend_for_endpoint(EndpointKind kind,
+                                  Backend selector,
+                                  const std::string& endpoint_name,
+                                  Backend& out_backend,
+                                  Error& err) {
+    switch (selector) {
+        case Backend::Auto:
+            out_backend = (kind == EndpointKind::Uri) ? Backend::Gio : Backend::LocalHardened;
+            return true;
+        case Backend::LocalHardened:
+            if (kind == EndpointKind::Uri) {
+                set_error(err, EngineErrorCode::UnsupportedPolicy, OperationStep::ValidateRequest, ENOTSUP,
+                          endpoint_name + " uses URI endpoint kind but forces LocalHardened backend");
+                return false;
+            }
+            out_backend = Backend::LocalHardened;
+            return true;
+        case Backend::Gio:
+            out_backend = Backend::Gio;
+            return true;
+    }
+
+    set_error(err, EngineErrorCode::InvalidRequest, OperationStep::ValidateRequest, EINVAL,
+              endpoint_name + " has an unknown backend selector");
+    return false;
+}
+
+bool validate_backend_capabilities(Backend backend,
+                                   EndpointKind endpoint_kind,
+                                   Operation operation,
+                                   const std::string& endpoint_name,
+                                   Error& err) {
+    const BackendCapabilities* backend_capabilities = backend_capabilities_for(backend);
+    if (!backend_capabilities) {
+        set_error(err, EngineErrorCode::InvalidRequest, OperationStep::ValidateRequest, EINVAL,
+                  endpoint_name + " resolved to an unknown backend");
+        return false;
+    }
+
+    if (!backend_capabilities->available) {
+        std::string message = std::string(backend_name(backend)) + " backend is unavailable";
+        if (!backend_capabilities->unavailableReason.empty()) {
+            message += ": " + backend_capabilities->unavailableReason;
+        }
+        set_error(err, EngineErrorCode::UnsupportedFeature, OperationStep::ValidateRequest, ENOTSUP, message);
+        return false;
+    }
+
+    if (endpoint_kind == EndpointKind::NativePath && !backend_capabilities->supportsNativePaths) {
+        set_error(err, EngineErrorCode::UnsupportedPolicy, OperationStep::ValidateRequest, ENOTSUP,
+                  endpoint_name + " is a native path but backend does not support native paths");
+        return false;
+    }
+
+    if (endpoint_kind == EndpointKind::Uri && !backend_capabilities->supportsUriPaths) {
+        set_error(err, EngineErrorCode::UnsupportedPolicy, OperationStep::ValidateRequest, ENOTSUP,
+                  endpoint_name + " is a URI but backend does not support URIs");
+        return false;
+    }
+
+    if (!backend_supports_operation(*backend_capabilities, operation)) {
+        set_error(err, EngineErrorCode::UnsupportedOperation, OperationStep::ValidateRequest, ENOTSUP,
+                  std::string(operation_name(operation)) + " is not supported by backend " + backend_name(backend));
+        return false;
+    }
+
+    return true;
+}
+
+bool merge_resolved_backend(Backend endpoint_backend, bool& has_backend, Backend& resolved_backend, Error& err) {
+    if (!has_backend) {
+        resolved_backend = endpoint_backend;
+        has_backend = true;
+        return true;
+    }
+
+    if (endpoint_backend == resolved_backend) {
+        return true;
+    }
+
+    set_error(err, EngineErrorCode::UnsupportedPolicy, OperationStep::ValidateRequest, ENOTSUP,
+              "Mixed backend routing in a single request is not supported by the current executor");
+    return false;
+}
+
+bool validate_request_routing(const Request& request, Backend& resolved_backend, Error& err) {
+    if (!request.routing.sourceKinds.empty() && request.routing.sourceKinds.size() != request.sources.size()) {
+        set_error(err, EngineErrorCode::InvalidRequest, OperationStep::ValidateRequest, EINVAL,
+                  "routing.sourceKinds must match source count");
+        return false;
+    }
+
+    if (!request.routing.sourceBackends.empty() && request.routing.sourceBackends.size() != request.sources.size()) {
+        set_error(err, EngineErrorCode::InvalidRequest, OperationStep::ValidateRequest, EINVAL,
+                  "routing.sourceBackends must match source count");
+        return false;
+    }
+
+    bool has_backend = false;
+    for (std::size_t i = 0; i < request.sources.size(); ++i) {
+        const EndpointKind endpoint_kind = source_endpoint_kind(request, i);
+        const Backend selector = source_backend_selector(request, i);
+        Backend endpoint_backend = Backend::LocalHardened;
+
+        const std::string endpoint_name = "source[" + std::to_string(i) + "]";
+        if (!resolve_backend_for_endpoint(endpoint_kind, selector, endpoint_name, endpoint_backend, err)) {
+            return false;
+        }
+        if (!validate_backend_capabilities(endpoint_backend, endpoint_kind, request.operation, endpoint_name, err)) {
+            return false;
+        }
+        if (!merge_resolved_backend(endpoint_backend, has_backend, resolved_backend, err)) {
+            return false;
+        }
+    }
+
+    if (is_copy_like(request.operation)) {
+        const EndpointKind endpoint_kind = request.routing.destinationKind;
+        const Backend selector = destination_backend_selector(request);
+        Backend endpoint_backend = Backend::LocalHardened;
+        const std::string endpoint_name = "destination";
+        if (!resolve_backend_for_endpoint(endpoint_kind, selector, endpoint_name, endpoint_backend, err)) {
+            return false;
+        }
+        if (!validate_backend_capabilities(endpoint_backend, endpoint_kind, request.operation, endpoint_name, err)) {
+            return false;
+        }
+        if (!merge_resolved_backend(endpoint_backend, has_backend, resolved_backend, err)) {
+            return false;
+        }
+    }
+
+    return has_backend;
+}
+
 bool validate_request(const Request& request, Error& err) {
     if (request.sources.empty()) {
         set_error(err, EngineErrorCode::InvalidRequest, OperationStep::ValidateRequest, EINVAL,
@@ -703,10 +955,6 @@ bool validate_request(const Request& request, Error& err) {
             return false;
     }
 
-    if (request.linuxSafety.requireOpenat2Resolve && !probe_openat2_resolve(err)) {
-        return false;
-    }
-
     switch (request.operation) {
         case Operation::Copy:
         case Operation::Move:
@@ -724,11 +972,29 @@ bool validate_request(const Request& request, Error& err) {
             break;
         case Operation::Delete:
             break;
+        case Operation::Trash:
+        case Operation::Untrash:
+            if (!request.destination.targetDir.empty()) {
+                set_error(err, EngineErrorCode::InvalidRequest, OperationStep::ValidateRequest, EINVAL,
+                          "Trash and Untrash requests must not set destination.targetDir");
+                return false;
+            }
+            break;
         case Operation::Mkdir:
         case Operation::Link:
             set_error(err, EngineErrorCode::UnsupportedOperation, OperationStep::ValidateRequest, ENOTSUP,
                       "Operation is not yet supported by the unified contract executor");
             return false;
+    }
+
+    Backend request_backend = Backend::LocalHardened;
+    if (!validate_request_routing(request, request_backend, err)) {
+        return false;
+    }
+
+    if (request_backend == Backend::LocalHardened && request.linuxSafety.requireOpenat2Resolve &&
+        !probe_openat2_resolve(err)) {
+        return false;
     }
 
     return true;
@@ -1027,6 +1293,8 @@ bool execute_plan_operation(const Request& request,
                                     overwrite_existing);
         case Operation::Delete:
             return FsOps::delete_path(plan.sourcePath, source_progress, callback, fs_err);
+        case Operation::Trash:
+        case Operation::Untrash:
         case Operation::Mkdir:
         case Operation::Link:
             fs_err.code = ENOTSUP;
@@ -1354,6 +1622,27 @@ Result run_sandboxed_thread(const Request& request, const EventHandlers& handler
 }
 
 }  // namespace
+
+CapabilityReport capabilities() {
+    return capability_report();
+}
+
+Result preflight(const Request& request) {
+    Result result;
+
+    if (is_cancel_requested(request)) {
+        result.cancelled = true;
+        set_cancelled(result.error, OperationStep::ValidateRequest);
+        return result;
+    }
+
+    if (!validate_request(request, result.error)) {
+        return result;
+    }
+
+    result.success = true;
+    return result;
+}
 
 Result run(const Request& request, const EventHandlers& handlers) {
     switch (request.linuxSafety.workerMode) {

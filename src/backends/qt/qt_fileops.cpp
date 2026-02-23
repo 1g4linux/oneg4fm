@@ -64,6 +64,23 @@ bool toContractOperation(FileOpType type, FileOpsContract::Operation& out) {
     return false;
 }
 
+FileOpsContract::EndpointKind toContractEndpointKind(const QString& path) {
+    return path.contains(QStringLiteral("://")) ? FileOpsContract::EndpointKind::Uri
+                                                : FileOpsContract::EndpointKind::NativePath;
+}
+
+QString resultErrorMessage(const FileOpsContract::Result& result, const QString& fallback) {
+    if (result.cancelled || result.error.sysErrno == ECANCELED) {
+        return QStringLiteral("Operation cancelled");
+    }
+
+    if (!result.error.message.empty()) {
+        return QString::fromLocal8Bit(result.error.message.c_str());
+    }
+
+    return fallback;
+}
+
 FileOpsContract::ConflictResolution toContractResolution(FileOpConflictResolution resolution) {
     switch (resolution) {
         case FileOpConflictResolution::Overwrite:
@@ -110,6 +127,12 @@ class QtFileOps::Worker : public QObject {
             return;
         }
 
+        const FileOpsContract::Result preflightResult = FileOpsContract::preflight(contractReq);
+        if (!preflightResult.success) {
+            Q_EMIT finished(false, resultErrorMessage(preflightResult, QStringLiteral("Operation failed")));
+            return;
+        }
+
         contractReq.cancellationRequested = [flag = cancelRequested_]() { return flag && flag->load(); };
 
         const FileOpsContract::EventHandlers handlers{
@@ -123,17 +146,7 @@ class QtFileOps::Worker : public QObject {
             return;
         }
 
-        if (result.cancelled || result.error.sysErrno == ECANCELED) {
-            Q_EMIT finished(false, QStringLiteral("Operation cancelled"));
-            return;
-        }
-
-        if (!result.error.message.empty()) {
-            Q_EMIT finished(false, QString::fromLocal8Bit(result.error.message.c_str()));
-            return;
-        }
-
-        Q_EMIT finished(false, QStringLiteral("Operation failed"));
+        Q_EMIT finished(false, resultErrorMessage(result, QStringLiteral("Operation failed")));
     }
 
     void cancel() {
@@ -208,12 +221,14 @@ class QtFileOps::Worker : public QObject {
         }
 
         out.sources.reserve(static_cast<std::size_t>(req.sources.size()));
+        out.routing.sourceKinds.reserve(static_cast<std::size_t>(req.sources.size()));
         for (const QString& source : req.sources) {
             if (source.isEmpty()) {
                 requestError = QStringLiteral("Source path must not be empty");
                 return false;
             }
             out.sources.push_back(toNativePath(source));
+            out.routing.sourceKinds.push_back(toContractEndpointKind(source));
         }
 
         if (out.sources.empty()) {
@@ -228,6 +243,7 @@ class QtFileOps::Worker : public QObject {
             }
             out.destination.targetDir = toNativePath(req.destination);
             out.destination.mappingMode = FileOpsContract::DestinationMappingMode::SourceBasename;
+            out.routing.destinationKind = toContractEndpointKind(req.destination);
         }
         else if (!req.destination.isEmpty()) {
             requestError = QStringLiteral("Delete operations do not accept a destination path");
@@ -277,6 +293,8 @@ class QtFileOps::Worker : public QObject {
         out.cancelGranularity = FileOpsContract::CancelCheckpointGranularity::PerChunk;
         out.linuxSafety.requireOpenat2Resolve = true;
         out.linuxSafety.requireLandlock = false;
+        out.routing.defaultBackend = FileOpsContract::Backend::Auto;
+        out.routing.destinationBackend = FileOpsContract::Backend::Auto;
 
         return true;
     }

@@ -30,6 +30,7 @@ class QtFileOpsTest : public QObject {
     void deleteRejectsDestinationField();
     void deleteRejectsOverwriteExistingField();
     void copyRejectsFollowSymlinks();
+    void copyUriSourceFailsFastWithCapabilityError();
     void copyPromptConflictUsesUiResolution();
     void copyPromptConflictRequiresResponder();
     void copyRejectsPromptAndOverwriteTogether();
@@ -428,6 +429,34 @@ void QtFileOpsTest::copyRejectsFollowSymlinks() {
     QVERIFY(!QFileInfo::exists(dstPath));
 }
 
+void QtFileOpsTest::copyUriSourceFailsFastWithCapabilityError() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString dstDir = dir.path() + QLatin1String("/dst");
+    QVERIFY(QDir().mkpath(dstDir));
+    const QString dstPath = dstDir + QLatin1String("/file.txt");
+
+    QtFileOps ops;
+    QSignalSpy finishedSpy(&ops, &QtFileOps::finished);
+
+    FileOpRequest req;
+    req.type = FileOpType::Copy;
+    req.sources = QStringList{QStringLiteral("sftp://example.invalid/path/file.txt")};
+    req.destination = dstDir;
+    req.followSymlinks = false;
+    req.overwriteExisting = false;
+    req.promptOnConflict = false;
+
+    ops.start(req);
+    QTRY_VERIFY_WITH_TIMEOUT(finishedSpy.count() > 0, 2000);
+    const QList<QVariant> args = finishedSpy.takeFirst();
+    QVERIFY(!args.at(0).toBool());
+    QVERIFY(args.at(1).toString().contains(QStringLiteral("GIO"), Qt::CaseInsensitive));
+    QVERIFY(args.at(1).toString().contains(QStringLiteral("backend"), Qt::CaseInsensitive));
+    QVERIFY(!QFileInfo::exists(dstPath));
+}
+
 void QtFileOpsTest::copyPromptConflictUsesUiResolution() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -610,7 +639,9 @@ void QtFileOpsTest::requestFieldsAreMappedOrRejectedExplicitly() {
     const QList<QByteArray> requiredSnippets = {
         QByteArray("toContractOperation(req.type, out.operation)"),
         QByteArray("out.sources.push_back(toNativePath(source))"),
+        QByteArray("out.routing.sourceKinds.push_back(toContractEndpointKind(source))"),
         QByteArray("out.destination.targetDir = toNativePath(req.destination)"),
+        QByteArray("out.routing.destinationKind = toContractEndpointKind(req.destination)"),
         QByteArray("requestError = QStringLiteral(\"Delete operations do not accept a destination path\")"),
         QByteArray("requestError = QStringLiteral(\"Delete operations do not use overwriteExisting\")"),
         QByteArray("requestError = QStringLiteral(\"Delete operations do not use promptOnConflict\")"),
@@ -618,6 +649,7 @@ void QtFileOpsTest::requestFieldsAreMappedOrRejectedExplicitly() {
         QByteArray("out.conflictPolicy = req.overwriteExisting ? FileOpsContract::ConflictPolicy::Overwrite"),
         QByteArray("requestError = QStringLiteral(\"followSymlinks=true is not supported\")"),
         QByteArray("out.metadata.preserveOwnership = req.preserveOwnership"),
+        QByteArray("const FileOpsContract::Result preflightResult = FileOpsContract::preflight(contractReq)"),
     };
 
     for (const QByteArray& snippet : requiredSnippets) {
