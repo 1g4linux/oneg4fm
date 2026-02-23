@@ -110,6 +110,12 @@ pcmanfm_add_test(oneg4fm-windowed-reader-tests
         ../src/core/windowed_file_reader.cpp
 )
 
+pcmanfm_add_test(oneg4fm-file-ops-inventory-tests
+    SOURCES
+        file_ops_inventory_test.cpp
+)
+target_compile_definitions(oneg4fm-file-ops-inventory-tests PRIVATE "PCMANFM_SOURCE_DIR=\"${CMAKE_SOURCE_DIR}\"")
+
 pcmanfm_add_test(oneg4fm-browsehistory-tests
     SOURCES
         test_browsehistory.cpp

@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "updated": "2026-02-23",
+  "categories": {
+    "legacy_native_copy_move_delete": [
+      {
+        "file": "libfm-qt/src/core/filetransferjob.cpp",
+        "symbol": "bool FileTransferJob::processPath(",
+        "state": "active-duplicate",
+        "notes": "Legacy native copy/move path remains for non-core-eligible operations."
+      },
+      {
+        "file": "libfm-qt/src/core/filetransferjob.cpp",
+        "symbol": "bool FileTransferJob::moveFile(",
+        "state": "active-duplicate",
+        "notes": "Legacy move implementation with same-fs and cross-fs branches."
+      },
+      {
+        "file": "libfm-qt/src/core/filetransferjob.cpp",
+        "symbol": "bool FileTransferJob::copyFile(",
+        "state": "active-duplicate",
+        "notes": "Legacy recursive copy implementation."
+      },
+      {
+        "file": "libfm-qt/src/core/filetransferjob.cpp",
+        "symbol": "bool FileTransferJob::moveFileSameFs(",
+        "state": "active-duplicate",
+        "notes": "Legacy same-filesystem move path."
+      },
+      {
+        "file": "libfm-qt/src/core/filetransferjob.cpp",
+        "symbol": "if (mode_ != Mode::LINK && FileOpsBridgePolicy::isCoreLocalPathEligible(srcPath) &&",
+        "state": "routing-gate",
+        "notes": "Core routing gate; LINK and non-eligible paths fall back to legacy implementation."
+      },
+      {
+        "file": "libfm-qt/src/core/deletejob.cpp",
+        "symbol": "bool DeleteJob::deleteFile(",
+        "state": "active-duplicate",
+        "notes": "Legacy delete implementation still used for non-core-eligible paths."
+      },
+      {
+        "file": "libfm-qt/src/core/deletejob.cpp",
+        "symbol": "bool DeleteJob::deleteDirContent(",
+        "state": "active-duplicate",
+        "notes": "Legacy recursive delete traversal."
+      },
+      {
+        "file": "libfm-qt/src/core/deletejob.cpp",
+        "symbol": "if (FileOpsBridgePolicy::isCoreLocalPathEligible(path)) {",
+        "state": "routing-gate",
+        "notes": "Core routing gate for delete; non-eligible paths use legacy delete recursion."
+      }
+    ],
+    "redundant_planners": [
+      {
+        "file": "libfm-qt/src/core/filetransferjob.cpp",
+        "symbol": "TotalSizeJob totalSizeJob{srcPaths_, totalSizeFlags};",
+        "state": "active-duplicate",
+        "notes": "Legacy pre-scan planner in compatibility layer."
+      },
+      {
+        "file": "libfm-qt/src/core/deletejob.cpp",
+        "symbol": "TotalSizeJob totalSizeJob{paths_, TotalSizeJob::Flags::PREPARE_DELETE};",
+        "state": "active-duplicate",
+        "notes": "Legacy delete pre-scan planner."
+      },
+      {
+        "file": "src/core/file_ops_contract.cpp",
+        "symbol": "bool build_plan(const Request& request, std::vector<SourcePlan>& plans, ProgressSnapshot& totals, Error& err) {",
+        "state": "active-core",
+        "notes": "Core planner computes operation totals and destination mapping."
+      },
+      {
+        "file": "src/core/file_ops_contract.cpp",
+        "symbol": "if (!scan_path_stats(source, stats, err)) {",
+        "state": "active-core",
+        "notes": "Core recursive stat scan for planner totals."
+      }
+    ],
+    "duplicate_conflict_handlers": [
+      {
+        "file": "libfm-qt/src/core/filetransferjob.cpp",
+        "symbol": "bool FileTransferJob::handleError(",
+        "state": "active-duplicate",
+        "notes": "Legacy conflict and retry handling branch."
+      },
+      {
+        "file": "libfm-qt/src/core/filetransferjob.cpp",
+        "symbol": "FileExistsAction opt = askRename(",
+        "state": "active-duplicate",
+        "notes": "Legacy rename/overwrite/skip dialog path."
+      },
+      {
+        "file": "libfm-qt/src/core/filetransferjob.cpp",
+        "symbol": "handlers.onConflict = [this, &renameRequest, srcPath,",
+        "state": "active-duplicate",
+        "notes": "Compatibility adapter conflict callback used when operation is routed through core."
+      },
+      {
+        "file": "src/core/file_ops_contract.cpp",
+        "symbol": "bool resolve_conflict_for_plan(const Request& request,",
+        "state": "active-core",
+        "notes": "Core conflict resolver for deterministic policy and callbacks."
+      },
+      {
+        "file": "src/backends/qt/qt_fileops.cpp",
+        "symbol": "FileOpsContract::ConflictResolution waitForConflictResolution(",
+        "state": "active-adapter",
+        "notes": "Qt backend conflict bridge path."
+      }
+    ]
+  }
+}
