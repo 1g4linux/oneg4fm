@@ -35,7 +35,7 @@
 #endif
 #endif
 
-namespace PCManFM::LinuxFsSafety {
+namespace Oneg4FM::LinuxFsSafety {
 namespace {
 
 inline void set_error(FsOps::Error& err, const char* context) {
@@ -254,7 +254,7 @@ bool create_temp_file_named_under(int parent_fd, mode_t mode, Fd& out_fd, std::s
 #endif
 
     for (unsigned int attempt = 0; attempt < 256; ++attempt) {
-        const std::string candidate = build_temp_name(".pcmanfm.tmp.", attempt);
+        const std::string candidate = build_temp_name(".oneg4fm.tmp.", attempt);
         Fd fd;
         if (open_under(parent_fd, candidate, flags, mode, kResolveNoSymlinks, fd, err)) {
             out_name = candidate;
@@ -276,7 +276,7 @@ bool create_temp_file_named_under(int parent_fd, mode_t mode, Fd& out_fd, std::s
 
 bool link_tmpfile_under(int tmp_fd, int parent_fd, std::string& out_name, FsOps::Error& err) {
     for (unsigned int attempt = 0; attempt < 256; ++attempt) {
-        const std::string candidate = build_temp_name(".pcmanfm.tmp.link.", attempt);
+        const std::string candidate = build_temp_name(".oneg4fm.tmp.link.", attempt);
         if (::linkat(tmp_fd, "", parent_fd, candidate.c_str(), AT_EMPTY_PATH) == 0) {
             out_name = candidate;
             return true;
@@ -643,4 +643,4 @@ bool statx_under(int rootfd,
     return true;
 }
 
-}  // namespace PCManFM::LinuxFsSafety
+}  // namespace Oneg4FM::LinuxFsSafety

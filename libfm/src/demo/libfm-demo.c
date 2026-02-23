@@ -1,5 +1,5 @@
 /*
- *      pcmanfm.c
+ *      oneg4fm.c
  *
  *      Copyright 2009 PCMan <pcman.tw@gmail.com>
  *

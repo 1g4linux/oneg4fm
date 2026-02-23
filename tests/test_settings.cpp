@@ -9,7 +9,7 @@
 // Include the settings header to test the utility functions
 #include "settings.h"
 
-using namespace PCManFM;
+using namespace Oneg4FM;
 
 class TestSettings : public QObject {
     Q_OBJECT

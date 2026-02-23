@@ -33,7 +33,7 @@
 #include <cstring>
 #include <cmath>
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 namespace {
 
@@ -1349,4 +1349,4 @@ void HexEditorWindow::closeEvent(QCloseEvent* event) {
     QMainWindow::closeEvent(event);
 }
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM

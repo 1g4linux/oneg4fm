@@ -10,8 +10,8 @@
 // Include headers for utility functions
 #include "settings.h"
 
-using PCManFM::FolderSettings;
-using PCManFM::Settings;
+using Oneg4FM::FolderSettings;
+using Oneg4FM::Settings;
 
 class TestUtils : public QObject {
     Q_OBJECT

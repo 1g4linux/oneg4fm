@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 ArchiveExtractJob::ArchiveExtractJob(QObject* parent) : QObject(parent), cancelRequested_(false) {}
 
@@ -27,10 +27,10 @@ void ArchiveExtractJob::start(const QString& archivePath, const QString& destina
         const std::string archiveNative(archiveBytes.constData(), static_cast<std::size_t>(archiveBytes.size()));
         const std::string destNative(destBytes.constData(), static_cast<std::size_t>(destBytes.size()));
 
-        PCManFM::FsOps::ProgressInfo opProgress;
-        PCManFM::FsOps::Error err;
+        Oneg4FM::FsOps::ProgressInfo opProgress;
+        Oneg4FM::FsOps::Error err;
 
-        auto cb = [this](const PCManFM::FsOps::ProgressInfo& info) {
+        auto cb = [this](const Oneg4FM::FsOps::ProgressInfo& info) {
             if (cancelRequested_.load(std::memory_order_relaxed)) {
                 return false;
             }
@@ -43,12 +43,12 @@ void ArchiveExtractJob::start(const QString& archivePath, const QString& destina
             return true;
         };
 
-        PCManFM::ArchiveExtract::Options opts;
+        Oneg4FM::ArchiveExtract::Options opts;
         // Use all available cores for filters when libarchive supports it.
         opts.enableFilterThreads = true;
         opts.maxFilterThreads = 0;
 
-        const bool ok = PCManFM::ArchiveExtract::extract_archive(archiveNative, destNative, opProgress, cb, err, opts);
+        const bool ok = Oneg4FM::ArchiveExtract::extract_archive(archiveNative, destNative, opProgress, cb, err, opts);
 
         Result result;
         result.success = ok;
@@ -69,4 +69,4 @@ void ArchiveExtractJob::onFinished() {
     Q_EMIT finished(result.success, result.error);
 }
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM

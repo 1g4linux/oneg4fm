@@ -16,7 +16,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-using PCManFM::FsOps::Error;
+using Oneg4FM::FsOps::Error;
 
 namespace {
 
@@ -24,9 +24,9 @@ QString makePath(const QTemporaryDir& dir, const QString& name) {
     return dir.path() + QLatin1Char('/') + name;
 }
 
-PCManFM::LinuxFsSafety::Fd openRootDir(const QString& path) {
+Oneg4FM::LinuxFsSafety::Fd openRootDir(const QString& path) {
     const int fd = ::open(path.toLocal8Bit().constData(), O_RDONLY | O_CLOEXEC | O_DIRECTORY);
-    return PCManFM::LinuxFsSafety::Fd(fd);
+    return Oneg4FM::LinuxFsSafety::Fd(fd);
 }
 
 }  // namespace
@@ -49,10 +49,10 @@ void LinuxFsSafetyTest::openUnderRejectsPathTraversal() {
     auto rootFd = openRootDir(dir.path());
     QVERIFY(rootFd.valid());
 
-    PCManFM::LinuxFsSafety::Fd outFd;
+    Oneg4FM::LinuxFsSafety::Fd outFd;
     Error err;
-    QVERIFY(!PCManFM::LinuxFsSafety::open_under(rootFd.get(), QStringLiteral("../etc/passwd").toStdString(),
-                                                O_RDONLY | O_CLOEXEC, 0, PCManFM::LinuxFsSafety::kResolveNoSymlinks,
+    QVERIFY(!Oneg4FM::LinuxFsSafety::open_under(rootFd.get(), QStringLiteral("../etc/passwd").toStdString(),
+                                                O_RDONLY | O_CLOEXEC, 0, Oneg4FM::LinuxFsSafety::kResolveNoSymlinks,
                                                 outFd, err));
     QCOMPARE(err.code, EINVAL);
 }
@@ -65,18 +65,18 @@ void LinuxFsSafetyTest::openDirPathAndStatx() {
     QVERIFY(rootFd.valid());
 
     Error err;
-    PCManFM::LinuxFsSafety::Fd nestedDir;
-    QVERIFY(PCManFM::LinuxFsSafety::open_dir_path_under(rootFd.get(), "a/b/c", true, 0777, nestedDir, err));
+    Oneg4FM::LinuxFsSafety::Fd nestedDir;
+    QVERIFY(Oneg4FM::LinuxFsSafety::open_dir_path_under(rootFd.get(), "a/b/c", true, 0777, nestedDir, err));
     QVERIFY(!err.isSet());
 
     const QByteArray payload("statx-data");
-    QVERIFY(PCManFM::LinuxFsSafety::atomic_replace_under(rootFd.get(), "a/b/c/file.txt",
+    QVERIFY(Oneg4FM::LinuxFsSafety::atomic_replace_under(rootFd.get(), "a/b/c/file.txt",
                                                          reinterpret_cast<const std::uint8_t*>(payload.constData()),
                                                          static_cast<std::size_t>(payload.size()), 0600, err));
     QVERIFY(!err.isSet());
 
     struct statx stx{};
-    QVERIFY(PCManFM::LinuxFsSafety::statx_under(rootFd.get(), "a/b/c/file.txt", AT_SYMLINK_NOFOLLOW,
+    QVERIFY(Oneg4FM::LinuxFsSafety::statx_under(rootFd.get(), "a/b/c/file.txt", AT_SYMLINK_NOFOLLOW,
                                                 STATX_TYPE | STATX_SIZE, stx, err));
     QVERIFY(!err.isSet());
     QVERIFY((stx.stx_mode & S_IFMT) == S_IFREG);
@@ -97,7 +97,7 @@ void LinuxFsSafetyTest::atomicReplaceRejectsSymlinkParentEscape() {
 
     Error err;
     const QByteArray payload("escape");
-    QVERIFY(!PCManFM::LinuxFsSafety::atomic_replace_under(rootFd.get(), "linkdir/escape.txt",
+    QVERIFY(!Oneg4FM::LinuxFsSafety::atomic_replace_under(rootFd.get(), "linkdir/escape.txt",
                                                           reinterpret_cast<const std::uint8_t*>(payload.constData()),
                                                           static_cast<std::size_t>(payload.size()), 0600, err));
     QVERIFY(err.code == ELOOP || err.code == ENOTDIR || err.code == EINVAL);
@@ -113,7 +113,7 @@ void LinuxFsSafetyTest::renameRejectsSymlinkParentEscape() {
 
     Error err;
     const QByteArray payload("move-data");
-    QVERIFY(PCManFM::LinuxFsSafety::atomic_replace_under(rootFd.get(), "src.txt",
+    QVERIFY(Oneg4FM::LinuxFsSafety::atomic_replace_under(rootFd.get(), "src.txt",
                                                          reinterpret_cast<const std::uint8_t*>(payload.constData()),
                                                          static_cast<std::size_t>(payload.size()), 0600, err));
     QVERIFY(!err.isSet());
@@ -123,7 +123,7 @@ void LinuxFsSafetyTest::renameRejectsSymlinkParentEscape() {
     const QString linkDir = makePath(dir, QStringLiteral("linkdir"));
     QVERIFY(::symlink(outsideDir.toLocal8Bit().constData(), linkDir.toLocal8Bit().constData()) == 0);
 
-    QVERIFY(!PCManFM::LinuxFsSafety::rename_under(rootFd.get(), "src.txt", rootFd.get(), "linkdir/dst.txt", 0, err));
+    QVERIFY(!Oneg4FM::LinuxFsSafety::rename_under(rootFd.get(), "src.txt", rootFd.get(), "linkdir/dst.txt", 0, err));
     QVERIFY(err.code == ELOOP || err.code == ENOTDIR || err.code == EINVAL);
     QVERIFY(QFileInfo::exists(makePath(dir, QStringLiteral("src.txt"))));
     QVERIFY(!QFileInfo::exists(outsideDir + QLatin1String("/dst.txt")));
@@ -137,13 +137,13 @@ void LinuxFsSafetyTest::unlinkAndRmdirAllowMissing() {
     QVERIFY(rootFd.valid());
 
     Error err;
-    PCManFM::LinuxFsSafety::Fd nestedDir;
-    QVERIFY(PCManFM::LinuxFsSafety::open_dir_path_under(rootFd.get(), "tmp", true, 0777, nestedDir, err));
+    Oneg4FM::LinuxFsSafety::Fd nestedDir;
+    QVERIFY(Oneg4FM::LinuxFsSafety::open_dir_path_under(rootFd.get(), "tmp", true, 0777, nestedDir, err));
     QVERIFY(!err.isSet());
 
-    QVERIFY(PCManFM::LinuxFsSafety::unlink_under(rootFd.get(), "tmp/missing.txt", err, true));
+    QVERIFY(Oneg4FM::LinuxFsSafety::unlink_under(rootFd.get(), "tmp/missing.txt", err, true));
     QVERIFY(!err.isSet());
-    QVERIFY(PCManFM::LinuxFsSafety::rmdir_under(rootFd.get(), "tmp/missing-dir", err, true));
+    QVERIFY(Oneg4FM::LinuxFsSafety::rmdir_under(rootFd.get(), "tmp/missing-dir", err, true));
     QVERIFY(!err.isSet());
 }
 

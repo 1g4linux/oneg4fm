@@ -28,14 +28,14 @@ Minimal hello-world usage:
 
 ```bash
 # In headless sessions (CI/SSH), use offscreen for help output.
-QT_QPA_PLATFORM=offscreen ./build/pcmanfm/oneg4fm --help
-./build/pcmanfm/oneg4fm "$HOME"
+QT_QPA_PLATFORM=offscreen ./build/oneg4fm/oneg4fm --help
+./build/oneg4fm/oneg4fm "$HOME"
 ```
 
 Expected output shape for `--help`:
 
 ```text
-Usage: ./build/pcmanfm/oneg4fm [options] [FILE1, FILE2,...]
+Usage: ./build/oneg4fm/oneg4fm [options] [FILE1, FILE2,...]
 Options:
   -p, --profile <PROFILE>
   -d, --daemon-mode

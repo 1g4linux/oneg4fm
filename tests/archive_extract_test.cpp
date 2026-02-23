@@ -20,10 +20,10 @@
 #include <string>
 #include <cerrno>
 
-using PCManFM::ArchiveExtract::Options;
-using PCManFM::FsOps::Error;
-using PCManFM::FsOps::ProgressCallback;
-using PCManFM::FsOps::ProgressInfo;
+using Oneg4FM::ArchiveExtract::Options;
+using Oneg4FM::FsOps::Error;
+using Oneg4FM::FsOps::ProgressCallback;
+using Oneg4FM::FsOps::ProgressInfo;
 
 namespace {
 
@@ -214,7 +214,7 @@ bool extract_with_archive_extract(const QString& archivePath,
                                   Error& err) {
     auto cb = [](const ProgressInfo&) { return true; };
     Options opts;
-    return PCManFM::ArchiveExtract::extract_archive(archivePath.toLocal8Bit().toStdString(),
+    return Oneg4FM::ArchiveExtract::extract_archive(archivePath.toLocal8Bit().toStdString(),
                                                     destDir.toLocal8Bit().toStdString(), progress, cb, err, opts);
 }
 
@@ -223,7 +223,7 @@ bool extract_with_archive_writer(const QString& archivePath,
                                  ProgressInfo& progress,
                                  Error& err) {
     auto cb = [](const ProgressInfo&) { return true; };
-    return PCManFM::ArchiveWriter::extract_tar_zst(archivePath.toLocal8Bit().toStdString(),
+    return Oneg4FM::ArchiveWriter::extract_tar_zst(archivePath.toLocal8Bit().toStdString(),
                                                    destDir.toLocal8Bit().toStdString(), progress, cb, err);
 }
 
@@ -312,7 +312,7 @@ void ArchiveExtractTest::extractKnownFormats() {
     opts.enableFilterThreads = true;
     opts.maxFilterThreads = 0;
 
-    const bool ok = PCManFM::ArchiveExtract::extract_archive(
+    const bool ok = Oneg4FM::ArchiveExtract::extract_archive(
         archivePath.toLocal8Bit().toStdString(), destDir.toLocal8Bit().toStdString(), progress, cb, err, opts);
     QVERIFY2(ok, err.message.c_str());
     QVERIFY2(sawProgress, "Progress callback not invoked");
@@ -341,7 +341,7 @@ void ArchiveExtractTest::extractPreservesSymlinkInTar() {
     Error err;
     auto cb = [](const ProgressInfo&) { return true; };
     Options opts;
-    QVERIFY(PCManFM::ArchiveExtract::extract_archive(archivePath.toLocal8Bit().toStdString(),
+    QVERIFY(Oneg4FM::ArchiveExtract::extract_archive(archivePath.toLocal8Bit().toStdString(),
                                                      destDir.toLocal8Bit().toStdString(), progress, cb, err, opts));
 
     const QString linkPath = destDir + QLatin1Char('/') + linkEntry;
@@ -373,7 +373,7 @@ void ArchiveExtractTest::cancelStopsAndCleansUp() {
     };
 
     Options opts;
-    const bool ok = PCManFM::ArchiveExtract::extract_archive(
+    const bool ok = Oneg4FM::ArchiveExtract::extract_archive(
         archivePath.toLocal8Bit().toStdString(), destDir.toLocal8Bit().toStdString(), progress, cb, err, opts);
     QVERIFY(!ok);
     QVERIFY(err.code == ECANCELED || !err.message.empty());
@@ -397,7 +397,7 @@ void ArchiveExtractTest::rejectsUnsafePaths() {
     auto cb = [](const ProgressInfo&) { return true; };
     Options opts;
 
-    const bool ok = PCManFM::ArchiveExtract::extract_archive(
+    const bool ok = Oneg4FM::ArchiveExtract::extract_archive(
         archivePath.toLocal8Bit().toStdString(), destDir.toLocal8Bit().toStdString(), progress, cb, err, opts);
     QVERIFY(!ok);
     QVERIFY(err.code == EINVAL || !err.message.empty());

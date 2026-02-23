@@ -9,7 +9,7 @@
 
 #include "../src/core/windowed_file_reader.h"
 
-using namespace PCManFM;
+using namespace Oneg4FM;
 
 namespace {
 

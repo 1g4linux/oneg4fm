@@ -10,7 +10,7 @@
 
 #include "color_manager.h"
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 class ColorDelegate : public QStyledItemDelegate {
     Q_OBJECT
@@ -24,6 +24,6 @@ class ColorDelegate : public QStyledItemDelegate {
     ColorManager* colors_;
 };
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM
 
 #endif  // PCMANFM_COLOR_DELEGATE_H

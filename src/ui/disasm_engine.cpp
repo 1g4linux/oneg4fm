@@ -9,7 +9,7 @@
 #include <cctype>
 #include <cstring>
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 namespace {
 DisasmInstr::Kind classifyMnemonic(const cs_insn& insn) {
@@ -150,4 +150,4 @@ bool DisasmEngine::disassemble(const std::uint8_t* code,
     return true;
 }
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM

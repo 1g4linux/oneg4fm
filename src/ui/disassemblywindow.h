@@ -15,7 +15,7 @@
 class QLabel;
 class QTableView;
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 class BinaryDocument;
 class ColorManager;
@@ -45,6 +45,6 @@ class DisassemblyWindow : public QMainWindow {
     QString currentPath_;
 };
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM
 
 #endif  // PCMANFM_DISASSEMBLYWINDOW_H

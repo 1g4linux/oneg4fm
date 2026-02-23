@@ -14,7 +14,7 @@
 
 #include "../core/windowed_file_reader.h"
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 namespace {
 constexpr qsizetype kProbeSize = 256;
@@ -142,4 +142,4 @@ void BinaryDocument::detectElf(const QByteArray& header) {
     }
 }
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM

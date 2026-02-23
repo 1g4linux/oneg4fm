@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-namespace PCManFM::ArchiveWriter {
+namespace Oneg4FM::ArchiveWriter {
 
 // Create a tar archive (compressed with zstd if available in libarchive) at |destination|
 // from the given list of native byte-string paths. Progress and cancellation use the same
@@ -30,6 +30,6 @@ bool extract_tar_zst(const std::string& archivePath,
                      const FsOps::ProgressCallback& callback,
                      FsOps::Error& err);
 
-}  // namespace PCManFM::ArchiveWriter
+}  // namespace Oneg4FM::ArchiveWriter
 
 #endif  // PCMANFM_ARCHIVE_WRITER_H

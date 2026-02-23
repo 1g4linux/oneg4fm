@@ -19,9 +19,6 @@
  * Boston, MA 02111-1307, USA.
  */
 
-/* Modified by Hong Jen Yee (PCMan) <pcman.tw@gmail.com>
- * on 2008.07.13 for use in PCManFM */
-
 /*
 #if !defined (EXO_INSIDE_EXO_H) && !defined (EXO_COMPILATION)
 #error "Only <exo/exo.h> can be included directly, this file may disappear or change contents."
@@ -84,7 +81,7 @@ void exo_tree_view_set_single_click_timeout(ExoTreeView* tree_view, guint single
 gboolean exo_tree_view_get_middle_click(const ExoTreeView* tree_view);
 void exo_tree_view_set_middle_click(ExoTreeView* tree_view, gboolean middle_click);
 
-/* 2008.07.16 added by Hong Jen Yee for PCManFM.
+/* 2008.07.16 added for Oneg4FM.
  * If activable column is set, only the specified column can be activated.
  * Other columns are viewed as blank area and won't receive mouse clicks.
  */

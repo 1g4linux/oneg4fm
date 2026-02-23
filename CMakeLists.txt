@@ -61,7 +61,7 @@ endif()
 
 add_subdirectory(libfm)
 add_subdirectory(libfm-qt)
-add_subdirectory(pcmanfm)
+add_subdirectory(oneg4fm)
 
 # manpage for oneg4fm (optional in development trees)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/oneg4fm.1.in")

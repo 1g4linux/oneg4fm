@@ -7,7 +7,7 @@
 #include "../panel/panel.h"  // Required for Panel::FilePath
 #include <QDir>
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 PathBar::PathBar(QWidget* parent) : QWidget(parent) {
     auto* layout = new QHBoxLayout(this);
@@ -68,4 +68,4 @@ void PathBar::onReturnPressed() {
     }
 }
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM

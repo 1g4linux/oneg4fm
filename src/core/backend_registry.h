@@ -11,7 +11,7 @@
 #include "ifileops.h"
 #include "ifoldermodel.h"
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 class BackendRegistry {
    public:
@@ -21,6 +21,6 @@ class BackendRegistry {
     static std::unique_ptr<IFolderModel> createFolderModel(QObject* parent);
 };
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM
 
 #endif  // BACKEND_REGISTRY_H

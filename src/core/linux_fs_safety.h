@@ -17,7 +17,7 @@
 #include <linux/stat.h>
 #include <sys/types.h>
 
-namespace PCManFM::LinuxFsSafety {
+namespace Oneg4FM::LinuxFsSafety {
 
 class Fd {
    public:
@@ -107,6 +107,6 @@ bool statx_under(int rootfd,
                  struct statx& out,
                  FsOps::Error& err);
 
-}  // namespace PCManFM::LinuxFsSafety
+}  // namespace Oneg4FM::LinuxFsSafety
 
 #endif  // PCMANFM_LINUX_FS_SAFETY_H

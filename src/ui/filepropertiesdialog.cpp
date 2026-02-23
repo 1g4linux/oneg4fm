@@ -107,18 +107,18 @@ void FilePropertiesDialog::setupUI() {
     setMinimumSize(480, 360);
 
     auto* mainLayout = new QVBoxLayout(this);
-    PCManFM::UiStyle::applyDialogLayout(mainLayout);
+    Oneg4FM::UiStyle::applyDialogLayout(mainLayout);
 
     auto* topLayout = new QHBoxLayout();
-    topLayout->setSpacing(PCManFM::UiStyle::kSpacingMd);
+    topLayout->setSpacing(Oneg4FM::UiStyle::kSpacingMd);
     m_iconLabel = new QLabel(this);
     m_iconLabel->setFixedSize(64, 64);
     topLayout->addWidget(m_iconLabel, 0, Qt::AlignTop);
 
     auto* infoLayout = new QVBoxLayout();
-    infoLayout->setSpacing(PCManFM::UiStyle::kSpacingXs);
+    infoLayout->setSpacing(Oneg4FM::UiStyle::kSpacingXs);
     m_nameLabel = new QLabel(this);
-    PCManFM::UiStyle::applySectionTitle(m_nameLabel);
+    Oneg4FM::UiStyle::applySectionTitle(m_nameLabel);
     infoLayout->addWidget(m_nameLabel);
 
     m_typeLabel = new QLabel(this);
@@ -165,10 +165,10 @@ void FilePropertiesDialog::populateFileInfo() {
 void FilePropertiesDialog::setupGeneralTab() {
     auto* generalTab = new QWidget(this);
     auto* layout = new QFormLayout(generalTab);
-    layout->setHorizontalSpacing(PCManFM::UiStyle::kSpacingSm);
-    layout->setVerticalSpacing(PCManFM::UiStyle::kSpacingSm);
-    layout->setContentsMargins(PCManFM::UiStyle::kDialogMargin, PCManFM::UiStyle::kDialogMargin,
-                               PCManFM::UiStyle::kDialogMargin, PCManFM::UiStyle::kDialogMargin);
+    layout->setHorizontalSpacing(Oneg4FM::UiStyle::kSpacingSm);
+    layout->setVerticalSpacing(Oneg4FM::UiStyle::kSpacingSm);
+    layout->setContentsMargins(Oneg4FM::UiStyle::kDialogMargin, Oneg4FM::UiStyle::kDialogMargin,
+                               Oneg4FM::UiStyle::kDialogMargin, Oneg4FM::UiStyle::kDialogMargin);
 
     m_sizeLabel = new QLabel(generalTab);
     m_locationLabel = new QLabel(generalTab);
@@ -205,10 +205,10 @@ void FilePropertiesDialog::setupGeneralTab() {
 void FilePropertiesDialog::setupPermissionsTab() {
     auto* permissionsTab = new QWidget(this);
     auto* layout = new QFormLayout(permissionsTab);
-    layout->setHorizontalSpacing(PCManFM::UiStyle::kSpacingSm);
-    layout->setVerticalSpacing(PCManFM::UiStyle::kSpacingSm);
-    layout->setContentsMargins(PCManFM::UiStyle::kDialogMargin, PCManFM::UiStyle::kDialogMargin,
-                               PCManFM::UiStyle::kDialogMargin, PCManFM::UiStyle::kDialogMargin);
+    layout->setHorizontalSpacing(Oneg4FM::UiStyle::kSpacingSm);
+    layout->setVerticalSpacing(Oneg4FM::UiStyle::kSpacingSm);
+    layout->setContentsMargins(Oneg4FM::UiStyle::kDialogMargin, Oneg4FM::UiStyle::kDialogMargin,
+                               Oneg4FM::UiStyle::kDialogMargin, Oneg4FM::UiStyle::kDialogMargin);
 
     m_ownerEdit = new QLineEdit(permissionsTab);
     m_ownerEdit->setReadOnly(true);
@@ -231,8 +231,8 @@ void FilePropertiesDialog::setupPermissionsTab() {
 
     auto* permWidget = new QWidget(permissionsTab);
     auto* permLayout = new QGridLayout(permWidget);
-    permLayout->setHorizontalSpacing(PCManFM::UiStyle::kSpacingSm);
-    permLayout->setVerticalSpacing(PCManFM::UiStyle::kSpacingXs);
+    permLayout->setHorizontalSpacing(Oneg4FM::UiStyle::kSpacingSm);
+    permLayout->setVerticalSpacing(Oneg4FM::UiStyle::kSpacingXs);
 
     permLayout->setColumnStretch(0, 0);
     permLayout->setColumnStretch(1, 1);
@@ -365,7 +365,7 @@ void FilePropertiesDialog::onApplyClicked() {
         adjustBit(perms, QFile::WriteOther, otherWriteState);
         adjustBit(perms, QFile::ExeOther, otherExecState);
 
-        if (!PCManFM::FsQt::setPermissions(path, perms, error)) {
+        if (!Oneg4FM::FsQt::setPermissions(path, perms, error)) {
             error = tr("Failed to change permissions for %1: %2").arg(path, error);
             return false;
         }

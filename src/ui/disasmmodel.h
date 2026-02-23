@@ -14,7 +14,7 @@
 #include "binarydocument.h"
 #include "disasm_engine.h"
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 class DisasmModel : public QAbstractTableModel {
     Q_OBJECT
@@ -38,6 +38,6 @@ class DisasmModel : public QAbstractTableModel {
     quint64 baseAddress_ = 0;
 };
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM
 
 #endif  // PCMANFM_DISASMMODEL_H

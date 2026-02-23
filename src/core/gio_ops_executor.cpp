@@ -17,7 +17,7 @@
 #include <utility>
 #include <vector>
 
-namespace PCManFM::FileOpsContract::detail {
+namespace Oneg4FM::FileOpsContract::detail {
 namespace {
 
 struct SourceStats {
@@ -1522,4 +1522,4 @@ Result run_gio_request(const Request& request, const EventHandlers& handlers) {
     return result;
 }
 
-}  // namespace PCManFM::FileOpsContract::detail
+}  // namespace Oneg4FM::FileOpsContract::detail

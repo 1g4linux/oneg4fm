@@ -19,7 +19,7 @@ class QTimer;
 class QLabel;
 class QDockWidget;
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 class HexEditorWindow : public QMainWindow {
     Q_OBJECT
@@ -126,6 +126,6 @@ class HexEditorWindow : public QMainWindow {
     int currentDiffIndex_ = -1;
 };
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM
 
 #endif  // PCMANFM_HEXEDITORWINDOW_H

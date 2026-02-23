@@ -7,7 +7,7 @@
 
 #include "../core/fs_ops.h"
 
-namespace PCManFM::FsQt {
+namespace Oneg4FM::FsQt {
 
 namespace {
 
@@ -58,4 +58,4 @@ bool setPermissions(const QString& path, QFile::Permissions perms, QString& erro
     return ok;
 }
 
-}  // namespace PCManFM::FsQt
+}  // namespace Oneg4FM::FsQt

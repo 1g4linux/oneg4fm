@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-namespace PCManFM::FsOps {
+namespace Oneg4FM::FsOps {
 
 // Maximum recursion depth to avoid runaway traversal (symlink loops, pathological trees).
 constexpr int kMaxRecursionDepth = 256;
@@ -67,6 +67,6 @@ bool delete_path(const std::string& path, ProgressInfo& progress, const Progress
 // Compute a BLAKE3 checksum for a regular file (rejects symlinks and non-regular files).
 bool blake3_file(const std::string& path, std::string& hexHash, Error& err);
 
-}  // namespace PCManFM::FsOps
+}  // namespace Oneg4FM::FsOps
 
 #endif  // PCMANFM_FS_OPS_H

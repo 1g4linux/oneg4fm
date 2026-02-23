@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-namespace PCManFM::FileOpsContract {
+namespace Oneg4FM::FileOpsContract {
 
 enum class Operation {
     Copy,
@@ -210,6 +210,6 @@ CapabilityReport capabilities();
 Result preflight(const Request& request);
 Result run(const Request& request, const EventHandlers& handlers = {});
 
-}  // namespace PCManFM::FileOpsContract
+}  // namespace Oneg4FM::FileOpsContract
 
 #endif  // PCMANFM_FILE_OPS_CONTRACT_H

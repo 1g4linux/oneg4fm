@@ -4,7 +4,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QTemporaryDir>
-#include "../pcmanfm/imagemagick_support.h"
+#include "../oneg4fm/imagemagick_support.h"
 
 #if defined(Q_OS_UNIX)
 #include <sys/stat.h>

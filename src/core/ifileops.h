@@ -13,7 +13,7 @@
 #include <QStringList>
 #include <QtGlobal>
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 enum class FileOpType { Copy, Move, Delete };
 enum class FileOpConflictResolution {
@@ -72,12 +72,12 @@ class IFileOps : public QObject {
     void finished(bool success, const QString& errorMessage);
 };
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM
 
-Q_DECLARE_METATYPE(PCManFM::FileOpType)
-Q_DECLARE_METATYPE(PCManFM::FileOpConflictResolution)
-Q_DECLARE_METATYPE(PCManFM::FileOpRequest)
-Q_DECLARE_METATYPE(PCManFM::FileOpProgress)
-Q_DECLARE_METATYPE(PCManFM::FileOpConflict)
+Q_DECLARE_METATYPE(Oneg4FM::FileOpType)
+Q_DECLARE_METATYPE(Oneg4FM::FileOpConflictResolution)
+Q_DECLARE_METATYPE(Oneg4FM::FileOpRequest)
+Q_DECLARE_METATYPE(Oneg4FM::FileOpProgress)
+Q_DECLARE_METATYPE(Oneg4FM::FileOpConflict)
 
 #endif  // IFILEOPS_H

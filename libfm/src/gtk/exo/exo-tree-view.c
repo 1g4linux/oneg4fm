@@ -18,9 +18,6 @@
  * Boston, MA 02111-1307, USA.
  */
 
-/* Modified by Hong Jen Yee (PCMan) <pcman.tw@gmail.com>
- * on 2008.05.11 for use in PCManFM */
-
 #ifdef HAVE_CONFIG_H
 #include <config.h>
 #endif
@@ -847,7 +844,7 @@ void exo_tree_view_set_middle_click(ExoTreeView* tree_view, gboolean middle_clic
     }
 }
 
-/* 2008.07.16 added by Hong Jen Yee for PCManFM.
+/* 2008.07.16 added for Oneg4FM.
  * If activable column is set, only the specified column can be activated.
  * Other columns are viewed as blank area and won't receive mouse clicks.
  */

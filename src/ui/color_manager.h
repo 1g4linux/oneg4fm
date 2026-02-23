@@ -12,7 +12,7 @@
 
 #include "color_roles.h"
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 struct ColorScheme {
     QColor background;
@@ -48,6 +48,6 @@ class ColorManager : public QObject {
     ColorScheme scheme_;
 };
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM
 
 #endif  // PCMANFM_COLOR_MANAGER_H

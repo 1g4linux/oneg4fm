@@ -19,7 +19,7 @@
 #include <limits>
 #include <vector>
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 namespace {
 
@@ -824,4 +824,4 @@ void HexEditorView::mouseMoveEvent(QMouseEvent* event) {
     viewport()->update();
 }
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM

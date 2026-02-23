@@ -18,13 +18,13 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-namespace PCManFM::ArchiveWriter {
+namespace Oneg4FM::ArchiveWriter {
 
 namespace {
 
-using PCManFM::FsOps::Error;
-using PCManFM::FsOps::ProgressCallback;
-using PCManFM::FsOps::ProgressInfo;
+using Oneg4FM::FsOps::Error;
+using Oneg4FM::FsOps::ProgressCallback;
+using Oneg4FM::FsOps::ProgressInfo;
 
 struct Fd {
     int fd;
@@ -815,4 +815,4 @@ bool extract_tar_zst(const std::string& archivePath,
     return ok;
 }
 
-}  // namespace PCManFM::ArchiveWriter
+}  // namespace Oneg4FM::ArchiveWriter

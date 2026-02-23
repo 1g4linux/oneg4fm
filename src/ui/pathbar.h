@@ -16,7 +16,7 @@ namespace Panel {
 class FilePath;
 }
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 class PathBar : public QWidget {
     Q_OBJECT
@@ -48,6 +48,6 @@ class PathBar : public QWidget {
     QUrl currentPath_;
 };
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM
 
 #endif  // PCMANFM_UI_PATHBAR_H

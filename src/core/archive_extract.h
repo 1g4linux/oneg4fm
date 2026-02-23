@@ -10,7 +10,7 @@
 
 #include <string>
 
-namespace PCManFM::ArchiveExtract {
+namespace Oneg4FM::ArchiveExtract {
 
 struct Options {
     bool overwriteExisting = true;
@@ -32,6 +32,6 @@ bool extract_archive(const std::string& archivePath,
                      FsOps::Error& err,
                      const Options& opts = {});
 
-}  // namespace PCManFM::ArchiveExtract
+}  // namespace Oneg4FM::ArchiveExtract
 
 #endif  // PCMANFM_ARCHIVE_EXTRACT_H

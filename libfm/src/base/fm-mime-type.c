@@ -161,7 +161,7 @@ FmMimeType* fm_mime_type_from_native_file(const char* file_path, const char* bas
             }
             fd = open(file_path, O_RDONLY);
             if (fd >= 0) {
-                /* #3086703 - PCManFM crashes on non existent directories.
+                /* #3086703 - Oneg4FM crashes on non existent directories.
                  * http://sourceforge.net/tracker/?func=detail&aid=3086703&group_id=156956&atid=801864
                  *
                  * NOTE: do not use mmap here. Though we can get little

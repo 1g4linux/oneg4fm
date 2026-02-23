@@ -8,7 +8,7 @@
 #include <QApplication>
 #include <QPalette>
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 namespace {
 QColor loadColor(QSettings& settings, const QString& key, const QColor& fallback) {
@@ -79,4 +79,4 @@ void ColorManager::setScheme(const ColorScheme& s) {
     Q_EMIT schemeChanged();
 }
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM

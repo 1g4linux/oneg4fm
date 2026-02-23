@@ -12,7 +12,7 @@
 
 #include <atomic>
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 class ArchiveJob : public QObject {
     Q_OBJECT
@@ -40,6 +40,6 @@ class ArchiveJob : public QObject {
     std::atomic<bool> cancelRequested_;
 };
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM
 
 #endif  // PCMANFM_ARCHIVEJOB_H

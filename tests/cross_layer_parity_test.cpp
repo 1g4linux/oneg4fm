@@ -94,22 +94,22 @@ ScenarioPaths makeScenario(const QTemporaryDir& root,
 LayerOutcome runCoreCopyWithPromptConflict(const ScenarioPaths& paths, ConflictAction action) {
     LayerOutcome out;
 
-    PCManFM::FileOpsContract::Request req;
-    req.operation = PCManFM::FileOpsContract::Operation::Copy;
+    Oneg4FM::FileOpsContract::Request req;
+    req.operation = Oneg4FM::FileOpsContract::Operation::Copy;
     req.sources = {toNative(paths.srcPath)};
     req.destination.targetDir = toNative(paths.dstDir);
-    req.destination.mappingMode = PCManFM::FileOpsContract::DestinationMappingMode::SourceBasename;
-    req.conflictPolicy = PCManFM::FileOpsContract::ConflictPolicy::Prompt;
-    req.linuxSafety.workerMode = PCManFM::FileOpsContract::WorkerMode::InProcess;
+    req.destination.mappingMode = Oneg4FM::FileOpsContract::DestinationMappingMode::SourceBasename;
+    req.conflictPolicy = Oneg4FM::FileOpsContract::ConflictPolicy::Prompt;
+    req.linuxSafety.workerMode = Oneg4FM::FileOpsContract::WorkerMode::InProcess;
 
-    PCManFM::FileOpsContract::EventHandlers handlers;
-    handlers.onConflict = [&out, action](const PCManFM::FileOpsContract::ConflictEvent&) {
+    Oneg4FM::FileOpsContract::EventHandlers handlers;
+    handlers.onConflict = [&out, action](const Oneg4FM::FileOpsContract::ConflictEvent&) {
         ++out.conflictCount;
-        return action == ConflictAction::Skip ? PCManFM::FileOpsContract::ConflictResolution::Skip
-                                              : PCManFM::FileOpsContract::ConflictResolution::Abort;
+        return action == ConflictAction::Skip ? Oneg4FM::FileOpsContract::ConflictResolution::Skip
+                                              : Oneg4FM::FileOpsContract::ConflictResolution::Abort;
     };
 
-    const PCManFM::FileOpsContract::Result result = PCManFM::FileOpsContract::run(req, handlers);
+    const Oneg4FM::FileOpsContract::Result result = Oneg4FM::FileOpsContract::run(req, handlers);
     out.success = result.success;
     out.cancelled = result.cancelled;
     out.sysErrno = result.error.sysErrno;
@@ -124,23 +124,23 @@ LayerOutcome runCoreCopyWithPromptConflict(const ScenarioPaths& paths, ConflictA
 LayerOutcome runQtCopyWithPromptConflict(const ScenarioPaths& paths, ConflictAction action) {
     LayerOutcome out;
 
-    PCManFM::QtFileOps ops;
-    QSignalSpy finishedSpy(&ops, &PCManFM::QtFileOps::finished);
-    QObject::connect(&ops, &PCManFM::QtFileOps::progress, &ops, [&out](const PCManFM::FileOpProgress& info) {
+    Oneg4FM::QtFileOps ops;
+    QSignalSpy finishedSpy(&ops, &Oneg4FM::QtFileOps::finished);
+    QObject::connect(&ops, &Oneg4FM::QtFileOps::progress, &ops, [&out](const Oneg4FM::FileOpProgress& info) {
         out.progress.bytesDone = info.bytesDone;
         out.progress.bytesTotal = info.bytesTotal;
         out.progress.filesDone = info.filesDone;
         out.progress.filesTotal = info.filesTotal;
     });
-    QObject::connect(&ops, &PCManFM::QtFileOps::conflictRequested, &ops,
-                     [&ops, &out, action](const PCManFM::FileOpConflict&) {
+    QObject::connect(&ops, &Oneg4FM::QtFileOps::conflictRequested, &ops,
+                     [&ops, &out, action](const Oneg4FM::FileOpConflict&) {
                          ++out.conflictCount;
-                         ops.resolveConflict(action == ConflictAction::Skip ? PCManFM::FileOpConflictResolution::Skip
-                                                                            : PCManFM::FileOpConflictResolution::Abort);
+                         ops.resolveConflict(action == ConflictAction::Skip ? Oneg4FM::FileOpConflictResolution::Skip
+                                                                            : Oneg4FM::FileOpConflictResolution::Abort);
                      });
 
-    PCManFM::FileOpRequest req;
-    req.type = PCManFM::FileOpType::Copy;
+    Oneg4FM::FileOpRequest req;
+    req.type = Oneg4FM::FileOpType::Copy;
     req.sources = QStringList{paths.srcPath};
     req.destination = paths.dstDir;
     req.followSymlinks = false;

@@ -21,7 +21,7 @@ namespace Fm {
 namespace {
 
 #if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
-namespace CoreFileOps = PCManFM::FileOpsContract;
+namespace CoreFileOps = Oneg4FM::FileOpsContract;
 
 bool toNativePath(const FilePath& path, std::string& out) {
     const auto localPath = path.localPath();

@@ -8,10 +8,10 @@
 
 #include "file_ops_contract.h"
 
-namespace PCManFM::FileOpsContract::detail {
+namespace Oneg4FM::FileOpsContract::detail {
 
 Result run_gio_request(const Request& request, const EventHandlers& handlers);
 
-}  // namespace PCManFM::FileOpsContract::detail
+}  // namespace Oneg4FM::FileOpsContract::detail
 
 #endif  // PCMANFM_GIO_OPS_EXECUTOR_H

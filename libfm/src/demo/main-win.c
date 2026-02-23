@@ -665,12 +665,10 @@ static void fm_main_win_finalize(GObject* object) {
 }
 
 void on_about(GtkAction* act, FmMainWin* win) {
-    const char* authors[] = {"Hong Jen Yee <pcman.tw@gmail.com>", NULL};
     GtkWidget* dlg = gtk_about_dialog_new();
     gtk_about_dialog_set_program_name(GTK_ABOUT_DIALOG(dlg), "libfm-demo");
-    gtk_about_dialog_set_authors(GTK_ABOUT_DIALOG(dlg), authors);
     gtk_about_dialog_set_comments(GTK_ABOUT_DIALOG(dlg), "A demo program for libfm");
-    gtk_about_dialog_set_website(GTK_ABOUT_DIALOG(dlg), "http://pcmanfm.sf.net/");
+    gtk_about_dialog_set_website(GTK_ABOUT_DIALOG(dlg), "http://oneg4fm.sf.net/");
     gtk_dialog_run(GTK_DIALOG(dlg));
     gtk_widget_destroy(dlg);
 }

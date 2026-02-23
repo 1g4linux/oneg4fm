@@ -19,7 +19,7 @@
 #include <cstdlib>
 #include <fstream>
 
-using namespace PCManFM::FsOps;
+using namespace Oneg4FM::FsOps;
 
 namespace {
 
@@ -55,7 +55,7 @@ ino_t fileInode(const QString& path) {
 
 QStringList atomicTempArtifacts(const QString& dirPath) {
     QDir dir(dirPath);
-    return dir.entryList(QStringList() << QStringLiteral(".pcmanfm.tmp.*") << QStringLiteral(".pcmanfm.tmp.link.*"),
+    return dir.entryList(QStringList() << QStringLiteral(".oneg4fm.tmp.*") << QStringLiteral(".oneg4fm.tmp.link.*"),
                          QDir::Files | QDir::Hidden | QDir::System | QDir::NoSymLinks);
 }
 

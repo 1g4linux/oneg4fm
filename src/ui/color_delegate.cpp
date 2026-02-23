@@ -10,7 +10,7 @@
 
 #include "color_roles.h"
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 ColorDelegate::ColorDelegate(ColorManager* colors, QObject* parent) : QStyledItemDelegate(parent), colors_(colors) {}
 
@@ -80,4 +80,4 @@ void ColorDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option,
     QStyledItemDelegate::paint(painter, opt, index);
 }
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM

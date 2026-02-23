@@ -11,7 +11,7 @@
 
 #include "color_roles.h"
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 namespace {
 QString formatBytes(const std::vector<std::uint8_t>& bytes) {
@@ -150,4 +150,4 @@ void DisasmModel::clear() {
     endResetModel();
 }
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM

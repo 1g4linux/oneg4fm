@@ -25,12 +25,12 @@
 #include <sys/xattr.h>
 #include <unistd.h>
 
-namespace PCManFM::ArchiveExtract {
+namespace Oneg4FM::ArchiveExtract {
 namespace {
 
-using PCManFM::FsOps::Error;
-using PCManFM::FsOps::ProgressCallback;
-using PCManFM::FsOps::ProgressInfo;
+using Oneg4FM::FsOps::Error;
+using Oneg4FM::FsOps::ProgressCallback;
+using Oneg4FM::FsOps::ProgressInfo;
 
 struct Fd {
     int fd;
@@ -804,4 +804,4 @@ bool extract_archive(const std::string& archivePath,
     return ok;
 }
 
-}  // namespace PCManFM::ArchiveExtract
+}  // namespace Oneg4FM::ArchiveExtract

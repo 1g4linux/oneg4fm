@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 // WindowedFileReader maps a moving window of the file. When mmap is unavailable,
 // it transparently falls back to pread() into an internal buffer.
@@ -61,6 +61,6 @@ class WindowedFileReader {
     mutable std::mutex windowMutex_;
 };
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM
 
 #endif  // PCMANFM_WINDOWED_FILE_READER_H

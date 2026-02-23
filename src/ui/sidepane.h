@@ -11,7 +11,7 @@
 #include <QUrl>
 #include <QSet>
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 class SidePane : public QTreeWidget {
     Q_OBJECT
@@ -53,6 +53,6 @@ class SidePane : public QTreeWidget {
     Mode mode_ = PlacesMode;
 };
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM
 
 #endif  // PCMANFM_UI_SIDEPANE_H

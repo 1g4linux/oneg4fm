@@ -37,7 +37,7 @@
 #include <thread>
 #include <unistd.h>
 
-namespace PCManFM::FileOpsContract {
+namespace Oneg4FM::FileOpsContract {
 namespace {
 
 struct SourceStats {
@@ -1672,4 +1672,4 @@ Result run(const Request& request, const EventHandlers& handlers) {
     return result;
 }
 
-}  // namespace PCManFM::FileOpsContract
+}  // namespace Oneg4FM::FileOpsContract

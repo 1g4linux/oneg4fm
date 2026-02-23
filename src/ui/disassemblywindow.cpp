@@ -25,7 +25,7 @@
 #include <algorithm>
 #include <QStringList>
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 namespace {
 // Avoid loading huge binaries into memory at once; trim to a reasonable preview size.
@@ -173,4 +173,4 @@ void DisassemblyWindow::updateLabels(const QString& path, bool truncated, qsizet
     setWindowTitle(tr("Disassembly - %1").arg(QFileInfo(path).fileName()));
 }
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM

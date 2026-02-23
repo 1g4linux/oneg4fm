@@ -20,7 +20,7 @@
 #include <unistd.h>
 #include <b3sum/blake3.h>
 
-namespace PCManFM::FsOps {
+namespace Oneg4FM::FsOps {
 
 namespace {
 
@@ -278,7 +278,7 @@ class CopyJournal {
     }
 
     static std::string spill_file_name(unsigned int attempt) {
-        return std::string(".pcmanfm.copy-journal.") + std::to_string(::getpid()) + "." + std::to_string(attempt);
+        return std::string(".oneg4fm.copy-journal.") + std::to_string(::getpid()) + "." + std::to_string(attempt);
     }
 
     static bool read_exact_at(int fd, std::uint64_t offset, std::uint8_t* out, std::size_t size, Error& err) {
@@ -697,7 +697,7 @@ std::string staging_rel_path_for_target(const std::string& targetPath, const std
 }
 
 std::string build_staging_file_name(unsigned int attempt) {
-    return std::string(".pcmanfm.copy-stage.") + std::to_string(::getpid()) + "." + std::to_string(attempt);
+    return std::string(".oneg4fm.copy-stage.") + std::to_string(::getpid()) + "." + std::to_string(attempt);
 }
 
 bool create_staging_file_under(int dstDir, mode_t mode, Fd& outFd, std::string& outName, Error& err) {
@@ -1479,4 +1479,4 @@ bool delete_path(const std::string& path, ProgressInfo& progress, const Progress
     return true;
 }
 
-}  // namespace PCManFM::FsOps
+}  // namespace Oneg4FM::FsOps

@@ -15,7 +15,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 namespace {
 
@@ -206,4 +206,4 @@ bool WindowedFileReader::read(std::uint64_t offset,
     return true;
 }
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM

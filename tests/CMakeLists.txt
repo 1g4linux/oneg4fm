@@ -15,11 +15,11 @@ set(PCMANFM_TEST_LIBS
 
 set(PCMANFM_TEST_INCLUDES
     ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}/pcmanfm
+    ${CMAKE_SOURCE_DIR}/oneg4fm
     ${TEST_GIO_INCLUDE_DIRS}
 )
 
-function(pcmanfm_add_test target)
+function(oneg4fm_add_test target)
     cmake_parse_arguments(ARG "" "" "SOURCES;LIBS;INCLUDES" ${ARGN})
 
     add_executable(${target} ${ARG_SOURCES})
@@ -30,17 +30,17 @@ function(pcmanfm_add_test target)
     set_tests_properties(${target} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endfunction()
 
-pcmanfm_add_test(oneg4fm-basic-tests
+oneg4fm_add_test(oneg4fm-basic-tests
     SOURCES
         test_basic.cpp
 )
 
-pcmanfm_add_test(oneg4fm-core-utils-tests
+oneg4fm_add_test(oneg4fm-core-utils-tests
     SOURCES
         test_core_utils.cpp
 )
 
-pcmanfm_add_test(oneg4fm-fs-tests
+oneg4fm_add_test(oneg4fm-fs-tests
     SOURCES
         fs_ops_test.cpp
         ../src/core/fs_ops.cpp
@@ -51,13 +51,13 @@ pcmanfm_add_test(oneg4fm-fs-tests
         ${BLAKE3_INCLUDE_DIRS}
 )
 
-pcmanfm_add_test(oneg4fm-linux-fs-safety-tests
+oneg4fm_add_test(oneg4fm-linux-fs-safety-tests
     SOURCES
         linux_fs_safety_test.cpp
         ../src/core/linux_fs_safety.cpp
 )
 
-pcmanfm_add_test(oneg4fm-ops-tests
+oneg4fm_add_test(oneg4fm-ops-tests
     SOURCES
         qt_fileops_test.cpp
         ../src/backends/qt/qt_fileops.cpp
@@ -72,7 +72,7 @@ pcmanfm_add_test(oneg4fm-ops-tests
         ${BLAKE3_INCLUDE_DIRS}
 )
 
-pcmanfm_add_test(oneg4fm-libfmqt-fileops-bridge-tests
+oneg4fm_add_test(oneg4fm-libfmqt-fileops-bridge-tests
     SOURCES
         libfmqt_fileops_bridge_test.cpp
     LIBS
@@ -82,7 +82,7 @@ pcmanfm_add_test(oneg4fm-libfmqt-fileops-bridge-tests
         ${CMAKE_BINARY_DIR}/libfm-qt/src
 )
 
-pcmanfm_add_test(oneg4fm-cross-layer-parity-tests
+oneg4fm_add_test(oneg4fm-cross-layer-parity-tests
     SOURCES
         cross_layer_parity_test.cpp
         ../src/backends/qt/qt_fileops.cpp
@@ -100,7 +100,7 @@ pcmanfm_add_test(oneg4fm-cross-layer-parity-tests
         ${BLAKE3_INCLUDE_DIRS}
 )
 
-pcmanfm_add_test(oneg4fm-file-ops-contract-tests
+oneg4fm_add_test(oneg4fm-file-ops-contract-tests
     SOURCES
         file_ops_contract_test.cpp
         ../src/core/file_ops_contract.cpp
@@ -113,7 +113,7 @@ pcmanfm_add_test(oneg4fm-file-ops-contract-tests
         ${BLAKE3_INCLUDE_DIRS}
 )
 
-pcmanfm_add_test(oneg4fm-archive-tests
+oneg4fm_add_test(oneg4fm-archive-tests
     SOURCES
         archive_extract_test.cpp
         ../src/core/archive_extract.cpp
@@ -128,33 +128,33 @@ pcmanfm_add_test(oneg4fm-archive-tests
         ${BLAKE3_INCLUDE_DIRS}
 )
 
-pcmanfm_add_test(oneg4fm-windowed-reader-tests
+oneg4fm_add_test(oneg4fm-windowed-reader-tests
     SOURCES
         windowed_file_reader_test.cpp
         ../src/core/windowed_file_reader.cpp
 )
 
-pcmanfm_add_test(oneg4fm-file-ops-inventory-tests
+oneg4fm_add_test(oneg4fm-file-ops-inventory-tests
     SOURCES
         file_ops_inventory_test.cpp
 )
 target_compile_definitions(oneg4fm-file-ops-inventory-tests PRIVATE "PCMANFM_SOURCE_DIR=\"${CMAKE_SOURCE_DIR}\"")
 
-pcmanfm_add_test(oneg4fm-browsehistory-tests
+oneg4fm_add_test(oneg4fm-browsehistory-tests
     SOURCES
         test_browsehistory.cpp
     LIBS
         fm-qt6
 )
 
-pcmanfm_add_test(oneg4fm-thumbnailer-tests
+oneg4fm_add_test(oneg4fm-thumbnailer-tests
     SOURCES
         test_thumbnailer.cpp
     LIBS
         fm-qt6
 )
 
-pcmanfm_add_test(oneg4fm-disasm-tests
+oneg4fm_add_test(oneg4fm-disasm-tests
     SOURCES
         disasm_engine_test.cpp
         ../src/ui/disasm_engine.cpp
@@ -165,8 +165,8 @@ pcmanfm_add_test(oneg4fm-disasm-tests
 )
 
 set(PCMANFM_SETTINGS_SOURCES
-    ../pcmanfm/settings.cpp
-    ../pcmanfm/settings.h
+    ../oneg4fm/settings.cpp
+    ../oneg4fm/settings.h
     ../src/ui/fsqt.cpp
     ../src/core/fs_ops.cpp
     ../src/core/linux_fs_safety.cpp
@@ -181,7 +181,7 @@ set(PCMANFM_SETTINGS_INCLUDES
     ${BLAKE3_INCLUDE_DIRS}
 )
 
-pcmanfm_add_test(oneg4fm-utils-tests
+oneg4fm_add_test(oneg4fm-utils-tests
     SOURCES
         test_utils.cpp
         ${PCMANFM_SETTINGS_SOURCES}
@@ -191,7 +191,7 @@ pcmanfm_add_test(oneg4fm-utils-tests
         ${PCMANFM_SETTINGS_INCLUDES}
 )
 
-pcmanfm_add_test(oneg4fm-settings-tests
+oneg4fm_add_test(oneg4fm-settings-tests
     SOURCES
         test_settings.cpp
         ${PCMANFM_SETTINGS_SOURCES}
@@ -201,7 +201,7 @@ pcmanfm_add_test(oneg4fm-settings-tests
         ${PCMANFM_SETTINGS_INCLUDES}
 )
 
-pcmanfm_add_test(oneg4fm-settings-functionality-tests
+oneg4fm_add_test(oneg4fm-settings-functionality-tests
     SOURCES
         test_settings_functionality.cpp
         ${PCMANFM_SETTINGS_SOURCES}
@@ -212,13 +212,13 @@ pcmanfm_add_test(oneg4fm-settings-functionality-tests
 )
 
 set(PCMANFM_XDGDIR_SOURCES
-    ../pcmanfm/xdgdir.cpp
+    ../oneg4fm/xdgdir.cpp
     ../src/ui/fsqt.cpp
     ../src/core/fs_ops.cpp
     ../src/core/linux_fs_safety.cpp
 )
 
-pcmanfm_add_test(oneg4fm-xdgdir-tests
+oneg4fm_add_test(oneg4fm-xdgdir-tests
     SOURCES
         test_xdgdir.cpp
         ${PCMANFM_XDGDIR_SOURCES}
@@ -228,7 +228,7 @@ pcmanfm_add_test(oneg4fm-xdgdir-tests
         ${BLAKE3_INCLUDE_DIRS}
 )
 
-pcmanfm_add_test(oneg4fm-xdgdir-functionality-tests
+oneg4fm_add_test(oneg4fm-xdgdir-functionality-tests
     SOURCES
         test_xdgdir_functionality.cpp
         ${PCMANFM_XDGDIR_SOURCES}
@@ -244,10 +244,10 @@ if(PKG_CONFIG_FOUND)
 endif()
 
 if(MAGICKWAND_FOUND)
-    pcmanfm_add_test(oneg4fm-imagemagick-tests
+    oneg4fm_add_test(oneg4fm-imagemagick-tests
         SOURCES
             test_imagemagick.cpp
-            ../pcmanfm/imagemagick_support.cpp
+            ../oneg4fm/imagemagick_support.cpp
         LIBS
             ${MAGICKWAND_LIBRARIES}
         INCLUDES

@@ -20,7 +20,7 @@
 
 #include "../core/windowed_file_reader.h"
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 // HexDocument implements a paged piece-table style model to edit files without
 // loading the whole file into memory. All disk access uses POSIX I/O calls.
@@ -157,6 +157,6 @@ class HexDocument : public QObject {
     bool dirty_ = false;
 };
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM
 
 #endif  // PCMANFM_HEXDOCUMENT_H

@@ -8,7 +8,7 @@
 
 #include <Qt>
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 enum CustomRoles {
     RoleCategory = Qt::UserRole + 1,
@@ -36,6 +36,6 @@ enum class CellCategory {
     CurrentPc
 };
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM
 
 #endif  // PCMANFM_COLOR_ROLES_H

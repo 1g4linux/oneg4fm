@@ -15,7 +15,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-using namespace PCManFM;
+using namespace Oneg4FM;
 
 class QtFileOpsTest : public QObject {
     Q_OBJECT

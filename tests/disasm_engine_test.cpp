@@ -7,7 +7,7 @@
 
 #include "../src/ui/disasm_engine.h"
 
-using namespace PCManFM;
+using namespace Oneg4FM;
 
 class DisasmEngineTest : public QObject {
     Q_OBJECT

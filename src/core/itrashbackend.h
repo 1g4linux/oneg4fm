@@ -8,7 +8,7 @@
 
 #include <QString>
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 class ITrashBackend {
    public:
@@ -18,6 +18,6 @@ class ITrashBackend {
     virtual bool restore(const QString& trashId, QString* errorOut) = 0;
 };
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM
 
 #endif  // ITRASHBACKEND_H

@@ -21,7 +21,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 namespace {
 
@@ -1005,4 +1005,4 @@ bool HexDocument::rebuildFromCurrentFile(QString& errorOut) {
     return true;
 }
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM

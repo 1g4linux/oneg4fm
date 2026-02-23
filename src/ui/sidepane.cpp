@@ -8,7 +8,7 @@
 #include <QDir>
 #include <QStandardPaths>
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 SidePane::SidePane(QWidget* parent) : QTreeWidget(parent) {
     setHeaderHidden(true);
@@ -107,4 +107,4 @@ void SidePane::onItemClicked(QTreeWidgetItem* item, int column) {
     }
 }
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM

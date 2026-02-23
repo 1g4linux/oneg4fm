@@ -10,7 +10,7 @@
 #include <QLayout>
 #include <QString>
 
-namespace PCManFM::UiStyle {
+namespace Oneg4FM::UiStyle {
 
 constexpr int kSpacingXs = 4;
 constexpr int kSpacingSm = 8;
@@ -61,4 +61,4 @@ inline void applyWarningLabel(QLabel* label) {
     label->setStyleSheet(warningLabelStyleSheet());
 }
 
-}  // namespace PCManFM::UiStyle
+}  // namespace Oneg4FM::UiStyle

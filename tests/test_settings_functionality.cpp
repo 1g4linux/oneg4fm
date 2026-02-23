@@ -26,7 +26,7 @@ class TestSettingsFunctionality : public QObject {
 
 void TestSettingsFunctionality::testSettingsInitialization() {
     // Test that Settings can be constructed
-    PCManFM::Settings settings;
+    Oneg4FM::Settings settings;
 
     // Test default values
     QVERIFY(!settings.singleWindowMode());
@@ -80,7 +80,7 @@ void TestSettingsFunctionality::testSettingsInitialization() {
 
 void TestSettingsFunctionality::testSettingsProfileDir() {
     // Test profile directory resolution
-    PCManFM::Settings settings;
+    Oneg4FM::Settings settings;
 
     QString profileDir = settings.profileDir("default");
     QVERIFY(!profileDir.isEmpty());
@@ -98,43 +98,43 @@ void TestSettingsFunctionality::testSettingsStringConversions() {
     // Test string conversion utilities
 
     // View mode conversions
-    const char* iconMode = PCManFM::Settings::viewModeToString(Fm::FolderView::IconMode);
+    const char* iconMode = Oneg4FM::Settings::viewModeToString(Fm::FolderView::IconMode);
     QCOMPARE(QString(iconMode), QString("icon"));
 
-    const char* compactMode = PCManFM::Settings::viewModeToString(Fm::FolderView::CompactMode);
+    const char* compactMode = Oneg4FM::Settings::viewModeToString(Fm::FolderView::CompactMode);
     QCOMPARE(QString(compactMode), QString("compact"));
 
-    const char* detailedMode = PCManFM::Settings::viewModeToString(Fm::FolderView::DetailedListMode);
+    const char* detailedMode = Oneg4FM::Settings::viewModeToString(Fm::FolderView::DetailedListMode);
     QCOMPARE(QString(detailedMode), QString("detailed"));
 
-    const char* thumbnailMode = PCManFM::Settings::viewModeToString(Fm::FolderView::ThumbnailMode);
+    const char* thumbnailMode = Oneg4FM::Settings::viewModeToString(Fm::FolderView::ThumbnailMode);
     QCOMPARE(QString(thumbnailMode), QString("thumbnail"));
 
     // Sort order conversions
-    const char* ascending = PCManFM::Settings::sortOrderToString(Qt::AscendingOrder);
+    const char* ascending = Oneg4FM::Settings::sortOrderToString(Qt::AscendingOrder);
     QCOMPARE(QString(ascending), QString("ascending"));
 
-    const char* descending = PCManFM::Settings::sortOrderToString(Qt::DescendingOrder);
+    const char* descending = Oneg4FM::Settings::sortOrderToString(Qt::DescendingOrder);
     QCOMPARE(QString(descending), QString("descending"));
 
     // Sort column conversions
-    const char* nameColumn = PCManFM::Settings::sortColumnToString(Fm::FolderModel::ColumnFileName);
+    const char* nameColumn = Oneg4FM::Settings::sortColumnToString(Fm::FolderModel::ColumnFileName);
     QCOMPARE(QString(nameColumn), QString("name"));
 
-    const char* sizeColumn = PCManFM::Settings::sortColumnToString(Fm::FolderModel::ColumnFileSize);
+    const char* sizeColumn = Oneg4FM::Settings::sortColumnToString(Fm::FolderModel::ColumnFileSize);
     QCOMPARE(QString(sizeColumn), QString("size"));
 
-    const char* mtimeColumn = PCManFM::Settings::sortColumnToString(Fm::FolderModel::ColumnFileMTime);
+    const char* mtimeColumn = Oneg4FM::Settings::sortColumnToString(Fm::FolderModel::ColumnFileMTime);
     QCOMPARE(QString(mtimeColumn), QString("mtime"));
 
     // Side pane mode conversions
-    const char* placesMode = PCManFM::Settings::sidePaneModeToString(Fm::SidePane::ModePlaces);
+    const char* placesMode = Oneg4FM::Settings::sidePaneModeToString(Fm::SidePane::ModePlaces);
     QCOMPARE(QString(placesMode), QString("places"));
 
-    const char* dirTreeMode = PCManFM::Settings::sidePaneModeToString(Fm::SidePane::ModeDirTree);
+    const char* dirTreeMode = Oneg4FM::Settings::sidePaneModeToString(Fm::SidePane::ModeDirTree);
     QCOMPARE(QString(dirTreeMode), QString("dirtree"));
 
-    const char* noneMode = PCManFM::Settings::sidePaneModeToString(Fm::SidePane::ModeNone);
+    const char* noneMode = Oneg4FM::Settings::sidePaneModeToString(Fm::SidePane::ModeNone);
     QCOMPARE(QString(noneMode), QString("none"));
 }
 
@@ -146,13 +146,13 @@ void TestSettingsFunctionality::testSettingsLoadSave() {
     // Set up environment to use temporary directory for config
     qputenv("XDG_CONFIG_HOME", tempDir.path().toUtf8());
 
-    PCManFM::Settings settings;
+    Oneg4FM::Settings settings;
 
     // Load default profile (creates empty defaults) and then customize values
     QVERIFY(settings.load("test-profile"));
 
     settings.setSingleWindowMode(true);
-    settings.setBookmarkOpenMethod(PCManFM::OpenInNewWindow);
+    settings.setBookmarkOpenMethod(Oneg4FM::OpenInNewWindow);
     settings.setPreservePermissions(true);
     settings.setAlwaysShowTabs(false);
     settings.setShowTabClose(false);
@@ -211,7 +211,7 @@ void TestSettingsFunctionality::testSettingsLoadSave() {
     QVERIFY(QFile::exists(settingsPath));
 
     // Test loading the saved settings
-    PCManFM::Settings loadedSettings;
+    Oneg4FM::Settings loadedSettings;
     QVERIFY(loadedSettings.load("test-profile"));
 
     // Verify loaded settings match the saved values

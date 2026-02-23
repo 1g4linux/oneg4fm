@@ -11,7 +11,7 @@
 #include "../backends/qt/qt_fileops.h"
 #include "../backends/qt/qt_foldermodel.h"
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 void BackendRegistry::initDefaults() {
     qDebug() << "BackendRegistry initialized";
@@ -25,4 +25,4 @@ std::unique_ptr<IFolderModel> BackendRegistry::createFolderModel(QObject* parent
     return std::make_unique<QtFolderModel>(parent);
 }
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM

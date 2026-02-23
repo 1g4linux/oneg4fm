@@ -17,7 +17,7 @@
 #include "disasm_engine.h"
 #include "../core/windowed_file_reader.h"
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 class BinaryDocument {
    public:
@@ -50,6 +50,6 @@ class BinaryDocument {
     quint64 baseAddress_ = 0;
 };
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM
 
 #endif  // PCMANFM_BINARYDOCUMENT_H

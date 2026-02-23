@@ -15,7 +15,7 @@
 #include "hexdocument.h"
 #include "color_manager.h"
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 class HexEditorView : public QAbstractScrollArea {
     Q_OBJECT
@@ -86,6 +86,6 @@ class HexEditorView : public QAbstractScrollArea {
     ColorManager* colors_ = nullptr;
 };
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM
 
 #endif  // PCMANFM_HEXEDITORVIEW_H

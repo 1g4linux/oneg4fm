@@ -21,7 +21,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-using namespace PCManFM::FileOpsContract;
+using namespace Oneg4FM::FileOpsContract;
 
 namespace {
 

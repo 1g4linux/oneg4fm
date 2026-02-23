@@ -1,13 +1,13 @@
 # Core File-Ops Contract
 
-This document defines the behavior of `PCManFM::FileOpsContract` in
+This document defines the behavior of `Oneg4FM::FileOpsContract` in
 `src/core/file_ops_contract.h` and `src/core/file_ops_contract.cpp`.
 
 ## Entry Point
 
-- API: `PCManFM::FileOpsContract::run(const Request&, const EventHandlers&)`
-- Preflight API: `PCManFM::FileOpsContract::preflight(const Request&)`
-- Capability API: `PCManFM::FileOpsContract::capabilities()`
+- API: `Oneg4FM::FileOpsContract::run(const Request&, const EventHandlers&)`
+- Preflight API: `Oneg4FM::FileOpsContract::preflight(const Request&)`
+- Capability API: `Oneg4FM::FileOpsContract::capabilities()`
 - Backend dispatch is resolved in core and executed through one entrypoint:
   - `LocalHardened`: Linux-hardened local engine (`dirfd` + `openat2` policy)
   - `Gio`: URI/non-local and trash workflows via GIO backend executor

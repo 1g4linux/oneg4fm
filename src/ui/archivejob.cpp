@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 ArchiveJob::ArchiveJob(QObject* parent) : QObject(parent), cancelRequested_(false) {}
 
@@ -30,10 +30,10 @@ void ArchiveJob::start(const QStringList& sourcePaths, const QString& destinatio
         const QByteArray destBytes = QFile::encodeName(destination);
         const std::string nativeDest(destBytes.constData(), static_cast<std::size_t>(destBytes.size()));
 
-        PCManFM::FsOps::ProgressInfo opProgress;
-        PCManFM::FsOps::Error err;
+        Oneg4FM::FsOps::ProgressInfo opProgress;
+        Oneg4FM::FsOps::Error err;
 
-        auto cb = [this](const PCManFM::FsOps::ProgressInfo& info) {
+        auto cb = [this](const Oneg4FM::FsOps::ProgressInfo& info) {
             if (cancelRequested_.load(std::memory_order_relaxed)) {
                 return false;
             }
@@ -66,4 +66,4 @@ void ArchiveJob::onFinished() {
     Q_EMIT finished(result.success, result.error);
 }
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM

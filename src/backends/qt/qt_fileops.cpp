@@ -17,7 +17,7 @@
 #include <condition_variable>
 #include <mutex>
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 namespace {
 
@@ -320,10 +320,10 @@ QtFileOps::QtFileOps(QObject* parent)
       cancelRequested_(std::make_shared<std::atomic<bool>>(false)),
       worker_(new Worker(this, cancelRequested_)),
       workerThread_(new QThread) {
-    qRegisterMetaType<FileOpRequest>("PCManFM::FileOpRequest");
-    qRegisterMetaType<FileOpProgress>("PCManFM::FileOpProgress");
-    qRegisterMetaType<FileOpConflict>("PCManFM::FileOpConflict");
-    qRegisterMetaType<FileOpConflictResolution>("PCManFM::FileOpConflictResolution");
+    qRegisterMetaType<FileOpRequest>("Oneg4FM::FileOpRequest");
+    qRegisterMetaType<FileOpProgress>("Oneg4FM::FileOpProgress");
+    qRegisterMetaType<FileOpConflict>("Oneg4FM::FileOpConflict");
+    qRegisterMetaType<FileOpConflictResolution>("Oneg4FM::FileOpConflictResolution");
 
     worker_->moveToThread(workerThread_);
 
@@ -378,6 +378,6 @@ void QtFileOps::resolveConflict(FileOpConflictResolution resolution) {
     worker_->resolveConflict(resolution);
 }
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM
 
 #include "qt_fileops.moc"

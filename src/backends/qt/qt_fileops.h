@@ -13,7 +13,7 @@
 
 #include "../../core/ifileops.h"
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 class QtFileOps : public IFileOps {
     Q_OBJECT
@@ -43,6 +43,6 @@ class QtFileOps : public IFileOps {
     QThread* workerThread_;
 };
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM
 
 #endif  // QT_FILEOPS_H

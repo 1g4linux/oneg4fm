@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-namespace PCManFM {
+namespace Oneg4FM {
 
 enum class CpuArch { X86_64, X86_32, ARM64, ARM, MIPS64, MIPS32, PPC64, PPC32, RISCV64, RISCV32, Unknown };
 
@@ -46,6 +46,6 @@ class DisasmEngine {
     csh handle_ = 0;
 };
 
-}  // namespace PCManFM
+}  // namespace Oneg4FM
 
 #endif  // PCMANFM_DISASM_ENGINE_H
