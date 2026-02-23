@@ -9,12 +9,31 @@
 #include "linux_fs_safety.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
+#include <chrono>
+#include <cstddef>
+#include <condition_variable>
 #include <cstring>
+#include <deque>
 #include <dirent.h>
 #include <fcntl.h>
+#include <linux/audit.h>
+#include <linux/filter.h>
+#if __has_include(<linux/landlock.h>)
+#include <linux/landlock.h>
+#define PCMANFM_HAVE_LANDLOCK_HEADER 1
+#endif
+#include <linux/seccomp.h>
 #include <limits>
+#include <limits.h>
+#include <memory>
+#include <mutex>
+#include <sys/prctl.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
+#include <thread>
+#include <unistd.h>
 
 namespace PCManFM::FileOpsContract {
 namespace {
@@ -186,6 +205,381 @@ bool normalize_conflict_resolution(ConflictResolution input,
     return false;
 }
 
+#ifndef SYS_seccomp
+#ifdef __NR_seccomp
+#define SYS_seccomp __NR_seccomp
+#endif
+#endif
+
+#ifndef SYS_landlock_create_ruleset
+#ifdef __NR_landlock_create_ruleset
+#define SYS_landlock_create_ruleset __NR_landlock_create_ruleset
+#endif
+#endif
+
+#ifndef SYS_landlock_add_rule
+#ifdef __NR_landlock_add_rule
+#define SYS_landlock_add_rule __NR_landlock_add_rule
+#endif
+#endif
+
+#ifndef SYS_landlock_restrict_self
+#ifdef __NR_landlock_restrict_self
+#define SYS_landlock_restrict_self __NR_landlock_restrict_self
+#endif
+#endif
+
+void set_linux_safety_error(Error& out, OperationStep step, int sys_errno, const std::string& message) {
+    const EngineErrorCode code =
+        (sys_errno == ENOSYS) ? EngineErrorCode::SafetyRequirementUnavailable : EngineErrorCode::OperationFailed;
+    set_error(out, code, step, sys_errno, message);
+}
+
+bool set_no_new_privs(Error& err) {
+    if (::prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == 0) {
+        return true;
+    }
+    set_errno_error(err, EngineErrorCode::OperationFailed, OperationStep::Execute, errno, "prctl(PR_SET_NO_NEW_PRIVS)");
+    return false;
+}
+
+int seccomp_raw(unsigned int operation, unsigned int flags, void* args) {
+#ifdef SYS_seccomp
+    return static_cast<int>(::syscall(SYS_seccomp, operation, flags, args));
+#else
+    (void)operation;
+    (void)flags;
+    (void)args;
+    errno = ENOSYS;
+    return -1;
+#endif
+}
+
+bool expected_seccomp_arch(std::uint32_t& out_arch) {
+#if defined(__x86_64__)
+    out_arch = AUDIT_ARCH_X86_64;
+    return true;
+#elif defined(__aarch64__)
+    out_arch = AUDIT_ARCH_AARCH64;
+    return true;
+#elif defined(__i386__)
+    out_arch = AUDIT_ARCH_I386;
+    return true;
+#elif defined(__arm__)
+    out_arch = AUDIT_ARCH_ARM;
+    return true;
+#else
+    return false;
+#endif
+}
+
+void append_seccomp_deny_syscall(std::vector<sock_filter>& filter, int syscall_nr) {
+    filter.push_back(BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, static_cast<std::uint32_t>(syscall_nr), 0, 1));
+    filter.push_back(BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | static_cast<std::uint32_t>(EPERM)));
+}
+
+bool install_seccomp_filter(Error& err) {
+    std::uint32_t arch = 0;
+    if (!expected_seccomp_arch(arch)) {
+        set_error(err, EngineErrorCode::UnsupportedFeature, OperationStep::Execute, ENOTSUP,
+                  "Seccomp filter is not supported on this architecture");
+        return false;
+    }
+
+    std::vector<sock_filter> filter;
+    filter.reserve(40);
+
+    filter.push_back(
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, static_cast<std::uint32_t>(offsetof(struct seccomp_data, arch))));
+    filter.push_back(BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, arch, 1, 0));
+    filter.push_back(BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | static_cast<std::uint32_t>(EPERM)));
+    filter.push_back(BPF_STMT(BPF_LD | BPF_W | BPF_ABS, static_cast<std::uint32_t>(offsetof(struct seccomp_data, nr))));
+
+#ifdef SYS_mount
+    append_seccomp_deny_syscall(filter, SYS_mount);
+#endif
+#ifdef SYS_umount2
+    append_seccomp_deny_syscall(filter, SYS_umount2);
+#endif
+#ifdef SYS_pivot_root
+    append_seccomp_deny_syscall(filter, SYS_pivot_root);
+#endif
+#ifdef SYS_init_module
+    append_seccomp_deny_syscall(filter, SYS_init_module);
+#endif
+#ifdef SYS_finit_module
+    append_seccomp_deny_syscall(filter, SYS_finit_module);
+#endif
+#ifdef SYS_delete_module
+    append_seccomp_deny_syscall(filter, SYS_delete_module);
+#endif
+#ifdef SYS_kexec_load
+    append_seccomp_deny_syscall(filter, SYS_kexec_load);
+#endif
+#ifdef SYS_kexec_file_load
+    append_seccomp_deny_syscall(filter, SYS_kexec_file_load);
+#endif
+#ifdef SYS_open_by_handle_at
+    append_seccomp_deny_syscall(filter, SYS_open_by_handle_at);
+#endif
+#ifdef SYS_bpf
+    append_seccomp_deny_syscall(filter, SYS_bpf);
+#endif
+#ifdef SYS_ptrace
+    append_seccomp_deny_syscall(filter, SYS_ptrace);
+#endif
+
+    filter.push_back(BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW));
+
+    sock_fprog program{};
+    program.len = static_cast<unsigned short>(filter.size());
+    program.filter = filter.data();
+
+    if (seccomp_raw(SECCOMP_SET_MODE_FILTER, 0U, &program) == 0) {
+        return true;
+    }
+
+    if (errno == ENOSYS) {
+        set_linux_safety_error(err, OperationStep::Execute, ENOSYS,
+                               "seccomp is required but unavailable on this kernel");
+        return false;
+    }
+
+    set_errno_error(err, EngineErrorCode::OperationFailed, OperationStep::Execute, errno,
+                    "seccomp(SECCOMP_SET_MODE_FILTER)");
+    return false;
+}
+
+std::string normalize_path_for_landlock(std::string path) {
+    while (path.size() > 1 && path.back() == '/') {
+        path.pop_back();
+    }
+    if (path.empty()) {
+        return ".";
+    }
+    return path;
+}
+
+std::string parent_path_for_landlock(const std::string& path) {
+    const std::string normalized = normalize_path_for_landlock(path);
+    const std::size_t pos = normalized.find_last_of('/');
+    if (pos == std::string::npos) {
+        return ".";
+    }
+    if (pos == 0) {
+        return "/";
+    }
+    return normalized.substr(0, pos);
+}
+
+void append_unique_path(std::vector<std::string>& paths, const std::string& path) {
+    if (path.empty()) {
+        return;
+    }
+    if (std::find(paths.begin(), paths.end(), path) == paths.end()) {
+        paths.push_back(path);
+    }
+}
+
+void collect_landlock_paths(const Request& request, std::vector<std::string>& out_paths) {
+    out_paths.clear();
+    out_paths.reserve(request.sources.size() * 2 + 2);
+
+    char cwd[PATH_MAX];
+    if (::getcwd(cwd, sizeof(cwd)) != nullptr) {
+        append_unique_path(out_paths, normalize_path_for_landlock(cwd));
+    }
+
+    for (const std::string& source : request.sources) {
+        const std::string normalized_source = normalize_path_for_landlock(source);
+        append_unique_path(out_paths, normalized_source);
+        append_unique_path(out_paths, parent_path_for_landlock(normalized_source));
+    }
+
+    if (is_copy_like(request.operation)) {
+        const std::string normalized_destination = normalize_path_for_landlock(request.destination.targetDir);
+        append_unique_path(out_paths, normalized_destination);
+        append_unique_path(out_paths, parent_path_for_landlock(normalized_destination));
+    }
+}
+
+bool is_landlock_unavailable_error(int errnum) {
+    return errnum == ENOSYS || errnum == EOPNOTSUPP || errnum == ENOTSUP;
+}
+
+#if defined(PCMANFM_HAVE_LANDLOCK_HEADER)
+int landlock_create_ruleset_raw(const struct landlock_ruleset_attr* attr, std::size_t size, std::uint32_t flags) {
+#ifdef SYS_landlock_create_ruleset
+    return static_cast<int>(::syscall(SYS_landlock_create_ruleset, attr, size, flags));
+#else
+    (void)attr;
+    (void)size;
+    (void)flags;
+    errno = ENOSYS;
+    return -1;
+#endif
+}
+
+int landlock_add_rule_raw(int ruleset_fd, enum landlock_rule_type rule_type, const void* attr, std::uint32_t flags) {
+#ifdef SYS_landlock_add_rule
+    return static_cast<int>(::syscall(SYS_landlock_add_rule, ruleset_fd, rule_type, attr, flags));
+#else
+    (void)ruleset_fd;
+    (void)rule_type;
+    (void)attr;
+    (void)flags;
+    errno = ENOSYS;
+    return -1;
+#endif
+}
+
+int landlock_restrict_self_raw(int ruleset_fd, std::uint32_t flags) {
+#ifdef SYS_landlock_restrict_self
+    return static_cast<int>(::syscall(SYS_landlock_restrict_self, ruleset_fd, flags));
+#else
+    (void)ruleset_fd;
+    (void)flags;
+    errno = ENOSYS;
+    return -1;
+#endif
+}
+
+std::uint64_t landlock_access_mask_for_abi(int abi_version) {
+    std::uint64_t mask = 0;
+    mask |= static_cast<std::uint64_t>(LANDLOCK_ACCESS_FS_EXECUTE);
+    mask |= static_cast<std::uint64_t>(LANDLOCK_ACCESS_FS_WRITE_FILE);
+    mask |= static_cast<std::uint64_t>(LANDLOCK_ACCESS_FS_READ_FILE);
+    mask |= static_cast<std::uint64_t>(LANDLOCK_ACCESS_FS_READ_DIR);
+    mask |= static_cast<std::uint64_t>(LANDLOCK_ACCESS_FS_REMOVE_DIR);
+    mask |= static_cast<std::uint64_t>(LANDLOCK_ACCESS_FS_REMOVE_FILE);
+    mask |= static_cast<std::uint64_t>(LANDLOCK_ACCESS_FS_MAKE_CHAR);
+    mask |= static_cast<std::uint64_t>(LANDLOCK_ACCESS_FS_MAKE_DIR);
+    mask |= static_cast<std::uint64_t>(LANDLOCK_ACCESS_FS_MAKE_REG);
+    mask |= static_cast<std::uint64_t>(LANDLOCK_ACCESS_FS_MAKE_SOCK);
+    mask |= static_cast<std::uint64_t>(LANDLOCK_ACCESS_FS_MAKE_FIFO);
+    mask |= static_cast<std::uint64_t>(LANDLOCK_ACCESS_FS_MAKE_BLOCK);
+    mask |= static_cast<std::uint64_t>(LANDLOCK_ACCESS_FS_MAKE_SYM);
+#ifdef LANDLOCK_ACCESS_FS_REFER
+    if (abi_version >= 2) {
+        mask |= static_cast<std::uint64_t>(LANDLOCK_ACCESS_FS_REFER);
+    }
+#endif
+#ifdef LANDLOCK_ACCESS_FS_TRUNCATE
+    if (abi_version >= 3) {
+        mask |= static_cast<std::uint64_t>(LANDLOCK_ACCESS_FS_TRUNCATE);
+    }
+#endif
+    return mask;
+}
+#endif
+
+bool apply_landlock(const Request& request, bool required, Error& err) {
+#if !defined(PCMANFM_HAVE_LANDLOCK_HEADER)
+    if (required) {
+        set_linux_safety_error(err, OperationStep::Execute, ENOSYS,
+                               "Landlock is required but headers are unavailable in this build");
+        return false;
+    }
+    (void)request;
+    return true;
+#else
+    const int abi_version = landlock_create_ruleset_raw(nullptr, 0, LANDLOCK_CREATE_RULESET_VERSION);
+    if (abi_version < 0) {
+        if (!required && is_landlock_unavailable_error(errno)) {
+            return true;
+        }
+
+        if (is_landlock_unavailable_error(errno)) {
+            set_linux_safety_error(err, OperationStep::Execute, ENOSYS,
+                                   "Landlock is required but unavailable on this kernel");
+            return false;
+        }
+
+        set_errno_error(err, EngineErrorCode::OperationFailed, OperationStep::Execute, errno,
+                        "landlock_create_ruleset(VERSION)");
+        return false;
+    }
+
+    const std::uint64_t handled_access_mask = landlock_access_mask_for_abi(abi_version);
+    if (handled_access_mask == 0) {
+        if (required) {
+            set_error(err, EngineErrorCode::SafetyRequirementUnavailable, OperationStep::Execute, ENOSYS,
+                      "Landlock rights mask is empty for this ABI");
+            return false;
+        }
+        return true;
+    }
+
+    struct landlock_ruleset_attr ruleset_attr{};
+    ruleset_attr.handled_access_fs = handled_access_mask;
+
+    LinuxFsSafety::Fd ruleset_fd(landlock_create_ruleset_raw(&ruleset_attr, sizeof(ruleset_attr), 0));
+    if (!ruleset_fd.valid()) {
+        if (!required && is_landlock_unavailable_error(errno)) {
+            return true;
+        }
+
+        if (is_landlock_unavailable_error(errno)) {
+            set_linux_safety_error(err, OperationStep::Execute, ENOSYS,
+                                   "Landlock is required but unavailable on this kernel");
+            return false;
+        }
+
+        set_errno_error(err, EngineErrorCode::OperationFailed, OperationStep::Execute, errno,
+                        "landlock_create_ruleset");
+        return false;
+    }
+
+    std::vector<std::string> allowed_paths;
+    collect_landlock_paths(request, allowed_paths);
+    for (const std::string& path : allowed_paths) {
+        LinuxFsSafety::Fd path_fd(::open(path.c_str(), O_PATH | O_CLOEXEC));
+        if (!path_fd.valid()) {
+            set_errno_error(err, EngineErrorCode::OperationFailed, OperationStep::Execute, errno, "open(O_PATH)");
+            return false;
+        }
+
+        struct landlock_path_beneath_attr path_rule{};
+        path_rule.allowed_access = handled_access_mask;
+        path_rule.parent_fd = path_fd.get();
+
+        if (landlock_add_rule_raw(ruleset_fd.get(), LANDLOCK_RULE_PATH_BENEATH, &path_rule, 0) != 0) {
+            set_errno_error(err, EngineErrorCode::OperationFailed, OperationStep::Execute, errno, "landlock_add_rule");
+            return false;
+        }
+    }
+
+    if (landlock_restrict_self_raw(ruleset_fd.get(), 0) != 0) {
+        if (!required && is_landlock_unavailable_error(errno)) {
+            return true;
+        }
+        if (is_landlock_unavailable_error(errno)) {
+            set_linux_safety_error(err, OperationStep::Execute, ENOSYS,
+                                   "Landlock is required but unavailable on this kernel");
+            return false;
+        }
+
+        set_errno_error(err, EngineErrorCode::OperationFailed, OperationStep::Execute, errno, "landlock_restrict_self");
+        return false;
+    }
+
+    return true;
+#endif
+}
+
+bool apply_worker_sandbox(const Request& request, Error& err) {
+    if (!set_no_new_privs(err)) {
+        return false;
+    }
+    if (!install_seccomp_filter(err)) {
+        return false;
+    }
+    if (!apply_landlock(request, request.linuxSafety.requireLandlock, err)) {
+        return false;
+    }
+    return true;
+}
+
 bool scan_path_stats(const std::string& path, SourceStats& stats, Error& err, int depth = 0) {
     if (depth > FsOps::kMaxRecursionDepth) {
         set_error(err, EngineErrorCode::OperationFailed, OperationStep::BuildPlan, ELOOP,
@@ -288,10 +682,25 @@ bool validate_request(const Request& request, Error& err) {
         return false;
     }
 
-    if (request.linuxSafety.requireLandlock) {
-        set_error(err, EngineErrorCode::SafetyRequirementUnavailable, OperationStep::ValidateRequest, ENOSYS,
-                  "Landlock was requested but is not available in this build");
-        return false;
+    switch (request.linuxSafety.workerMode) {
+        case WorkerMode::InProcess:
+            if (request.linuxSafety.requireLandlock) {
+                set_error(err, EngineErrorCode::SafetyRequirementUnavailable, OperationStep::ValidateRequest, ENOSYS,
+                          "Landlock was requested but sandboxed worker mode is not enabled");
+                return false;
+            }
+            if (request.linuxSafety.requireSeccomp) {
+                set_error(err, EngineErrorCode::UnsupportedPolicy, OperationStep::ValidateRequest, ENOTSUP,
+                          "requireSeccomp requires sandboxed worker mode");
+                return false;
+            }
+            break;
+        case WorkerMode::SandboxedThread:
+            break;
+        default:
+            set_error(err, EngineErrorCode::InvalidRequest, OperationStep::ValidateRequest, EINVAL,
+                      "Unknown worker mode");
+            return false;
     }
 
     if (request.linuxSafety.requireOpenat2Resolve && !probe_openat2_resolve(err)) {
@@ -630,9 +1039,7 @@ bool execute_plan_operation(const Request& request,
     return false;
 }
 
-}  // namespace
-
-Result run(const Request& request, const EventHandlers& handlers) {
+Result run_in_process(const Request& request, const EventHandlers& handlers) {
     Result result;
 
     if (is_cancel_requested(request)) {
@@ -785,6 +1192,182 @@ Result run(const Request& request, const EventHandlers& handlers) {
 
     result.success = true;
     result.finalProgress = last_progress;
+    return result;
+}
+
+struct SandboxedThreadEvent {
+    enum class Kind {
+        Progress,
+        Conflict,
+    };
+
+    Kind kind = Kind::Progress;
+    ProgressSnapshot progress;
+    ConflictEvent conflict;
+    std::uint64_t conflictId = 0;
+};
+
+struct SandboxedThreadState {
+    std::mutex mutex;
+    std::condition_variable cv;
+    std::deque<SandboxedThreadEvent> pendingEvents;
+    bool workerDone = false;
+    Result workerResult;
+    std::uint64_t nextConflictId = 1;
+    bool conflictResponseReady = false;
+    std::uint64_t conflictResponseId = 0;
+    ConflictResolution conflictResponse = ConflictResolution::Abort;
+};
+
+Result run_sandboxed_thread(const Request& request, const EventHandlers& handlers) {
+    auto cancelled = std::make_shared<std::atomic<bool>>(false);
+    SandboxedThreadState state;
+
+    std::thread worker([&request, &handlers, &state, cancelled]() {
+        Result worker_result;
+        Request worker_request = request;
+        worker_request.linuxSafety.workerMode = WorkerMode::InProcess;
+        worker_request.linuxSafety.requireLandlock = false;
+        worker_request.linuxSafety.requireSeccomp = false;
+        worker_request.cancellationRequested = [cancelled]() { return cancelled->load(); };
+
+        EventHandlers worker_handlers;
+        if (handlers.onProgress) {
+            worker_handlers.onProgress = [&state](const ProgressSnapshot& update) {
+                std::lock_guard<std::mutex> lock(state.mutex);
+                SandboxedThreadEvent event;
+                event.kind = SandboxedThreadEvent::Kind::Progress;
+                event.progress = update;
+                state.pendingEvents.push_back(std::move(event));
+                state.cv.notify_all();
+            };
+        }
+
+        if (handlers.onConflict) {
+            worker_handlers.onConflict = [&state, cancelled](const ConflictEvent& event) -> ConflictResolution {
+                std::unique_lock<std::mutex> lock(state.mutex);
+                const std::uint64_t conflict_id = state.nextConflictId++;
+
+                SandboxedThreadEvent queued;
+                queued.kind = SandboxedThreadEvent::Kind::Conflict;
+                queued.conflict = event;
+                queued.conflictId = conflict_id;
+                state.pendingEvents.push_back(std::move(queued));
+                state.cv.notify_all();
+
+                state.cv.wait(lock, [&state, conflict_id, &cancelled]() {
+                    return cancelled->load() ||
+                           (state.conflictResponseReady && state.conflictResponseId == conflict_id);
+                });
+
+                if (cancelled->load()) {
+                    return ConflictResolution::Abort;
+                }
+
+                const ConflictResolution response = state.conflictResponse;
+                state.conflictResponseReady = false;
+                return response;
+            };
+        }
+
+        if (cancelled->load()) {
+            worker_result.cancelled = true;
+            set_cancelled(worker_result.error, OperationStep::ValidateRequest);
+        }
+        else {
+            Error sandbox_error;
+            if (!apply_worker_sandbox(request, sandbox_error)) {
+                worker_result.success = false;
+                worker_result.cancelled = (sandbox_error.sysErrno == ECANCELED);
+                worker_result.error = sandbox_error;
+            }
+            else {
+                worker_result = run_in_process(worker_request, worker_handlers);
+            }
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(state.mutex);
+            state.workerResult = std::move(worker_result);
+            state.workerDone = true;
+        }
+        state.cv.notify_all();
+    });
+
+    Result result;
+    for (;;) {
+        if (!cancelled->load() && is_cancel_requested(request)) {
+            cancelled->store(true);
+            state.cv.notify_all();
+        }
+
+        std::deque<SandboxedThreadEvent> events;
+        bool worker_done = false;
+        {
+            std::unique_lock<std::mutex> lock(state.mutex);
+            state.cv.wait_for(lock, std::chrono::milliseconds(20),
+                              [&state]() { return state.workerDone || !state.pendingEvents.empty(); });
+            events.swap(state.pendingEvents);
+            worker_done = state.workerDone;
+        }
+
+        for (const SandboxedThreadEvent& event : events) {
+            if (event.kind == SandboxedThreadEvent::Kind::Progress) {
+                if (handlers.onProgress) {
+                    handlers.onProgress(event.progress);
+                }
+            }
+            else if (event.kind == SandboxedThreadEvent::Kind::Conflict) {
+                ConflictResolution response = ConflictResolution::Abort;
+                if (handlers.onConflict) {
+                    response = handlers.onConflict(event.conflict);
+                }
+                {
+                    std::lock_guard<std::mutex> lock(state.mutex);
+                    state.conflictResponse = response;
+                    state.conflictResponseId = event.conflictId;
+                    state.conflictResponseReady = true;
+                }
+                state.cv.notify_all();
+            }
+
+            if (!cancelled->load() && is_cancel_requested(request)) {
+                cancelled->store(true);
+                state.cv.notify_all();
+            }
+        }
+
+        if (worker_done && events.empty()) {
+            break;
+        }
+    }
+
+    if (worker.joinable()) {
+        worker.join();
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(state.mutex);
+        result = state.workerResult;
+    }
+    return result;
+}
+
+}  // namespace
+
+Result run(const Request& request, const EventHandlers& handlers) {
+    switch (request.linuxSafety.workerMode) {
+        case WorkerMode::InProcess:
+            return run_in_process(request, handlers);
+        case WorkerMode::SandboxedThread:
+            return run_sandboxed_thread(request, handlers);
+        default:
+            break;
+    }
+
+    Result result;
+    set_error(result.error, EngineErrorCode::InvalidRequest, OperationStep::ValidateRequest, EINVAL,
+              "Unknown worker mode");
     return result;
 }
 

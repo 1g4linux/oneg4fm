@@ -65,9 +65,16 @@ enum class CancelCheckpointGranularity {
     PerChunk,
 };
 
+enum class WorkerMode {
+    InProcess,
+    SandboxedThread,
+};
+
 struct LinuxSafetyRequirements {
     bool requireOpenat2Resolve = true;
     bool requireLandlock = false;
+    bool requireSeccomp = false;
+    WorkerMode workerMode = WorkerMode::InProcess;
 };
 
 struct Request {

@@ -14,6 +14,7 @@
 
 #include <atomic>
 #include <cerrno>
+#include <fcntl.h>
 #include <limits.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -44,6 +45,18 @@ QByteArray readFile(const QString& path) {
     return f.readAll();
 }
 
+bool createSparseFile(const QString& path, qint64 sizeBytes) {
+    const QByteArray native = QFile::encodeName(path);
+    int fd = ::open(native.constData(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (fd < 0) {
+        return false;
+    }
+
+    const bool ok = (::ftruncate(fd, static_cast<off_t>(sizeBytes)) == 0);
+    ::close(fd);
+    return ok;
+}
+
 }  // namespace
 
 class FileOpsContractTest : public QObject {
@@ -62,8 +75,12 @@ class FileOpsContractTest : public QObject {
     void promptConflictCanRenameWithStructuredEvent();
     void promptConflictSkipAllAppliesAcrossSources();
     void promptConflictRenameAllAppliesAcrossSources();
+    void sandboxedThreadCopyMatchesInProcessBehavior();
+    void sandboxedThreadPromptConflictMatchesInProcessBehavior();
+    void sandboxedThreadCancelReturnsEcanceled();
     void unsupportedOperationRejected();
     void requireLandlockFailsFast();
+    void requireSeccompNeedsSandboxedWorkerMode();
 };
 
 void FileOpsContractTest::copyReportsMonotonicProgressAndStableTotals() {
@@ -574,6 +591,162 @@ void FileOpsContractTest::promptConflictRenameAllAppliesAcrossSources() {
     QCOMPARE(readFile(dstDir + QLatin1String("/second (copy).txt")), QByteArray("new-second"));
 }
 
+void FileOpsContractTest::sandboxedThreadCopyMatchesInProcessBehavior() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcDir = dir.path() + QLatin1String("/src");
+    const QString dstInProcess = dir.path() + QLatin1String("/dst-inprocess");
+    const QString dstSandboxed = dir.path() + QLatin1String("/dst-sandboxed");
+    QVERIFY(QDir().mkpath(srcDir));
+    QVERIFY(QDir().mkpath(dstInProcess));
+    QVERIFY(QDir().mkpath(dstSandboxed));
+
+    const QString first = writeTempFile(srcDir + QLatin1String("/first.txt"), QByteArray("first-data"));
+    const QString second = writeTempFile(srcDir + QLatin1String("/second.txt"), QByteArray("second-data"));
+    const std::vector<std::string> sources = {toNative(first), toNative(second)};
+
+    auto run_copy = [&](const QString& destination, WorkerMode worker_mode, QVector<ProgressSnapshot>& updates) {
+        Request req;
+        req.operation = Operation::Copy;
+        req.sources = sources;
+        req.destination.targetDir = toNative(destination);
+        req.destination.mappingMode = DestinationMappingMode::SourceBasename;
+        req.conflictPolicy = ConflictPolicy::Overwrite;
+        req.linuxSafety.workerMode = worker_mode;
+
+        EventHandlers handlers;
+        handlers.onProgress = [&updates](const ProgressSnapshot& snapshot) { updates.push_back(snapshot); };
+        return run(req, handlers);
+    };
+
+    QVector<ProgressSnapshot> in_process_updates;
+    const Result in_process = run_copy(dstInProcess, WorkerMode::InProcess, in_process_updates);
+    QVERIFY(in_process.success);
+    QVERIFY(!in_process.cancelled);
+
+    QVector<ProgressSnapshot> sandbox_updates;
+    const Result sandboxed = run_copy(dstSandboxed, WorkerMode::SandboxedThread, sandbox_updates);
+    QVERIFY(sandboxed.success);
+    QVERIFY(!sandboxed.cancelled);
+
+    QCOMPARE(readFile(dstInProcess + QLatin1String("/first.txt")),
+             readFile(dstSandboxed + QLatin1String("/first.txt")));
+    QCOMPARE(readFile(dstInProcess + QLatin1String("/second.txt")),
+             readFile(dstSandboxed + QLatin1String("/second.txt")));
+
+    QVERIFY(!in_process_updates.isEmpty());
+    QVERIFY(!sandbox_updates.isEmpty());
+    QCOMPARE(sandboxed.finalProgress.filesTotal, in_process.finalProgress.filesTotal);
+    QCOMPARE(sandboxed.finalProgress.filesDone, in_process.finalProgress.filesDone);
+    QCOMPARE(sandboxed.finalProgress.bytesTotal, in_process.finalProgress.bytesTotal);
+    QCOMPARE(sandboxed.finalProgress.bytesDone, in_process.finalProgress.bytesDone);
+}
+
+void FileOpsContractTest::sandboxedThreadPromptConflictMatchesInProcessBehavior() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcInProcessDir = dir.path() + QLatin1String("/src-inprocess");
+    const QString srcSandboxedDir = dir.path() + QLatin1String("/src-sandboxed");
+    const QString dstInProcessDir = dir.path() + QLatin1String("/dst-inprocess");
+    const QString dstSandboxedDir = dir.path() + QLatin1String("/dst-sandboxed");
+    QVERIFY(QDir().mkpath(srcInProcessDir));
+    QVERIFY(QDir().mkpath(srcSandboxedDir));
+    QVERIFY(QDir().mkpath(dstInProcessDir));
+    QVERIFY(QDir().mkpath(dstSandboxedDir));
+
+    const QString inProcessSource =
+        writeTempFile(srcInProcessDir + QLatin1String("/entry.txt"), QByteArray("updated-inprocess"));
+    const QString sandboxedSource =
+        writeTempFile(srcSandboxedDir + QLatin1String("/entry.txt"), QByteArray("updated-sandboxed"));
+    const QString inProcessExisting =
+        writeTempFile(dstInProcessDir + QLatin1String("/entry.txt"), QByteArray("existing-inprocess"));
+    const QString sandboxedExisting =
+        writeTempFile(dstSandboxedDir + QLatin1String("/entry.txt"), QByteArray("existing-sandboxed"));
+
+    auto run_prompt = [&](const QString& source, const QString& destination, WorkerMode worker_mode,
+                          int& conflict_count) {
+        Request req;
+        req.operation = Operation::Copy;
+        req.sources = {toNative(source)};
+        req.destination.targetDir = toNative(destination);
+        req.destination.mappingMode = DestinationMappingMode::SourceBasename;
+        req.conflictPolicy = ConflictPolicy::Prompt;
+        req.linuxSafety.workerMode = worker_mode;
+
+        EventHandlers handlers;
+        handlers.onConflict = [&conflict_count](const ConflictEvent&) -> ConflictResolution {
+            ++conflict_count;
+            return ConflictResolution::Rename;
+        };
+        return run(req, handlers);
+    };
+
+    int in_process_conflicts = 0;
+    const Result in_process = run_prompt(inProcessSource, dstInProcessDir, WorkerMode::InProcess, in_process_conflicts);
+    QVERIFY(in_process.success);
+    QVERIFY(!in_process.cancelled);
+    QCOMPARE(in_process_conflicts, 1);
+    QCOMPARE(readFile(inProcessExisting), QByteArray("existing-inprocess"));
+    QCOMPARE(readFile(dstInProcessDir + QLatin1String("/entry (copy).txt")), QByteArray("updated-inprocess"));
+
+    int sandboxed_conflicts = 0;
+    const Result sandboxed =
+        run_prompt(sandboxedSource, dstSandboxedDir, WorkerMode::SandboxedThread, sandboxed_conflicts);
+    QVERIFY(sandboxed.success);
+    QVERIFY(!sandboxed.cancelled);
+    QCOMPARE(sandboxed_conflicts, 1);
+    QCOMPARE(readFile(sandboxedExisting), QByteArray("existing-sandboxed"));
+    QCOMPARE(readFile(dstSandboxedDir + QLatin1String("/entry (copy).txt")), QByteArray("updated-sandboxed"));
+
+    QCOMPARE(sandboxed.finalProgress.filesTotal, in_process.finalProgress.filesTotal);
+    QCOMPARE(sandboxed.finalProgress.filesDone, in_process.finalProgress.filesDone);
+    QCOMPARE(sandboxed.finalProgress.bytesTotal, in_process.finalProgress.bytesTotal);
+    QCOMPARE(sandboxed.finalProgress.bytesDone, in_process.finalProgress.bytesDone);
+}
+
+void FileOpsContractTest::sandboxedThreadCancelReturnsEcanceled() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcPath = dir.path() + QLatin1String("/large.bin");
+    QVERIFY(createSparseFile(srcPath, qint64(2) * 1024 * 1024 * 1024));
+    const QString dstDir = dir.path() + QLatin1String("/dst");
+    QVERIFY(QDir().mkpath(dstDir));
+    const QString dstPath = dstDir + QLatin1String("/large.bin");
+
+    std::atomic<bool> cancelRequested{false};
+
+    Request req;
+    req.operation = Operation::Copy;
+    req.sources = {toNative(srcPath)};
+    req.destination.targetDir = toNative(dstDir);
+    req.destination.mappingMode = DestinationMappingMode::SourceBasename;
+    req.conflictPolicy = ConflictPolicy::Overwrite;
+    req.linuxSafety.workerMode = WorkerMode::SandboxedThread;
+    req.cancellationRequested = [&cancelRequested]() { return cancelRequested.load(); };
+
+    EventHandlers handlers;
+    handlers.onProgress = [&cancelRequested](const ProgressSnapshot& snapshot) {
+        if (snapshot.bytesDone > 0) {
+            cancelRequested.store(true);
+        }
+    };
+
+    const Result result = run(req, handlers);
+    QVERIFY(!result.success);
+    QVERIFY(result.cancelled);
+    QCOMPARE(result.error.code, EngineErrorCode::Cancelled);
+    QCOMPARE(result.error.sysErrno, ECANCELED);
+    QCOMPARE(result.finalProgress.filesTotal, 1);
+    QVERIFY(result.finalProgress.bytesTotal > 0);
+    QVERIFY(result.finalProgress.bytesDone > 0);
+    QVERIFY(result.finalProgress.bytesDone < result.finalProgress.bytesTotal);
+    QVERIFY(!result.finalProgress.currentPath.empty());
+    QVERIFY(!QFileInfo::exists(dstPath));
+}
+
 void FileOpsContractTest::unsupportedOperationRejected() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -610,6 +783,28 @@ void FileOpsContractTest::requireLandlockFailsFast() {
     QVERIFY(!result.cancelled);
     QCOMPARE(result.error.code, EngineErrorCode::SafetyRequirementUnavailable);
     QCOMPARE(result.error.sysErrno, ENOSYS);
+}
+
+void FileOpsContractTest::requireSeccompNeedsSandboxedWorkerMode() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString src = writeTempFile(dir.path() + QLatin1String("/src.txt"), QByteArray("x"));
+    const QString dstDir = dir.path() + QLatin1String("/dst");
+    QVERIFY(QDir().mkpath(dstDir));
+
+    Request req;
+    req.operation = Operation::Copy;
+    req.sources = {toNative(src)};
+    req.destination.targetDir = toNative(dstDir);
+    req.destination.mappingMode = DestinationMappingMode::SourceBasename;
+    req.linuxSafety.requireSeccomp = true;
+
+    const Result result = run(req);
+    QVERIFY(!result.success);
+    QVERIFY(!result.cancelled);
+    QCOMPARE(result.error.code, EngineErrorCode::UnsupportedPolicy);
+    QCOMPARE(result.error.sysErrno, ENOTSUP);
 }
 
 QTEST_MAIN(FileOpsContractTest)
