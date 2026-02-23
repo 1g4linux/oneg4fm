@@ -183,6 +183,23 @@ bool truncate_archive_tail(const QString& path, qint64 bytesToRemove, QString* e
     return true;
 }
 
+bool write_raw_file(const QString& path, const QByteArray& data, QString* errorOut) {
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        if (errorOut) {
+            *errorOut = QStringLiteral("open failed: %1").arg(f.errorString());
+        }
+        return false;
+    }
+    if (f.write(data) != data.size()) {
+        if (errorOut) {
+            *errorOut = QStringLiteral("write failed: %1").arg(f.errorString());
+        }
+        return false;
+    }
+    return true;
+}
+
 QString readFile(const QString& path) {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) {
@@ -224,8 +241,12 @@ class ArchiveExtractTest : public QObject {
     void rejectsAbsolutePaths();
     void rejectsSymlinkComponentEscape();
     void rejectsParentReplacementWithSymlink();
+    void extractsSafeHardlinkToAlreadyExtractedEntry();
+    void rejectsHardlinkForwardReference();
     void rejectsUnsafeHardlinkTarget();
     void tarExtractorRejectsSymlinkComponentEscape();
+    void corruptArchiveFails();
+    void tarExtractorCorruptTarFails();
     void truncatedTarFailsWithReadError();
     void tarExtractorTruncatedTarFails();
 };
@@ -450,6 +471,60 @@ void ArchiveExtractTest::rejectsParentReplacementWithSymlink() {
     QVERIFY(!QFileInfo::exists(outsideDir + QLatin1String("/b.txt")));
 }
 
+void ArchiveExtractTest::extractsSafeHardlinkToAlreadyExtractedEntry() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString archivePath = dir.path() + QLatin1String("/hardlink-safe.tar");
+    const std::vector<ArchiveEntrySpec> entries = {
+        {EntryKind::Regular, QStringLiteral("files/base.txt"), QByteArray("shared"), QString(), 0644},
+        {EntryKind::Hardlink, QStringLiteral("files/link.txt"), QByteArray(), QStringLiteral("files/base.txt"), 0644},
+    };
+    QString error;
+    QVERIFY2(write_archive_entries(archivePath, entries, QStringLiteral("gnutar"), QStringLiteral(""), &error),
+             qPrintable(error));
+
+    const QString destDir = dir.path() + QLatin1String("/out-hardlink-safe");
+    ProgressInfo progress;
+    Error err;
+    const bool ok = extract_with_archive_extract(archivePath, destDir, progress, err);
+    QVERIFY2(ok, err.message.c_str());
+
+    const QString basePath = destDir + QLatin1String("/files/base.txt");
+    const QString linkPath = destDir + QLatin1String("/files/link.txt");
+    QCOMPARE(readFile(basePath), QStringLiteral("shared"));
+    QCOMPARE(readFile(linkPath), QStringLiteral("shared"));
+
+    struct stat baseSt{};
+    struct stat linkSt{};
+    QVERIFY(::stat(basePath.toLocal8Bit().constData(), &baseSt) == 0);
+    QVERIFY(::stat(linkPath.toLocal8Bit().constData(), &linkSt) == 0);
+    QCOMPARE(baseSt.st_ino, linkSt.st_ino);
+}
+
+void ArchiveExtractTest::rejectsHardlinkForwardReference() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString archivePath = dir.path() + QLatin1String("/hardlink-forward.tar");
+    const std::vector<ArchiveEntrySpec> entries = {
+        {EntryKind::Hardlink, QStringLiteral("files/link-first.txt"), QByteArray(), QStringLiteral("files/base.txt"),
+         0644},
+        {EntryKind::Regular, QStringLiteral("files/base.txt"), QByteArray("shared"), QString(), 0644},
+    };
+    QString error;
+    QVERIFY2(write_archive_entries(archivePath, entries, QStringLiteral("gnutar"), QStringLiteral(""), &error),
+             qPrintable(error));
+
+    const QString destDir = dir.path() + QLatin1String("/out-hardlink-forward");
+    ProgressInfo progress;
+    Error err;
+    const bool ok = extract_with_archive_extract(archivePath, destDir, progress, err);
+    QVERIFY(!ok);
+    QVERIFY(err.code == EINVAL || !err.message.empty());
+    QVERIFY(!QFileInfo::exists(destDir));
+}
+
 void ArchiveExtractTest::rejectsUnsafeHardlinkTarget() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -492,6 +567,40 @@ void ArchiveExtractTest::tarExtractorRejectsSymlinkComponentEscape() {
     const bool ok = extract_with_archive_writer(archivePath, destDir, progress, err);
     QVERIFY(!ok);
     QVERIFY(!QFileInfo::exists(outsideDir + QLatin1String("/escape.txt")));
+}
+
+void ArchiveExtractTest::corruptArchiveFails() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString archivePath = dir.path() + QLatin1String("/corrupt.bin");
+    QString error;
+    QVERIFY2(write_raw_file(archivePath, QByteArray("not-an-archive"), &error), qPrintable(error));
+
+    const QString destDir = dir.path() + QLatin1String("/out-corrupt");
+    ProgressInfo progress;
+    Error err;
+    const bool ok = extract_with_archive_extract(archivePath, destDir, progress, err);
+    QVERIFY(!ok);
+    QVERIFY(!err.message.empty());
+    QVERIFY(!QFileInfo::exists(destDir));
+}
+
+void ArchiveExtractTest::tarExtractorCorruptTarFails() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString archivePath = dir.path() + QLatin1String("/corrupt.tar");
+    QString error;
+    QVERIFY2(write_raw_file(archivePath, QByteArray("this-is-not-a-tar"), &error), qPrintable(error));
+
+    const QString destDir = dir.path() + QLatin1String("/out-corrupt-tar");
+    ProgressInfo progress;
+    Error err;
+    const bool ok = extract_with_archive_writer(archivePath, destDir, progress, err);
+    QVERIFY(!ok);
+    QVERIFY(!err.message.empty());
+    QVERIFY(!QFileInfo::exists(destDir));
 }
 
 void ArchiveExtractTest::truncatedTarFailsWithReadError() {

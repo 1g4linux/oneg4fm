@@ -6,6 +6,7 @@
 #include "linux_fs_safety.h"
 
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 
@@ -72,6 +73,12 @@ inline void set_statx_error(FsOps::Error& err, const char* context) {
 }
 
 int openat2_raw(int dirfd, const char* path, int flags, mode_t mode, std::uint64_t resolve) {
+    const char* forceEnosys = ::getenv("PCMANFM_TEST_FORCE_OPENAT2_ENOSYS");
+    if (forceEnosys && forceEnosys[0] != '\0' && !(forceEnosys[0] == '0' && forceEnosys[1] == '\0')) {
+        errno = ENOSYS;
+        return -1;
+    }
+
 #ifdef SYS_openat2
     struct open_how how{};
     how.flags = static_cast<std::uint64_t>(flags);
@@ -225,6 +232,15 @@ std::string build_temp_name(const char* prefix, unsigned int attempt) {
     const unsigned int pid = static_cast<unsigned int>(::getpid());
     const unsigned int t = static_cast<unsigned int>(::time(nullptr));
     return std::string(prefix) + std::to_string(pid) + "." + std::to_string(t) + "." + std::to_string(attempt);
+}
+
+bool force_named_temp_atomic_replace_for_tests() {
+    constexpr const char* kEnvName = "PCMANFM_TEST_FORCE_ATOMIC_REPLACE_NAMED_TEMP";
+    const char* raw = ::getenv(kEnvName);
+    if (!raw || raw[0] == '\0') {
+        return false;
+    }
+    return !(raw[0] == '0' && raw[1] == '\0');
 }
 
 bool is_tmpfile_not_supported(int errnum) {
@@ -550,33 +566,35 @@ bool atomic_replace_under(int rootfd,
     Fd tmp_fd;
     bool need_fallback_temp_file = true;
 
-    FsOps::Error tmpfile_err;
-    if (open_tmpfile_under(parent.get(), mode, tmp_fd, tmpfile_err)) {
-        if (!write_all_fd(tmp_fd.get(), data, size, err)) {
-            return false;
-        }
-        if (::fsync(tmp_fd.get()) != 0) {
-            set_error(err, "fsync");
-            return false;
-        }
+    if (!force_named_temp_atomic_replace_for_tests()) {
+        FsOps::Error tmpfile_err;
+        if (open_tmpfile_under(parent.get(), mode, tmp_fd, tmpfile_err)) {
+            if (!write_all_fd(tmp_fd.get(), data, size, err)) {
+                return false;
+            }
+            if (::fsync(tmp_fd.get()) != 0) {
+                set_error(err, "fsync");
+                return false;
+            }
 
-        FsOps::Error link_err;
-        if (link_tmpfile_under(tmp_fd.get(), parent.get(), temp_name, link_err)) {
-            need_fallback_temp_file = false;
+            FsOps::Error link_err;
+            if (link_tmpfile_under(tmp_fd.get(), parent.get(), temp_name, link_err)) {
+                need_fallback_temp_file = false;
+            }
+            else if (!is_tmpfile_not_supported(link_err.code) && link_err.code != EPERM) {
+                err = link_err;
+                return false;
+            }
         }
-        else if (!is_tmpfile_not_supported(link_err.code) && link_err.code != EPERM) {
-            err = link_err;
-            return false;
-        }
-    }
-    else {
-        if (tmpfile_err.code == ENOSYS) {
-            err = tmpfile_err;
-            return false;
-        }
-        if (!is_tmpfile_not_supported(tmpfile_err.code) && tmpfile_err.code != EPERM) {
-            err = tmpfile_err;
-            return false;
+        else {
+            if (tmpfile_err.code == ENOSYS) {
+                err = tmpfile_err;
+                return false;
+            }
+            if (!is_tmpfile_not_supported(tmpfile_err.code) && tmpfile_err.code != EPERM) {
+                err = tmpfile_err;
+                return false;
+            }
         }
     }
 

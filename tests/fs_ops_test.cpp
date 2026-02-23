@@ -45,6 +45,20 @@ QString writeTempFile(const QTemporaryDir& dir, const QString& name, const QByte
     return path;
 }
 
+ino_t fileInode(const QString& path) {
+    struct stat st{};
+    if (::stat(path.toLocal8Bit().constData(), &st) != 0) {
+        return 0;
+    }
+    return st.st_ino;
+}
+
+QStringList atomicTempArtifacts(const QString& dirPath) {
+    QDir dir(dirPath);
+    return dir.entryList(QStringList() << QStringLiteral(".pcmanfm.tmp.*") << QStringLiteral(".pcmanfm.tmp.link.*"),
+                         QDir::Files | QDir::Hidden | QDir::System | QDir::NoSymLinks);
+}
+
 class ScopedEnvVar {
    public:
     explicit ScopedEnvVar(const char* name, const char* value) : name_(name) {
@@ -90,11 +104,13 @@ class FsOpsTest : public QObject {
     void moveFileRenamePath();
     void moveFileCopyFallback();
     void movePathNoOverwriteRejectsExistingDestination();
+    void movePathOverwriteReplacesExistingDestination();
     void moveFallbackSourceDeleteFailurePreservesDestination();
     void deletePathRecursive();
     void makeDirParentsCreatesHierarchy();
     void setPermissionsChangesMode();
     void copyCancelledViaCallback();
+    void copyCancelReturnsFinalProgressSnapshot();
     void copyIntoExistingDestinationCancelledPreservesPreexisting();
     void copyIntoExistingDestinationErrorPreservesPreexisting();
     void copyRollbackRemovesOnlyCreatedPaths();
@@ -107,6 +123,8 @@ class FsOpsTest : public QObject {
     void copySymlinkPreservesLink();
     void copyPreservesMtime();
     void deleteSymlinkSwapRaceDoesNotEscape();
+    void writeFileAtomicOverwriteReplacesExistingInode();
+    void writeFileAtomicForcedNamedTempFallbackLeavesNoArtifacts();
     void writeFileAtomicRejectsSymlinkParentEscape();
     void movePathRejectsSymlinkDestinationParentEscape();
 };
@@ -295,6 +313,31 @@ void FsOpsTest::movePathNoOverwriteRejectsExistingDestination() {
     QCOMPARE(readQtFile(dstPath), QByteArray("move-old"));
 }
 
+void FsOpsTest::movePathOverwriteReplacesExistingDestination() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcPath = makePath(dir, QStringLiteral("src-overwrite-move.txt"));
+    const QString dstPath = makePath(dir, QStringLiteral("dst-overwrite-move.txt"));
+
+    Error err;
+    QVERIFY(write_file_atomic(srcPath.toLocal8Bit().toStdString(),
+                              reinterpret_cast<const std::uint8_t*>("move-replacement"), std::size_t{16}, err));
+    QVERIFY(write_file_atomic(dstPath.toLocal8Bit().toStdString(),
+                              reinterpret_cast<const std::uint8_t*>("move-existing"), std::size_t{13}, err));
+
+    ProgressInfo progress;
+    progress.filesTotal = 1;
+    auto progressCb = [](const ProgressInfo&) { return true; };
+
+    QVERIFY(move_path(srcPath.toLocal8Bit().toStdString(), dstPath.toLocal8Bit().toStdString(), progress, progressCb,
+                      err, /*forceCopyFallbackForTests=*/false, /*preserveOwnership=*/false,
+                      /*overwriteExisting=*/true));
+    QVERIFY(!err.isSet());
+    QVERIFY(!QFileInfo(srcPath).exists());
+    QCOMPARE(readQtFile(dstPath), QByteArray("move-replacement"));
+}
+
 void FsOpsTest::moveFallbackSourceDeleteFailurePreservesDestination() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -401,6 +444,39 @@ void FsOpsTest::copyCancelledViaCallback() {
         !copy_path(srcPath.toLocal8Bit().toStdString(), dstPath.toLocal8Bit().toStdString(), progress, cancelCb, err));
     QVERIFY(err.code == ECANCELED);
     QVERIFY(cancelled);
+}
+
+void FsOpsTest::copyCancelReturnsFinalProgressSnapshot() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcPath = makePath(dir, QStringLiteral("snapshot-src.bin"));
+    const QString dstPath = makePath(dir, QStringLiteral("snapshot-dst.bin"));
+
+    Error err;
+    QByteArray payload(512 * 1024, 'z');
+    QVERIFY(write_file_atomic(srcPath.toLocal8Bit().toStdString(),
+                              reinterpret_cast<const std::uint8_t*>(payload.constData()),
+                              static_cast<std::size_t>(payload.size()), err));
+
+    ProgressInfo progress;
+    progress.filesTotal = 1;
+    ProgressInfo lastSnapshot;
+    bool sawSnapshot = false;
+    auto cancelCb = [&](const ProgressInfo& info) {
+        sawSnapshot = true;
+        lastSnapshot = info;
+        return info.bytesDone < std::uint64_t{128 * 1024};
+    };
+
+    QVERIFY(
+        !copy_path(srcPath.toLocal8Bit().toStdString(), dstPath.toLocal8Bit().toStdString(), progress, cancelCb, err));
+    QCOMPARE(err.code, ECANCELED);
+    QVERIFY(sawSnapshot);
+    QCOMPARE(progress.bytesDone, lastSnapshot.bytesDone);
+    QCOMPARE(progress.bytesTotal, lastSnapshot.bytesTotal);
+    QCOMPARE(progress.filesDone, lastSnapshot.filesDone);
+    QCOMPARE(progress.filesTotal, lastSnapshot.filesTotal);
 }
 
 void FsOpsTest::copyIntoExistingDestinationCancelledPreservesPreexisting() {
@@ -710,6 +786,44 @@ void FsOpsTest::deleteSymlinkSwapRaceDoesNotEscape() {
     QCOMPARE(swapErr, 0);
     QCOMPARE(readQtFile(outsideKeep), QByteArray("keep"));
     QVERIFY(QFileInfo(outsideDir).isDir());
+}
+
+void FsOpsTest::writeFileAtomicOverwriteReplacesExistingInode() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString targetPath = writeTempFile(dir, QStringLiteral("target.txt"), "old-data");
+    const ino_t oldInode = fileInode(targetPath);
+    QVERIFY(oldInode != 0);
+
+    Error err;
+    const QByteArray replacement("new-atomic-data");
+    QVERIFY(write_file_atomic(targetPath.toLocal8Bit().toStdString(),
+                              reinterpret_cast<const std::uint8_t*>(replacement.constData()),
+                              static_cast<std::size_t>(replacement.size()), err));
+    QVERIFY(!err.isSet());
+
+    const ino_t newInode = fileInode(targetPath);
+    QVERIFY(newInode != 0);
+    QVERIFY(newInode != oldInode);
+    QCOMPARE(readQtFile(targetPath), replacement);
+}
+
+void FsOpsTest::writeFileAtomicForcedNamedTempFallbackLeavesNoArtifacts() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    ScopedEnvVar forceFallback("PCMANFM_TEST_FORCE_ATOMIC_REPLACE_NAMED_TEMP", "1");
+
+    const QString targetPath = writeTempFile(dir, QStringLiteral("fallback-target.txt"), "seed");
+    Error err;
+    const QByteArray payload("named-temp-fallback-data");
+    QVERIFY(write_file_atomic(targetPath.toLocal8Bit().toStdString(),
+                              reinterpret_cast<const std::uint8_t*>(payload.constData()),
+                              static_cast<std::size_t>(payload.size()), err));
+    QVERIFY(!err.isSet());
+    QCOMPARE(readQtFile(targetPath), payload);
+    QVERIFY(atomicTempArtifacts(dir.path()).isEmpty());
 }
 
 void FsOpsTest::writeFileAtomicRejectsSymlinkParentEscape() {

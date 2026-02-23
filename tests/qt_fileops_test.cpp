@@ -21,6 +21,7 @@ class QtFileOpsTest : public QObject {
 
    private slots:
     void copyFile();
+    void copyProgressIsMonotonicAndTotalsStable();
     void copyConflictRespectsOverwriteExistingFlag();
     void moveFile();
     void deleteFile();
@@ -34,6 +35,7 @@ class QtFileOpsTest : public QObject {
     void copyRejectsPromptAndOverwriteTogether();
     void deleteRejectsPromptOnConflictField();
     void cancelRequestsStopCopyThroughCoreContract();
+    void requestFieldsAreMappedOrRejectedExplicitly();
     void adapterRemainsThinAndDelegatesPlanningToCore();
 };
 
@@ -93,6 +95,78 @@ void QtFileOpsTest::copyFile() {
     const QString copied = dstDir + QLatin1String("/src.txt");
     QVERIFY(QFileInfo::exists(copied));
     QCOMPARE(QFile(copied).size(), QFile(src).size());
+}
+
+void QtFileOpsTest::copyProgressIsMonotonicAndTotalsStable() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString src = dir.path() + QLatin1String("/large-sparse.bin");
+    QVERIFY(createSparseFile(src, qint64(64) * 1024 * 1024));
+
+    const QString dstDir = dir.path() + QLatin1String("/dst-progress");
+    QVERIFY(QDir().mkpath(dstDir));
+    const QString dstPath = dstDir + QLatin1String("/large-sparse.bin");
+
+    QtFileOps ops;
+    QSignalSpy finishedSpy(&ops, &QtFileOps::finished);
+    QVector<FileOpProgress> updates;
+    connect(&ops, &QtFileOps::progress, &ops, [&updates](const FileOpProgress& info) { updates.push_back(info); });
+
+    FileOpRequest req;
+    req.type = FileOpType::Copy;
+    req.sources = QStringList{src};
+    req.destination = dstDir;
+    req.followSymlinks = false;
+    req.overwriteExisting = true;
+
+    ops.start(req);
+    QTRY_VERIFY_WITH_TIMEOUT(finishedSpy.count() > 0, 10000);
+    const QList<QVariant> args = finishedSpy.takeFirst();
+    QVERIFY(args.at(0).toBool());
+    QVERIFY(QFileInfo::exists(dstPath));
+    QVERIFY(!updates.isEmpty());
+
+    std::uint64_t prevBytesDone = 0;
+    bool hasPrevBytesDone = false;
+    std::uint64_t stableBytesTotal = 0;
+    bool hasStableBytesTotal = false;
+    int prevFilesDone = -1;
+    int stableFilesTotal = -1;
+    for (const FileOpProgress& info : updates) {
+        if (hasPrevBytesDone) {
+            QVERIFY(info.bytesDone >= prevBytesDone);
+        }
+        hasPrevBytesDone = true;
+        prevBytesDone = info.bytesDone;
+
+        QVERIFY(info.bytesTotal >= info.bytesDone);
+        if (info.bytesTotal > 0) {
+            if (!hasStableBytesTotal) {
+                stableBytesTotal = info.bytesTotal;
+                hasStableBytesTotal = true;
+            }
+            else {
+                QCOMPARE(info.bytesTotal, stableBytesTotal);
+            }
+        }
+
+        QVERIFY(info.filesDone >= prevFilesDone);
+        prevFilesDone = info.filesDone;
+
+        if (stableFilesTotal < 0) {
+            stableFilesTotal = info.filesTotal;
+        }
+        else {
+            QCOMPARE(info.filesTotal, stableFilesTotal);
+        }
+    }
+
+    const FileOpProgress& last = updates.constLast();
+    QCOMPARE(last.filesTotal, 1);
+    QCOMPARE(last.filesDone, 1);
+    QVERIFY(last.bytesDone > 0);
+    QCOMPARE(last.bytesDone, last.bytesTotal);
 }
 
 void QtFileOpsTest::copyConflictRespectsOverwriteExistingFlag() {
@@ -523,6 +597,34 @@ void QtFileOpsTest::cancelRequestsStopCopyThroughCoreContract() {
     QVERIFY(!args.at(0).toBool());
     QVERIFY(args.at(1).toString().contains(QStringLiteral("cancel"), Qt::CaseInsensitive));
     QVERIFY(!QFileInfo::exists(dstPath));
+}
+
+void QtFileOpsTest::requestFieldsAreMappedOrRejectedExplicitly() {
+    const QString adapterSourcePath = QFINDTESTDATA("../src/backends/qt/qt_fileops.cpp");
+    QVERIFY2(!adapterSourcePath.isEmpty(), "Unable to locate src/backends/qt/qt_fileops.cpp from test");
+
+    QFile adapterSource(adapterSourcePath);
+    QVERIFY(adapterSource.open(QIODevice::ReadOnly));
+    const QByteArray source = adapterSource.readAll();
+
+    const QList<QByteArray> requiredSnippets = {
+        QByteArray("toContractOperation(req.type, out.operation)"),
+        QByteArray("out.sources.push_back(toNativePath(source))"),
+        QByteArray("out.destination.targetDir = toNativePath(req.destination)"),
+        QByteArray("requestError = QStringLiteral(\"Delete operations do not accept a destination path\")"),
+        QByteArray("requestError = QStringLiteral(\"Delete operations do not use overwriteExisting\")"),
+        QByteArray("requestError = QStringLiteral(\"Delete operations do not use promptOnConflict\")"),
+        QByteArray("requestError = QStringLiteral(\"promptOnConflict cannot be combined with overwriteExisting\")"),
+        QByteArray("out.conflictPolicy = req.overwriteExisting ? FileOpsContract::ConflictPolicy::Overwrite"),
+        QByteArray("requestError = QStringLiteral(\"followSymlinks=true is not supported\")"),
+        QByteArray("out.metadata.preserveOwnership = req.preserveOwnership"),
+    };
+
+    for (const QByteArray& snippet : requiredSnippets) {
+        QVERIFY2(source.contains(snippet),
+                 qPrintable(QStringLiteral("qt_fileops.cpp is missing required request-field handling snippet: %1")
+                                .arg(QString::fromLocal8Bit(snippet))));
+    }
 }
 
 void QtFileOpsTest::adapterRemainsThinAndDelegatesPlanningToCore() {

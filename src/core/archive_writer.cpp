@@ -675,16 +675,23 @@ bool extract_tar_zst(const std::string& archivePath,
         return false;
     }
 
+    const auto cleanup_destination = [&destinationDir]() {
+        FsOps::Error cleanupErr;
+        ProgressInfo cleanupProg;
+        FsOps::delete_path(destinationDir, cleanupProg, ProgressCallback(), cleanupErr);
+    };
+
     Fd rootFd(::open(destinationDir.c_str(), O_RDONLY | O_CLOEXEC | O_DIRECTORY));
     if (!rootFd.valid()) {
         set_error(err, "open");
-        ::rmdir(destinationDir.c_str());
+        cleanup_destination();
         return false;
     }
 
     Fd archiveFd(::open(archivePath.c_str(), O_RDONLY | O_CLOEXEC));
     if (!archiveFd.valid()) {
         set_error(err, "open");
+        cleanup_destination();
         return false;
     }
 
@@ -692,6 +699,7 @@ bool extract_tar_zst(const std::string& archivePath,
     if (!ar) {
         err.code = ENOMEM;
         err.message = "Failed to allocate archive reader";
+        cleanup_destination();
         return false;
     }
     archive_read_support_format_tar(ar);
@@ -700,6 +708,7 @@ bool extract_tar_zst(const std::string& archivePath,
     if (archive_read_open_fd(ar, archiveFd.fd, 128 * 1024) != ARCHIVE_OK) {
         set_archive_error(err, ar, "archive_read_open_fd");
         archive_read_free(ar);
+        cleanup_destination();
         return false;
     }
 
@@ -801,10 +810,7 @@ bool extract_tar_zst(const std::string& archivePath,
     archive_read_free(ar);
 
     if (!ok) {
-        // best-effort cleanup of partially created destination
-        FsOps::Error cleanupErr;
-        ProgressInfo cleanupProg;
-        FsOps::delete_path(destinationDir, cleanupProg, ProgressCallback(), cleanupErr);
+        cleanup_destination();
     }
     return ok;
 }

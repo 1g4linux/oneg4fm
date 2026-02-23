@@ -14,6 +14,7 @@
 
 #include <atomic>
 #include <cerrno>
+#include <cstdlib>
 #include <fcntl.h>
 #include <limits.h>
 #include <sys/stat.h>
@@ -57,6 +58,38 @@ bool createSparseFile(const QString& path, qint64 sizeBytes) {
     return ok;
 }
 
+class ScopedEnvVar {
+   public:
+    explicit ScopedEnvVar(const char* name, const char* value) : name_(name) {
+        const char* current = ::getenv(name_);
+        if (current) {
+            hadOriginal_ = true;
+            original_ = current;
+        }
+
+        if (value) {
+            ::setenv(name_, value, 1);
+        }
+        else {
+            ::unsetenv(name_);
+        }
+    }
+
+    ~ScopedEnvVar() {
+        if (hadOriginal_) {
+            ::setenv(name_, original_.c_str(), 1);
+        }
+        else {
+            ::unsetenv(name_);
+        }
+    }
+
+   private:
+    const char* name_;
+    std::string original_;
+    bool hadOriginal_ = false;
+};
+
 }  // namespace
 
 class FileOpsContractTest : public QObject {
@@ -80,6 +113,7 @@ class FileOpsContractTest : public QObject {
     void sandboxedThreadCancelReturnsEcanceled();
     void unsupportedOperationRejected();
     void requireLandlockFailsFast();
+    void requireOpenat2ResolveFailsFastWhenUnavailable();
     void requireSeccompNeedsSandboxedWorkerMode();
 };
 
@@ -783,6 +817,31 @@ void FileOpsContractTest::requireLandlockFailsFast() {
     QVERIFY(!result.cancelled);
     QCOMPARE(result.error.code, EngineErrorCode::SafetyRequirementUnavailable);
     QCOMPARE(result.error.sysErrno, ENOSYS);
+}
+
+void FileOpsContractTest::requireOpenat2ResolveFailsFastWhenUnavailable() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString src = writeTempFile(dir.path() + QLatin1String("/src.txt"), QByteArray("x"));
+    const QString dstDir = dir.path() + QLatin1String("/dst");
+    QVERIFY(QDir().mkpath(dstDir));
+
+    ScopedEnvVar forceOpenat2Missing("PCMANFM_TEST_FORCE_OPENAT2_ENOSYS", "1");
+
+    Request req;
+    req.operation = Operation::Copy;
+    req.sources = {toNative(src)};
+    req.destination.targetDir = toNative(dstDir);
+    req.destination.mappingMode = DestinationMappingMode::SourceBasename;
+    req.linuxSafety.requireOpenat2Resolve = true;
+
+    const Result result = run(req);
+    QVERIFY(!result.success);
+    QVERIFY(!result.cancelled);
+    QCOMPARE(result.error.code, EngineErrorCode::SafetyRequirementUnavailable);
+    QCOMPARE(result.error.sysErrno, ENOSYS);
+    QVERIFY(QString::fromLocal8Bit(result.error.message.c_str()).contains(QStringLiteral("openat2")));
 }
 
 void FileOpsContractTest::requireSeccompNeedsSandboxedWorkerMode() {
