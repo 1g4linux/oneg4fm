@@ -40,10 +40,17 @@ pcmanfm_add_test(oneg4fm-fs-tests
     SOURCES
         fs_ops_test.cpp
         ../src/core/fs_ops.cpp
+        ../src/core/linux_fs_safety.cpp
     LIBS
         ${BLAKE3_LIBRARIES}
     INCLUDES
         ${BLAKE3_INCLUDE_DIRS}
+)
+
+pcmanfm_add_test(oneg4fm-linux-fs-safety-tests
+    SOURCES
+        linux_fs_safety_test.cpp
+        ../src/core/linux_fs_safety.cpp
 )
 
 pcmanfm_add_test(oneg4fm-ops-tests
@@ -52,6 +59,7 @@ pcmanfm_add_test(oneg4fm-ops-tests
         ../src/backends/qt/qt_fileops.cpp
         ../src/core/ifileops.cpp
         ../src/core/fs_ops.cpp
+        ../src/core/linux_fs_safety.cpp
     LIBS
         ${BLAKE3_LIBRARIES}
     INCLUDES
@@ -64,6 +72,7 @@ pcmanfm_add_test(oneg4fm-archive-tests
         ../src/core/archive_extract.cpp
         ../src/core/archive_writer.cpp
         ../src/core/fs_ops.cpp
+        ../src/core/linux_fs_safety.cpp
     LIBS
         ${LIBARCHIVE_LIBRARIES}
         ${BLAKE3_LIBRARIES}
@@ -107,6 +116,7 @@ set(PCMANFM_SETTINGS_SOURCES
     ../pcmanfm/settings.h
     ../src/ui/fsqt.cpp
     ../src/core/fs_ops.cpp
+    ../src/core/linux_fs_safety.cpp
 )
 
 set(PCMANFM_SETTINGS_LIBS
@@ -152,6 +162,7 @@ set(PCMANFM_XDGDIR_SOURCES
     ../pcmanfm/xdgdir.cpp
     ../src/ui/fsqt.cpp
     ../src/core/fs_ops.cpp
+    ../src/core/linux_fs_safety.cpp
 )
 
 pcmanfm_add_test(oneg4fm-xdgdir-tests

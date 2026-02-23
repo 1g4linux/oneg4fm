@@ -4,29 +4,19 @@
  */
 
 #include "fs_ops.h"
+#include "linux_fs_safety.h"
 
 #include <cerrno>
 #include <cstring>
 #include <dirent.h>
 #include <array>
 #include <fcntl.h>
-#include <linux/openat2.h>
 #include <sys/stat.h>
-#include <sys/syscall.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <b3sum/blake3.h>
 
-#ifndef SYS_openat2
-#ifdef __NR_openat2
-#define SYS_openat2 __NR_openat2
-#endif
-#endif
-
 namespace PCManFM::FsOps {
-
-// Forward declaration for use in helpers
-bool ensure_parent_dirs(const std::string& path, Error& err);
 
 namespace {
 
@@ -83,46 +73,8 @@ inline void set_error(Error& err, const char* context) {
     err.message = std::string(context) + ": " + std::strerror(errno);
 }
 
-inline void set_openat2_error(Error& err, const char* context) {
-    if (errno == ENOSYS) {
-        err.code = ENOSYS;
-        err.message = std::string(context) + ": openat2 is required but unavailable on this kernel";
-        return;
-    }
-    set_error(err, context);
-}
-
-int openat2_raw(int dirfd, const char* path, int flags, mode_t mode, std::uint64_t resolve) {
-#ifdef SYS_openat2
-    struct open_how how{};
-    how.flags = static_cast<std::uint64_t>(flags);
-    how.mode = static_cast<std::uint64_t>(mode);
-    how.resolve = resolve;
-    return static_cast<int>(::syscall(SYS_openat2, dirfd, path, &how, sizeof(how)));
-#else
-    (void)dirfd;
-    (void)path;
-    (void)flags;
-    (void)mode;
-    (void)resolve;
-    errno = ENOSYS;
-    return -1;
-#endif
-}
-
-bool openat2_fd(int dirfd, const char* path, int flags, mode_t mode, std::uint64_t resolve, Fd& out, Error& err) {
-    Fd fd(openat2_raw(dirfd, path, flags, mode, resolve));
-    if (!fd.valid()) {
-        set_openat2_error(err, "openat2");
-        return false;
-    }
-    out = std::move(fd);
-    return true;
-}
-
-constexpr std::uint64_t kResolveNoSymlinks =
-    static_cast<std::uint64_t>(RESOLVE_NO_SYMLINKS) | static_cast<std::uint64_t>(RESOLVE_NO_MAGICLINKS);
-constexpr std::uint64_t kResolveNoMagiclinks = static_cast<std::uint64_t>(RESOLVE_NO_MAGICLINKS);
+constexpr std::uint64_t kResolveNoSymlinks = LinuxFsSafety::kResolveNoSymlinks;
+constexpr std::uint64_t kResolveNoMagiclinks = LinuxFsSafety::kResolveNoMagiclinks;
 
 bool is_dot_or_dotdot(const char* name) {
     return name && (std::strcmp(name, ".") == 0 || std::strcmp(name, "..") == 0);
@@ -150,11 +102,7 @@ void split_path_components(const std::string& path, bool& absolute, std::vector<
 }
 
 int open_dir_flags() {
-    int flags = O_RDONLY | O_CLOEXEC | O_DIRECTORY;
-#ifdef O_NOFOLLOW
-    flags |= O_NOFOLLOW;
-#endif
-    return flags;
+    return LinuxFsSafety::open_dir_flags();
 }
 
 bool duplicate_fd(int fd, Fd& out, Error& err) {
@@ -164,6 +112,15 @@ bool duplicate_fd(int fd, Fd& out, Error& err) {
         return false;
     }
     out = std::move(dupFd);
+    return true;
+}
+
+bool open_under_fd(int dirfd, const char* path, int flags, mode_t mode, std::uint64_t resolve, Fd& out, Error& err) {
+    LinuxFsSafety::Fd safeFd;
+    if (!LinuxFsSafety::open_under(dirfd, path, flags, mode, resolve, safeFd, err)) {
+        return false;
+    }
+    out = Fd(safeFd.release());
     return true;
 }
 
@@ -179,7 +136,7 @@ bool open_anchor_dir(bool absolute, Fd& out, Error& err) {
 }
 
 bool open_dir_nofollow_at(int parentFd, const char* name, Fd& out, Error& err) {
-    return openat2_fd(parentFd, name, open_dir_flags(), 0, kResolveNoSymlinks, out, err);
+    return open_under_fd(parentFd, name, open_dir_flags(), 0, kResolveNoSymlinks, out, err);
 }
 
 bool open_dir_path_secure(const std::string& path, bool createMissing, Fd& out, Error& err) {
@@ -197,11 +154,8 @@ bool open_dir_path_secure(const std::string& path, bool createMissing, Fd& out, 
             continue;
         }
 
-        if (createMissing) {
-            if (::mkdirat(current.fd, comp.c_str(), 0777) != 0 && errno != EEXIST) {
-                set_error(err, "mkdirat");
-                return false;
-            }
+        if (createMissing && !LinuxFsSafety::mkdir_under(current.fd, comp, 0777, err, true)) {
+            return false;
         }
 
         Fd next;
@@ -225,38 +179,52 @@ std::string join_child_path(const std::string& parent, const char* child) {
     return parent + "/" + child;
 }
 
+void split_parent_and_name(const std::string& path, std::string& parentOut, std::string& nameOut) {
+    const auto pos = path.find_last_of('/');
+    if (pos == std::string::npos) {
+        parentOut = ".";
+        nameOut = path;
+        return;
+    }
+
+    parentOut = path.substr(0, pos);
+    nameOut = path.substr(pos + 1);
+    if (parentOut.empty()) {
+        parentOut = ".";
+    }
+}
+
 struct CopyJournalEntry {
-    std::string path;
+    std::string relPath;
     bool isDir = false;
 };
 
 class CopyJournal {
    public:
-    void recordFile(const std::string& path) { entries_.push_back(CopyJournalEntry{path, false}); }
-    void recordDir(const std::string& path) { entries_.push_back(CopyJournalEntry{path, true}); }
+    bool init(int rootFd, Error& err) { return duplicate_fd(rootFd, rootFd_, err); }
+
+    void recordFile(const std::string& relPath) { entries_.push_back(CopyJournalEntry{relPath, false}); }
+    void recordDir(const std::string& relPath) { entries_.push_back(CopyJournalEntry{relPath, true}); }
 
     // Roll back only paths created by this operation.
     void rollback() {
+        if (!rootFd_.valid()) {
+            return;
+        }
         for (auto it = entries_.rbegin(); it != entries_.rend(); ++it) {
+            Error cleanupErr;
             if (it->isDir) {
-                if (::rmdir(it->path.c_str()) < 0) {
-                    if (errno == ENOENT || errno == ENOTEMPTY) {
-                        continue;
-                    }
-                }
+                LinuxFsSafety::rmdir_under(rootFd_.fd, it->relPath, cleanupErr, true, true);
             }
             else {
-                if (::unlink(it->path.c_str()) < 0) {
-                    if (errno == ENOENT) {
-                        continue;
-                    }
-                }
+                LinuxFsSafety::unlink_under(rootFd_.fd, it->relPath, cleanupErr, true);
             }
         }
         entries_.clear();
     }
 
    private:
+    Fd rootFd_;
     std::vector<CopyJournalEntry> entries_;
 };
 
@@ -392,8 +360,8 @@ bool open_source_entry_for_copy(int srcDir,
     flags |= O_NOFOLLOW;
 #endif
 
-    Fd fd(openat2_raw(srcDir, srcName, flags, 0, kResolveNoSymlinks));
-    if (fd.valid()) {
+    Fd fd;
+    if (open_under_fd(srcDir, srcName, flags, 0, kResolveNoSymlinks, fd, err)) {
         if (::fstat(fd.fd, &outInfo.st) < 0) {
             set_error(err, "fstat");
             return false;
@@ -415,18 +383,17 @@ bool open_source_entry_for_copy(int srcDir,
         return false;
     }
 
-    if (errno != ELOOP) {
-        set_openat2_error(err, "openat2");
+    if (err.code != ELOOP) {
         return false;
     }
+    err = {};
 
     int linkFlags = O_PATH | O_CLOEXEC;
 #ifdef O_NOFOLLOW
     linkFlags |= O_NOFOLLOW;
 #endif
-    Fd linkFd(openat2_raw(srcDir, srcName, linkFlags, 0, kResolveNoMagiclinks));
-    if (!linkFd.valid()) {
-        set_openat2_error(err, "openat2");
+    Fd linkFd;
+    if (!open_under_fd(srcDir, srcName, linkFlags, 0, kResolveNoMagiclinks, linkFd, err)) {
         return false;
     }
 
@@ -543,20 +510,19 @@ bool copy_file_at(int srcFd,
     createFlags |= O_NOFOLLOW;
 #endif
 
-    Fd out_fd(openat2_raw(dstDir, dstName, createFlags, info.st.st_mode & 0777, kResolveNoSymlinks));
-    if (out_fd.valid()) {
+    Fd out_fd;
+    if (open_under_fd(dstDir, dstName, createFlags, info.st.st_mode & 0777, kResolveNoSymlinks, out_fd, err)) {
         if (journal) {
             journal->recordFile(dstPath);
         }
     }
-    else if (errno == EEXIST) {
+    else if (err.code == EEXIST) {
+        err = {};
         int truncFlags = O_WRONLY | O_TRUNC | O_CLOEXEC;
 #ifdef O_NOFOLLOW
         truncFlags |= O_NOFOLLOW;
 #endif
-        out_fd = Fd(openat2_raw(dstDir, dstName, truncFlags, 0, kResolveNoSymlinks));
-        if (!out_fd.valid()) {
-            set_openat2_error(err, "openat2");
+        if (!open_under_fd(dstDir, dstName, truncFlags, 0, kResolveNoSymlinks, out_fd, err)) {
             return false;
         }
 
@@ -572,7 +538,6 @@ bool copy_file_at(int srcFd,
         }
     }
     else {
-        set_openat2_error(err, "openat2");
         return false;
     }
 
@@ -699,11 +664,11 @@ bool copy_dir_at(int srcDirFd,
     }
 
     // Create dest dir
-    if (::mkdirat(dstDir, dstName, info.st.st_mode & 0777) < 0) {
-        if (errno != EEXIST) {
-            set_error(err, "mkdirat");
+    if (!LinuxFsSafety::mkdir_under(dstDir, dstName, info.st.st_mode & 0777, err)) {
+        if (err.code != EEXIST) {
             return false;
         }
+        err = {};
     }
     else {
         if (journal) {
@@ -769,11 +734,13 @@ bool delete_at(int dirfd, const char* name, ProgressInfo& progress, const Progre
         return false;
     }
 
-    Fd subDir(openat2_raw(dirfd, name, open_dir_flags(), 0, kResolveNoSymlinks));
-    const bool isDirectory = subDir.valid();
-    if (!isDirectory && errno != ENOTDIR && errno != ELOOP) {
-        set_openat2_error(err, "openat2");
+    Fd subDir;
+    const bool isDirectory = open_under_fd(dirfd, name, open_dir_flags(), 0, kResolveNoSymlinks, subDir, err);
+    if (!isDirectory && err.code != ENOTDIR && err.code != ELOOP) {
         return false;
+    }
+    if (!isDirectory) {
+        err = {};
     }
 
     if (!should_continue(cb, progress)) {
@@ -814,14 +781,12 @@ bool delete_at(int dirfd, const char* name, ProgressInfo& progress, const Progre
             }
         }
 
-        if (::unlinkat(dirfd, name, AT_REMOVEDIR) < 0) {
-            set_error(err, "unlinkat");
+        if (!LinuxFsSafety::rmdir_under(dirfd, name, err)) {
             return false;
         }
     }
     else {
-        if (::unlinkat(dirfd, name, 0) < 0) {
-            set_error(err, "unlinkat");
+        if (!LinuxFsSafety::unlink_under(dirfd, name, err)) {
             return false;
         }
     }
@@ -855,40 +820,21 @@ bool read_file_all(const std::string& path, std::vector<std::uint8_t>& out, Erro
 bool write_file_atomic(const std::string& path, const std::uint8_t* data, std::size_t size, Error& err) {
     err = {};
 
-    if (!ensure_parent_dirs(path, err)) {
+    std::string parentPath;
+    std::string leaf;
+    split_parent_and_name(path, parentPath, leaf);
+    if (leaf.empty() || is_dot_or_dotdot(leaf.c_str())) {
+        err.code = EINVAL;
+        err.message = "Invalid destination path";
         return false;
     }
 
-    std::string tmpPath = path + ".XXXXXX";
-    std::vector<char> tmpl(tmpPath.begin(), tmpPath.end());
-    tmpl.push_back('\0');
-
-    int tmpFd = ::mkstemp(tmpl.data());
-    if (tmpFd < 0) {
-        set_error(err, "mkstemp");
+    Fd parentFd;
+    if (!open_dir_path_secure(parentPath, /*createMissing=*/true, parentFd, err)) {
         return false;
     }
 
-    Fd fd(tmpFd);
-
-    if (!write_all_fd(fd.fd, data, size, err)) {
-        ::unlink(tmpl.data());
-        return false;
-    }
-
-    if (::fsync(fd.fd) < 0) {
-        set_error(err, "fsync");
-        ::unlink(tmpl.data());
-        return false;
-    }
-
-    if (::rename(tmpl.data(), path.c_str()) < 0) {
-        set_error(err, "rename");
-        ::unlink(tmpl.data());
-        return false;
-    }
-
-    return true;
+    return LinuxFsSafety::atomic_replace_under(parentFd.fd, leaf, data, size, 0600, err);
 }
 
 bool make_dir_parents(const std::string& path, Error& err) {
@@ -897,53 +843,60 @@ bool make_dir_parents(const std::string& path, Error& err) {
         return true;
     }
 
-    // handle root or already existing path
-    struct stat st;
-    if (::stat(path.c_str(), &st) == 0) {
-        if (S_ISDIR(st.st_mode)) {
-            return true;
+    bool absolute = false;
+    std::vector<std::string> components;
+    split_path_components(path, absolute, components);
+
+    std::string relPath;
+    for (const auto& comp : components) {
+        if (comp.empty() || comp == ".") {
+            continue;
         }
-        err.code = ENOTDIR;
-        err.message = "Not a directory: " + path;
+        if (!relPath.empty()) {
+            relPath.push_back('/');
+        }
+        relPath += comp;
+    }
+
+    if (relPath.empty()) {
+        return true;
+    }
+
+    Fd anchor;
+    if (!open_anchor_dir(absolute, anchor, err)) {
         return false;
     }
 
-    auto pos = path.find_last_of('/');
-    if (pos != std::string::npos) {
-        if (pos > 0) {  // skip leading slash
-            const std::string parent = path.substr(0, pos);
-            if (!make_dir_parents(parent, err)) {
-                return false;
-            }
-        }
-    }
-
-    if (::mkdir(path.c_str(), 0777) < 0) {
-        if (errno == EEXIST) {
+    LinuxFsSafety::Fd opened;
+    if (!LinuxFsSafety::open_dir_path_under(anchor.fd, relPath, true, 0777, opened, err)) {
+        if (err.code == EEXIST) {
+            err = {};
             return true;
         }
-        set_error(err, "mkdir");
         return false;
     }
+
     return true;
-}
-
-bool ensure_parent_dirs(const std::string& path, Error& err) {
-    const auto pos = path.find_last_of('/');
-    if (pos == std::string::npos) {
-        return true;
-    }
-    const std::string parent = path.substr(0, pos);
-    if (parent.empty()) {
-        return true;
-    }
-    return make_dir_parents(parent, err);
 }
 
 bool set_permissions(const std::string& path, unsigned int mode, Error& err) {
     err = {};
-    if (::chmod(path.c_str(), static_cast<mode_t>(mode)) < 0) {
-        set_error(err, "chmod");
+    std::string parent;
+    std::string leaf;
+    split_parent_and_name(path, parent, leaf);
+    if (leaf.empty() || is_dot_or_dotdot(leaf.c_str())) {
+        err.code = EINVAL;
+        err.message = "Invalid permissions path";
+        return false;
+    }
+
+    Fd parentFd;
+    if (!open_dir_path_secure(parent, /*createMissing=*/false, parentFd, err)) {
+        return false;
+    }
+
+    if (::fchmodat(parentFd.fd, leaf.c_str(), static_cast<mode_t>(mode), 0) < 0) {
+        set_error(err, "fchmodat");
         return false;
     }
     return true;
@@ -956,12 +909,27 @@ bool set_times(const std::string& path,
                std::int64_t mtimeNsec,
                Error& err) {
     err = {};
+    std::string parent;
+    std::string leaf;
+    split_parent_and_name(path, parent, leaf);
+    if (leaf.empty() || is_dot_or_dotdot(leaf.c_str())) {
+        err.code = EINVAL;
+        err.message = "Invalid time path";
+        return false;
+    }
+
+    Fd parentFd;
+    if (!open_dir_path_secure(parent, /*createMissing=*/false, parentFd, err)) {
+        return false;
+    }
+
     struct timespec times[2];
     times[0].tv_sec = atimeSec;
     times[0].tv_nsec = atimeNsec;
     times[1].tv_sec = mtimeSec;
     times[1].tv_nsec = mtimeNsec;
-    if (::utimensat(AT_FDCWD, path.c_str(), times, 0) < 0) {
+
+    if (::utimensat(parentFd.fd, leaf.c_str(), times, 0) < 0) {
         set_error(err, "utimensat");
         return false;
     }
@@ -976,25 +944,10 @@ bool copy_path(const std::string& source,
                bool preserveOwnership) {
     err = {};
 
-    auto splitPath = [](const std::string& path, std::string& parentOut, std::string& nameOut) {
-        const auto pos = path.find_last_of('/');
-        if (pos == std::string::npos) {
-            parentOut = ".";
-            nameOut = path;
-        }
-        else {
-            parentOut = path.substr(0, pos);
-            nameOut = path.substr(pos + 1);
-            if (parentOut.empty()) {
-                parentOut = ".";
-            }
-        }
-    };
-
     std::string srcParent, srcName;
-    splitPath(source, srcParent, srcName);
+    split_parent_and_name(source, srcParent, srcName);
     std::string destParent, destName;
-    splitPath(destination, destParent, destName);
+    split_parent_and_name(destination, destParent, destName);
 
     if (srcName.empty() || is_dot_or_dotdot(srcName.c_str())) {
         err.code = EINVAL;
@@ -1018,9 +971,12 @@ bool copy_path(const std::string& source,
     }
 
     CopyJournal journal;
+    if (!journal.init(destParentFd.fd, err)) {
+        return false;
+    }
 
     const bool ok = copy_entry_at(srcParentFd.fd, srcName.c_str(), destParentFd.fd, destName.c_str(), progress,
-                                  callback, err, 0, destination, &journal, preserveOwnership);
+                                  callback, err, 0, destName, &journal, preserveOwnership);
 
     if (!ok) {
         journal.rollback();
@@ -1041,16 +997,47 @@ bool move_path(const std::string& source,
                bool preserveOwnership) {
     err = {};
 
-    if (!forceCopyFallbackForTests && ::rename(source.c_str(), destination.c_str()) == 0) {
-        progress.filesDone += 1;
-        progress.currentPath = source;
-        should_continue(callback, progress);
-        return true;
-    }
+    if (!forceCopyFallbackForTests) {
+        std::string srcParent;
+        std::string srcName;
+        split_parent_and_name(source, srcParent, srcName);
 
-    if (!forceCopyFallbackForTests && errno != EXDEV) {
-        set_error(err, "rename");
-        return false;
+        std::string destParent;
+        std::string destName;
+        split_parent_and_name(destination, destParent, destName);
+
+        if (srcName.empty() || is_dot_or_dotdot(srcName.c_str())) {
+            err.code = EINVAL;
+            err.message = "Invalid source path";
+            return false;
+        }
+        if (destName.empty() || is_dot_or_dotdot(destName.c_str())) {
+            err.code = EINVAL;
+            err.message = "Invalid destination path";
+            return false;
+        }
+
+        Fd srcParentFd;
+        if (!open_dir_path_secure(srcParent, /*createMissing=*/false, srcParentFd, err)) {
+            return false;
+        }
+
+        Fd destParentFd;
+        if (!open_dir_path_secure(destParent, /*createMissing=*/false, destParentFd, err)) {
+            return false;
+        }
+
+        if (LinuxFsSafety::rename_under(srcParentFd.fd, srcName, destParentFd.fd, destName, 0, err)) {
+            progress.filesDone += 1;
+            progress.currentPath = source;
+            should_continue(callback, progress);
+            return true;
+        }
+
+        if (err.code != EXDEV) {
+            return false;
+        }
+        err = {};
     }
 
     // Cross-device or forced fallback: copy then delete

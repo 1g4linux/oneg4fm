@@ -70,6 +70,8 @@ class FsOpsTest : public QObject {
     void copySymlinkPreservesLink();
     void copyPreservesMtime();
     void deleteSymlinkSwapRaceDoesNotEscape();
+    void writeFileAtomicRejectsSymlinkParentEscape();
+    void movePathRejectsSymlinkDestinationParentEscape();
 };
 
 void FsOpsTest::readWriteRoundTrip() {
@@ -542,6 +544,48 @@ void FsOpsTest::deleteSymlinkSwapRaceDoesNotEscape() {
     QCOMPARE(swapErr, 0);
     QCOMPARE(readQtFile(outsideKeep), QByteArray("keep"));
     QVERIFY(QFileInfo(outsideDir).isDir());
+}
+
+void FsOpsTest::writeFileAtomicRejectsSymlinkParentEscape() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString outsideDir = makePath(dir, QStringLiteral("outside"));
+    QVERIFY(QDir().mkpath(outsideDir));
+
+    const QString linkDir = makePath(dir, QStringLiteral("linkdir"));
+    QVERIFY(::symlink(outsideDir.toLocal8Bit().constData(), linkDir.toLocal8Bit().constData()) == 0);
+
+    const QByteArray payload("escape");
+    Error err;
+    const QString escaped = linkDir + QLatin1String("/escaped.txt");
+    QVERIFY(!write_file_atomic(escaped.toLocal8Bit().toStdString(),
+                               reinterpret_cast<const std::uint8_t*>(payload.constData()),
+                               static_cast<std::size_t>(payload.size()), err));
+    QVERIFY(err.isSet());
+    QVERIFY(!QFileInfo::exists(outsideDir + QLatin1String("/escaped.txt")));
+}
+
+void FsOpsTest::movePathRejectsSymlinkDestinationParentEscape() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcPath = writeTempFile(dir, QStringLiteral("src.txt"), "payload");
+    const QString outsideDir = makePath(dir, QStringLiteral("outside"));
+    QVERIFY(QDir().mkpath(outsideDir));
+
+    const QString linkDir = makePath(dir, QStringLiteral("linkdir"));
+    QVERIFY(::symlink(outsideDir.toLocal8Bit().constData(), linkDir.toLocal8Bit().constData()) == 0);
+
+    const QString dstPath = linkDir + QLatin1String("/moved.txt");
+    ProgressInfo progress;
+    auto progressCb = [](const ProgressInfo&) { return true; };
+    Error err;
+    QVERIFY(!move_path(srcPath.toLocal8Bit().toStdString(), dstPath.toLocal8Bit().toStdString(), progress, progressCb,
+                       err));
+    QVERIFY(err.isSet());
+    QCOMPARE(readQtFile(srcPath), QByteArray("payload"));
+    QVERIFY(!QFileInfo::exists(outsideDir + QLatin1String("/moved.txt")));
 }
 
 QTEST_MAIN(FsOpsTest)
