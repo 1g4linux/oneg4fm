@@ -25,6 +25,8 @@ class FileOpsInventoryTest : public QObject {
     void inventoryHasRequiredCategories();
     void inventoryEntriesMapToRealSymbols();
     void legacyNativeCategoryHasNoActiveDuplicates();
+    void legacyIdentityPatternMatchesConfiguredTokenSet();
+    void projectOwnedPathsRejectLegacyIdentityTokens();
     void docsForPhaseFiveThreeExistAndAreNonEmpty();
     void dbusCompatibilityAdrExistsAndSpecifiesPolicy();
     void dbusBuildArtifactsEnforceHardCutServiceIdentity();
@@ -179,6 +181,79 @@ void FileOpsInventoryTest::legacyNativeCategoryHasNoActiveDuplicates() {
             qPrintable(
                 QStringLiteral("legacy_native_copy_move_delete contains active duplicate entry at index %1").arg(i)));
     }
+}
+
+void FileOpsInventoryTest::legacyIdentityPatternMatchesConfiguredTokenSet() {
+    const QRegularExpression pattern(QStringLiteral("(pcmanfm|PCManFM|org\\.pcmanfm)"));
+    QVERIFY2(pattern.isValid(), "Legacy identity pattern must be a valid regular expression");
+    QVERIFY2(pattern.match(QStringLiteral("pcmanfm")).hasMatch(),
+             "Legacy identity pattern must match lowercase pcmanfm");
+    QVERIFY2(pattern.match(QStringLiteral("PCManFM")).hasMatch(),
+             "Legacy identity pattern must match camel-case PCManFM");
+    QVERIFY2(pattern.match(QStringLiteral("org.pcmanfm")).hasMatch(), "Legacy identity pattern must match org.pcmanfm");
+    QVERIFY2(!pattern.match(QStringLiteral("PCMANFM")).hasMatch(),
+             "Legacy identity pattern must not over-match unrelated legacy macro casing");
+    QVERIFY2(!pattern.match(QStringLiteral("org.oneg4fm")).hasMatch(),
+             "Legacy identity pattern must not match current oneg4fm identifiers");
+}
+
+void FileOpsInventoryTest::projectOwnedPathsRejectLegacyIdentityTokens() {
+    const QString root = sourceRoot();
+    QVERIFY2(!root.isEmpty(), "PCMANFM_SOURCE_DIR compile definition is missing");
+    const QDir rootDir(root);
+
+    const QStringList scannedDirectories = {
+        QStringLiteral("cmake"), QStringLiteral("config"),       QStringLiteral("oneg4fm"),
+        QStringLiteral("src"),   QStringLiteral("libfm-qt/src"),
+    };
+    const QStringList scannedNameFilters = {
+        QStringLiteral("*.c"),          QStringLiteral("*.cc"),           QStringLiteral("*.cpp"),
+        QStringLiteral("*.h"),          QStringLiteral("*.hh"),           QStringLiteral("*.hpp"),
+        QStringLiteral("*.ui"),         QStringLiteral("*.cmake"),        QStringLiteral("*.desktop"),
+        QStringLiteral("*.desktop.in"), QStringLiteral("*.service"),      QStringLiteral("*.service.in"),
+        QStringLiteral("*.xml"),        QStringLiteral("*.json"),         QStringLiteral("*.conf"),
+        QStringLiteral("*.in"),         QStringLiteral("CMakeLists.txt"),
+    };
+    const QStringList scannedTopLevelFiles = {
+        QStringLiteral("CMakeLists.txt"),
+    };
+
+    QSet<QString> scannedFiles;
+    const auto addMatchingFiles = [&](const QString& relDir) {
+        QDirIterator it(root + QLatin1Char('/') + relDir, scannedNameFilters, QDir::Files,
+                        QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            const QString absPath = it.next();
+            const QString relPath = rootDir.relativeFilePath(absPath).replace(QLatin1Char('\\'), QLatin1Char('/'));
+            scannedFiles.insert(relPath);
+        }
+    };
+
+    for (const QString& relDir : scannedDirectories) {
+        addMatchingFiles(relDir);
+    }
+    for (const QString& relPath : scannedTopLevelFiles) {
+        scannedFiles.insert(relPath);
+    }
+
+    QVERIFY2(!scannedFiles.isEmpty(), "Project-owned identity gate scanned zero files");
+
+    const QRegularExpression legacyIdPattern(QStringLiteral("(pcmanfm|PCManFM|org\\.pcmanfm)"));
+    QStringList files = scannedFiles.values();
+    files.sort(Qt::CaseSensitive);
+
+    QStringList violations;
+    for (const QString& relPath : files) {
+        const auto [content, error] = readTextFile(relPath);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+
+        if (legacyIdPattern.match(relPath).hasMatch() || legacyIdPattern.match(content).hasMatch()) {
+            violations.append(relPath);
+        }
+    }
+
+    QVERIFY2(violations.isEmpty(), qPrintable(QStringLiteral("Legacy identity token found in project-owned paths:\n%1")
+                                                  .arg(violations.join(QLatin1Char('\n')))));
 }
 
 void FileOpsInventoryTest::docsForPhaseFiveThreeExistAndAreNonEmpty() {
