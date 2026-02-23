@@ -19,6 +19,8 @@ class FileOpsInventoryTest : public QObject {
     void inventoryEntriesMapToRealSymbols();
     void legacyNativeCategoryHasNoActiveDuplicates();
     void docsForPhaseFiveThreeExistAndAreNonEmpty();
+    void dbusCompatibilityAdrExistsAndSpecifiesPolicy();
+    void dbusBuildArtifactsEnforceHardCutServiceIdentity();
     void hackingDocCoversLinuxSecurityModelAndContract();
     void coreContractDocCoversFieldsEventsAndErrors();
     void adapterDocCoversQtAndLibfmQtBridge();
@@ -174,6 +176,61 @@ void FileOpsInventoryTest::docsForPhaseFiveThreeExistAndAreNonEmpty() {
         QVERIFY2(!content.trimmed().isEmpty(),
                  qPrintable(QStringLiteral("Doc is unexpectedly empty: %1").arg(relPath)));
     }
+}
+
+void FileOpsInventoryTest::dbusCompatibilityAdrExistsAndSpecifiesPolicy() {
+    const auto [content, error] = readTextFile(QStringLiteral("docs/adr/0001-dbus-compat-policy.md"));
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+
+    const QStringList requiredTerms = {
+        QStringLiteral("Decision"),
+        QStringLiteral("hard cut"),
+        QStringLiteral("org.oneg4fm.oneg4fm"),
+        QStringLiteral("org.oneg4fm.Application"),
+        QStringLiteral("org.pcmanfm"),
+        QStringLiteral("no compatibility alias"),
+    };
+
+    for (const QString& term : requiredTerms) {
+        QVERIFY2(content.contains(term, Qt::CaseInsensitive),
+                 qPrintable(QStringLiteral("DBus ADR is missing required term: %1").arg(term)));
+    }
+}
+
+void FileOpsInventoryTest::dbusBuildArtifactsEnforceHardCutServiceIdentity() {
+    const auto [cmakeContent, cmakeError] = readTextFile(QStringLiteral("oneg4fm/CMakeLists.txt"));
+    QVERIFY2(cmakeError.isEmpty(), qPrintable(cmakeError));
+
+    const QStringList requiredCMakeTerms = {
+        QStringLiteral("ONEG4FM_DBUS_APP_SERVICE"),
+        QStringLiteral("ONEG4FM_DBUS_APP_INTERFACE"),
+        QStringLiteral("org.oneg4fm.oneg4fm.service.in"),
+        QStringLiteral("dbus-1/services"),
+    };
+    for (const QString& term : requiredCMakeTerms) {
+        QVERIFY2(cmakeContent.contains(term, Qt::CaseSensitive),
+                 qPrintable(QStringLiteral("oneg4fm/CMakeLists.txt missing DBus enforcement term: %1").arg(term)));
+    }
+
+    const auto [serviceContent, serviceError] = readTextFile(QStringLiteral("oneg4fm/org.oneg4fm.oneg4fm.service.in"));
+    QVERIFY2(serviceError.isEmpty(), qPrintable(serviceError));
+    QVERIFY2(serviceContent.contains(QStringLiteral("[D-BUS Service]"), Qt::CaseSensitive),
+             "DBus service template must declare [D-BUS Service]");
+    QVERIFY2(serviceContent.contains(QStringLiteral("Name=@ONEG4FM_DBUS_APP_SERVICE@"), Qt::CaseSensitive),
+             "DBus service template must bind Name to ONEG4FM_DBUS_APP_SERVICE");
+    QVERIFY2(serviceContent.contains(QStringLiteral("Exec=@CMAKE_INSTALL_FULL_BINDIR@/oneg4fm"), Qt::CaseSensitive),
+             "DBus service template must install-activate the oneg4fm binary");
+    QVERIFY2(!serviceContent.contains(QStringLiteral("org.pcmanfm"), Qt::CaseInsensitive),
+             "DBus service template must not define legacy org.pcmanfm aliases");
+
+    const auto [appContent, appError] = readTextFile(QStringLiteral("oneg4fm/application.cpp"));
+    QVERIFY2(appError.isEmpty(), qPrintable(appError));
+    QVERIFY2(appContent.contains(QStringLiteral("ONEG4FM_DBUS_APP_SERVICE"), Qt::CaseSensitive),
+             "application.cpp must consume ONEG4FM_DBUS_APP_SERVICE");
+    QVERIFY2(appContent.contains(QStringLiteral("ONEG4FM_DBUS_APP_INTERFACE"), Qt::CaseSensitive),
+             "application.cpp must consume ONEG4FM_DBUS_APP_INTERFACE");
+    QVERIFY2(!appContent.contains(QStringLiteral("org.pcmanfm"), Qt::CaseInsensitive),
+             "application.cpp must not reference legacy org.pcmanfm identifiers");
 }
 
 void FileOpsInventoryTest::hackingDocCoversLinuxSecurityModelAndContract() {

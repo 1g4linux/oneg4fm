@@ -51,8 +51,16 @@
 
 namespace Oneg4FM {
 
-static const char* serviceName = "org.oneg4fm.oneg4fm";
-static const char* ifaceName = "org.oneg4fm.Application";
+#ifndef ONEG4FM_DBUS_APP_SERVICE
+#error "ONEG4FM_DBUS_APP_SERVICE must be defined by the build system"
+#endif
+
+#ifndef ONEG4FM_DBUS_APP_INTERFACE
+#error "ONEG4FM_DBUS_APP_INTERFACE must be defined by the build system"
+#endif
+
+static constexpr const char* serviceName = ONEG4FM_DBUS_APP_SERVICE;
+static constexpr const char* ifaceName = ONEG4FM_DBUS_APP_INTERFACE;
 
 //-----------------------------------------------------------------------------
 // ProxyStyle

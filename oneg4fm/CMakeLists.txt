@@ -65,6 +65,9 @@ set(oneg4fm_SRCS
     ../src/core/ifoldermodel.h
 )
 
+set(ONEG4FM_DBUS_APP_SERVICE "org.oneg4fm.oneg4fm")
+set(ONEG4FM_DBUS_APP_INTERFACE "org.oneg4fm.Application")
+
 qt6_add_dbus_adaptor(oneg4fm_DBUS_SRCS
     org.oneg4fm.Application.xml
     application.h
@@ -102,6 +105,13 @@ configure_file(
 )
 set(PCMANFM_DESKTOP_FILE "${CMAKE_CURRENT_BINARY_DIR}/oneg4fm.desktop")
 
+configure_file(
+    org.oneg4fm.oneg4fm.service.in
+    "${CMAKE_CURRENT_BINARY_DIR}/org.oneg4fm.oneg4fm.service"
+    @ONLY
+)
+set(ONEG4FM_DBUS_SERVICE_FILE "${CMAKE_CURRENT_BINARY_DIR}/org.oneg4fm.oneg4fm.service")
+
 add_executable(oneg4fm
     ${oneg4fm_SRCS}
     ${oneg4fm_DBUS_SRCS}
@@ -113,6 +123,8 @@ target_compile_definitions(oneg4fm
         PCMANFM_DATA_DIR="${CMAKE_INSTALL_PREFIX}/share/oneg4fm"
         PCMANFM_QT_VERSION="${PCMANFM_QT_VERSION}"
         LIBFM_DATA_DIR="${CMAKE_INSTALL_PREFIX}/share/libfm"
+        ONEG4FM_DBUS_APP_SERVICE="${ONEG4FM_DBUS_APP_SERVICE}"
+        ONEG4FM_DBUS_APP_INTERFACE="${ONEG4FM_DBUS_APP_INTERFACE}"
 )
 
 target_include_directories(oneg4fm
@@ -148,6 +160,7 @@ install(TARGETS oneg4fm RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 # install a desktop entry file for oneg4fm and desktop preferences
 install(FILES "${PCMANFM_DESKTOP_FILE}" DESTINATION "${CMAKE_INSTALL_DATADIR}/applications"
 )
+install(FILES "${ONEG4FM_DBUS_SERVICE_FILE}" DESTINATION "${CMAKE_INSTALL_DATADIR}/dbus-1/services")
 
 # prevent the generated files from being deleted during make clean
 set_directory_properties(PROPERTIES CLEAN_NO_CUSTOM true)
