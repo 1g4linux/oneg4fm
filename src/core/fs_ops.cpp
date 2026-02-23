@@ -10,10 +10,18 @@
 #include <dirent.h>
 #include <array>
 #include <fcntl.h>
+#include <linux/openat2.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <b3sum/blake3.h>
+
+#ifndef SYS_openat2
+#ifdef __NR_openat2
+#define SYS_openat2 __NR_openat2
+#endif
+#endif
 
 namespace PCManFM::FsOps {
 
@@ -73,6 +81,138 @@ struct Dir {
 inline void set_error(Error& err, const char* context) {
     err.code = errno;
     err.message = std::string(context) + ": " + std::strerror(errno);
+}
+
+inline void set_openat2_error(Error& err, const char* context) {
+    if (errno == ENOSYS) {
+        err.code = ENOSYS;
+        err.message = std::string(context) + ": openat2 is required but unavailable on this kernel";
+        return;
+    }
+    set_error(err, context);
+}
+
+int openat2_raw(int dirfd, const char* path, int flags, mode_t mode, std::uint64_t resolve) {
+#ifdef SYS_openat2
+    struct open_how how{};
+    how.flags = static_cast<std::uint64_t>(flags);
+    how.mode = static_cast<std::uint64_t>(mode);
+    how.resolve = resolve;
+    return static_cast<int>(::syscall(SYS_openat2, dirfd, path, &how, sizeof(how)));
+#else
+    (void)dirfd;
+    (void)path;
+    (void)flags;
+    (void)mode;
+    (void)resolve;
+    errno = ENOSYS;
+    return -1;
+#endif
+}
+
+bool openat2_fd(int dirfd, const char* path, int flags, mode_t mode, std::uint64_t resolve, Fd& out, Error& err) {
+    Fd fd(openat2_raw(dirfd, path, flags, mode, resolve));
+    if (!fd.valid()) {
+        set_openat2_error(err, "openat2");
+        return false;
+    }
+    out = std::move(fd);
+    return true;
+}
+
+constexpr std::uint64_t kResolveNoSymlinks =
+    static_cast<std::uint64_t>(RESOLVE_NO_SYMLINKS) | static_cast<std::uint64_t>(RESOLVE_NO_MAGICLINKS);
+constexpr std::uint64_t kResolveNoMagiclinks = static_cast<std::uint64_t>(RESOLVE_NO_MAGICLINKS);
+
+bool is_dot_or_dotdot(const char* name) {
+    return name && (std::strcmp(name, ".") == 0 || std::strcmp(name, "..") == 0);
+}
+
+void split_path_components(const std::string& path, bool& absolute, std::vector<std::string>& components) {
+    components.clear();
+    absolute = !path.empty() && path.front() == '/';
+
+    std::size_t i = absolute ? 1 : 0;
+    while (i < path.size()) {
+        while (i < path.size() && path[i] == '/') {
+            ++i;
+        }
+        if (i >= path.size()) {
+            break;
+        }
+        std::size_t j = i;
+        while (j < path.size() && path[j] != '/') {
+            ++j;
+        }
+        components.emplace_back(path.substr(i, j - i));
+        i = j;
+    }
+}
+
+int open_dir_flags() {
+    int flags = O_RDONLY | O_CLOEXEC | O_DIRECTORY;
+#ifdef O_NOFOLLOW
+    flags |= O_NOFOLLOW;
+#endif
+    return flags;
+}
+
+bool duplicate_fd(int fd, Fd& out, Error& err) {
+    Fd dupFd(::dup(fd));
+    if (!dupFd.valid()) {
+        set_error(err, "dup");
+        return false;
+    }
+    out = std::move(dupFd);
+    return true;
+}
+
+bool open_anchor_dir(bool absolute, Fd& out, Error& err) {
+    const char* root = absolute ? "/" : ".";
+    Fd base(::open(root, open_dir_flags()));
+    if (!base.valid()) {
+        set_error(err, "open");
+        return false;
+    }
+    out = std::move(base);
+    return true;
+}
+
+bool open_dir_nofollow_at(int parentFd, const char* name, Fd& out, Error& err) {
+    return openat2_fd(parentFd, name, open_dir_flags(), 0, kResolveNoSymlinks, out, err);
+}
+
+bool open_dir_path_secure(const std::string& path, bool createMissing, Fd& out, Error& err) {
+    bool absolute = false;
+    std::vector<std::string> components;
+    split_path_components(path, absolute, components);
+
+    Fd current;
+    if (!open_anchor_dir(absolute, current, err)) {
+        return false;
+    }
+
+    for (const auto& comp : components) {
+        if (comp.empty() || comp == ".") {
+            continue;
+        }
+
+        if (createMissing) {
+            if (::mkdirat(current.fd, comp.c_str(), 0777) != 0 && errno != EEXIST) {
+                set_error(err, "mkdirat");
+                return false;
+            }
+        }
+
+        Fd next;
+        if (!open_dir_nofollow_at(current.fd, comp.c_str(), next, err)) {
+            return false;
+        }
+        current = std::move(next);
+    }
+
+    out = std::move(current);
+    return true;
 }
 
 std::string join_child_path(const std::string& parent, const char* child) {
@@ -235,17 +375,118 @@ struct StatInfo {
     struct stat st{};
 };
 
-bool stat_at(int dirfd, const char* name, bool follow, StatInfo& out, Error& err) {
-    int flags = follow ? 0 : AT_SYMLINK_NOFOLLOW;
-    if (::fstatat(dirfd, name, &out.st, flags) < 0) {
-        set_error(err, "fstatat");
+enum class SourceEntryType {
+    Directory,
+    RegularFile,
+    Symlink,
+};
+
+bool open_source_entry_for_copy(int srcDir,
+                                const char* srcName,
+                                Fd& outFd,
+                                StatInfo& outInfo,
+                                SourceEntryType& outType,
+                                Error& err) {
+    int flags = O_RDONLY | O_CLOEXEC;
+#ifdef O_NOFOLLOW
+    flags |= O_NOFOLLOW;
+#endif
+
+    Fd fd(openat2_raw(srcDir, srcName, flags, 0, kResolveNoSymlinks));
+    if (fd.valid()) {
+        if (::fstat(fd.fd, &outInfo.st) < 0) {
+            set_error(err, "fstat");
+            return false;
+        }
+
+        if (S_ISDIR(outInfo.st.st_mode)) {
+            outType = SourceEntryType::Directory;
+            outFd = std::move(fd);
+            return true;
+        }
+        if (S_ISREG(outInfo.st.st_mode)) {
+            outType = SourceEntryType::RegularFile;
+            outFd = std::move(fd);
+            return true;
+        }
+
+        err.code = ENOTSUP;
+        err.message = "Unsupported file type";
         return false;
     }
+
+    if (errno != ELOOP) {
+        set_openat2_error(err, "openat2");
+        return false;
+    }
+
+    int linkFlags = O_PATH | O_CLOEXEC;
+#ifdef O_NOFOLLOW
+    linkFlags |= O_NOFOLLOW;
+#endif
+    Fd linkFd(openat2_raw(srcDir, srcName, linkFlags, 0, kResolveNoMagiclinks));
+    if (!linkFd.valid()) {
+        set_openat2_error(err, "openat2");
+        return false;
+    }
+
+    if (::fstat(linkFd.fd, &outInfo.st) < 0) {
+        set_error(err, "fstat");
+        return false;
+    }
+    if (!S_ISLNK(outInfo.st.st_mode)) {
+        err.code = ELOOP;
+        err.message = "Path resolved through a symlink";
+        return false;
+    }
+
+    outType = SourceEntryType::Symlink;
+    outFd = std::move(linkFd);
     return true;
+}
+
+bool read_symlink_target(int symlinkFd, int srcDir, const char* srcName, std::string& outTarget, Error& err) {
+    std::size_t cap = 256;
+    while (cap <= (1U << 20)) {
+        std::vector<char> buf(cap);
+        const ssize_t len = ::readlinkat(symlinkFd, "", buf.data(), buf.size());
+        if (len >= 0) {
+            if (static_cast<std::size_t>(len) < buf.size()) {
+                outTarget.assign(buf.data(), static_cast<std::size_t>(len));
+                return true;
+            }
+            cap *= 2;
+            continue;
+        }
+        if (errno != EINVAL && errno != ENOENT) {
+            set_error(err, "readlinkat");
+            return false;
+        }
+        break;
+    }
+
+    std::vector<char> buf(256);
+    while (buf.size() <= (1U << 20)) {
+        const ssize_t len = ::readlinkat(srcDir, srcName, buf.data(), buf.size());
+        if (len < 0) {
+            set_error(err, "readlinkat");
+            return false;
+        }
+        if (static_cast<std::size_t>(len) < buf.size()) {
+            outTarget.assign(buf.data(), static_cast<std::size_t>(len));
+            return true;
+        }
+        buf.resize(buf.size() * 2);
+    }
+
+    err.code = ENAMETOOLONG;
+    err.message = "Symlink target too long";
+    return false;
 }
 
 bool copy_symlink_at(int srcDir,
                      const char* srcName,
+                     int srcLinkFd,
                      int dstDir,
                      const char* dstName,
                      const StatInfo& info,
@@ -253,14 +494,12 @@ bool copy_symlink_at(int srcDir,
                      const std::string& dstPath,
                      CopyJournal* journal,
                      bool preserveOwnership) {
-    std::vector<char> buf(static_cast<std::size_t>(info.st.st_size) + 1);
-    ssize_t len = ::readlinkat(srcDir, srcName, buf.data(), buf.size());
-    if (len < 0) {
-        set_error(err, "readlinkat");
+    std::string target;
+    if (!read_symlink_target(srcLinkFd, srcDir, srcName, target, err)) {
         return false;
     }
-    buf[static_cast<std::size_t>(len)] = '\0';
-    if (::symlinkat(buf.data(), dstDir, dstName) < 0) {
+
+    if (::symlinkat(target.c_str(), dstDir, dstName) < 0) {
         set_error(err, "symlinkat");
         return false;
     }
@@ -278,8 +517,7 @@ bool copy_symlink_at(int srcDir,
     return true;
 }
 
-bool copy_file_at(int srcDir,
-                  const char* srcName,
+bool copy_file_at(int srcFd,
                   int dstDir,
                   const char* dstName,
                   const StatInfo& info,
@@ -291,27 +529,50 @@ bool copy_file_at(int srcDir,
                   bool preserveOwnership) {
     progress.bytesTotal += static_cast<std::uint64_t>(info.st.st_size);
 
-    Fd in_fd(::openat(srcDir, srcName, O_RDONLY | O_CLOEXEC));
-    if (!in_fd.valid()) {
-        set_error(err, "openat");
+    Fd in_fd;
+    if (!duplicate_fd(srcFd, in_fd, err)) {
+        return false;
+    }
+    if (::lseek(in_fd.fd, 0, SEEK_SET) < 0 && errno != ESPIPE) {
+        set_error(err, "lseek");
         return false;
     }
 
-    Fd out_fd(::openat(dstDir, dstName, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, info.st.st_mode & 0777));
+    int createFlags = O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC;
+#ifdef O_NOFOLLOW
+    createFlags |= O_NOFOLLOW;
+#endif
+
+    Fd out_fd(openat2_raw(dstDir, dstName, createFlags, info.st.st_mode & 0777, kResolveNoSymlinks));
     if (out_fd.valid()) {
         if (journal) {
             journal->recordFile(dstPath);
         }
     }
     else if (errno == EEXIST) {
-        out_fd = Fd(::openat(dstDir, dstName, O_WRONLY | O_TRUNC | O_CLOEXEC));
+        int truncFlags = O_WRONLY | O_TRUNC | O_CLOEXEC;
+#ifdef O_NOFOLLOW
+        truncFlags |= O_NOFOLLOW;
+#endif
+        out_fd = Fd(openat2_raw(dstDir, dstName, truncFlags, 0, kResolveNoSymlinks));
         if (!out_fd.valid()) {
-            set_error(err, "openat");
+            set_openat2_error(err, "openat2");
+            return false;
+        }
+
+        struct stat dstSt{};
+        if (::fstat(out_fd.fd, &dstSt) < 0) {
+            set_error(err, "fstat");
+            return false;
+        }
+        if (!S_ISREG(dstSt.st_mode)) {
+            err.code = EISDIR;
+            err.message = "Destination exists and is not a regular file";
             return false;
         }
     }
     else {
-        set_error(err, "openat");
+        set_openat2_error(err, "openat2");
         return false;
     }
 
@@ -361,8 +622,8 @@ bool copy_file_at(int srcDir,
     return true;
 }
 
-bool copy_dir_at(int srcDir,
-                 const char* srcName,
+bool copy_dir_at(int srcDirFd,
+                 const StatInfo& info,
                  int dstDir,
                  const char* dstName,
                  ProgressInfo& progress,
@@ -390,8 +651,10 @@ bool copy_entry_at(int srcDir,
         return false;
     }
 
+    Fd srcFd;
     StatInfo info;
-    if (!stat_at(srcDir, srcName, /*follow=*/false, info, err)) {
+    SourceEntryType type = SourceEntryType::RegularFile;
+    if (!open_source_entry_for_copy(srcDir, srcName, srcFd, info, type, err)) {
         return false;
     }
 
@@ -401,26 +664,25 @@ bool copy_entry_at(int srcDir,
         return false;
     }
 
-    if (S_ISDIR(info.st.st_mode)) {
-        return copy_dir_at(srcDir, srcName, dstDir, dstName, progress, cb, err, depth + 1, dstPath, journal,
-                           preserveOwnership);
-    }
-    if (S_ISREG(info.st.st_mode)) {
-        return copy_file_at(srcDir, srcName, dstDir, dstName, info, progress, cb, err, dstPath, journal,
-                            preserveOwnership);
-    }
-    if (S_ISLNK(info.st.st_mode)) {
-        return copy_symlink_at(srcDir, srcName, dstDir, dstName, info, err, dstPath, journal, preserveOwnership);
+    switch (type) {
+        case SourceEntryType::Directory:
+            return copy_dir_at(srcFd.fd, info, dstDir, dstName, progress, cb, err, depth + 1, dstPath, journal,
+                               preserveOwnership);
+        case SourceEntryType::RegularFile:
+            return copy_file_at(srcFd.fd, dstDir, dstName, info, progress, cb, err, dstPath, journal,
+                                preserveOwnership);
+        case SourceEntryType::Symlink:
+            return copy_symlink_at(srcDir, srcName, srcFd.fd, dstDir, dstName, info, err, dstPath, journal,
+                                   preserveOwnership);
     }
 
-    // Unsupported special file types
     err.code = ENOTSUP;
     err.message = "Unsupported file type";
     return false;
 }
 
-bool copy_dir_at(int srcDir,
-                 const char* srcName,
+bool copy_dir_at(int srcDirFd,
+                 const StatInfo& info,
                  int dstDir,
                  const char* dstName,
                  ProgressInfo& progress,
@@ -430,10 +692,6 @@ bool copy_dir_at(int srcDir,
                  const std::string& dstPath,
                  CopyJournal* journal,
                  bool preserveOwnership) {
-    StatInfo info;
-    if (!stat_at(srcDir, srcName, /*follow=*/false, info, err)) {
-        return false;
-    }
     if (!S_ISDIR(info.st.st_mode)) {
         err.code = ENOTDIR;
         err.message = "Not a directory";
@@ -453,25 +711,22 @@ bool copy_dir_at(int srcDir,
         }
     }
 
-    // Open source and destination directories for recursion
-    Fd newSrc(::openat(srcDir, srcName, O_RDONLY | O_CLOEXEC | O_DIRECTORY));
-    if (!newSrc.valid()) {
-        set_error(err, "openat");
-        return false;
-    }
-    Fd newDst(::openat(dstDir, dstName, O_RDONLY | O_CLOEXEC | O_DIRECTORY));
-    if (!newDst.valid()) {
-        set_error(err, "openat");
+    Fd newDst;
+    if (!open_dir_nofollow_at(dstDir, dstName, newDst, err)) {
         return false;
     }
 
-    Dir dir(::fdopendir(newSrc.fd));
+    Fd srcIter;
+    if (!duplicate_fd(srcDirFd, srcIter, err)) {
+        return false;
+    }
+
+    Dir dir(::fdopendir(srcIter.fd));
     if (!dir.valid()) {
         set_error(err, "fdopendir");
         return false;
     }
-    // fd now owned by DIR; prevent double close
-    newSrc.fd = -1;
+    srcIter.fd = -1;
 
     for (;;) {
         errno = 0;
@@ -484,26 +739,25 @@ bool copy_dir_at(int srcDir,
             break;
         }
         const char* child = ent->d_name;
-        if (!child || child[0] == '\0' || std::strcmp(child, ".") == 0 || std::strcmp(child, "..") == 0) {
+        if (!child || child[0] == '\0' || is_dot_or_dotdot(child)) {
             continue;
         }
 
         const std::string childDstPath = join_child_path(dstPath, child);
-        if (!copy_entry_at(dirfd(dir.dir), child, newDst.fd, child, progress, cb, err, depth + 1, childDstPath, journal,
-                           preserveOwnership)) {
+        if (!copy_entry_at(::dirfd(dir.dir), child, newDst.fd, child, progress, cb, err, depth + 1, childDstPath,
+                           journal, preserveOwnership)) {
             return false;
         }
     }
 
-    // Preserve times best effort
     struct timespec times[2];
     times[0] = info.st.st_atim;
     times[1] = info.st.st_mtim;
-    ::utimensat(dstDir, dstName, times, 0);
+    ::futimens(newDst.fd, times);
     if (preserveOwnership) {
-        ::fchownat(dstDir, dstName, info.st.st_uid, info.st.st_gid, AT_SYMLINK_NOFOLLOW);
+        ::fchown(newDst.fd, info.st.st_uid, info.st.st_gid);
     }
-    ::fchmodat(dstDir, dstName, info.st.st_mode & 07777, AT_SYMLINK_NOFOLLOW);
+    ::fchmod(newDst.fd, info.st.st_mode & 07777);
 
     return true;
 }
@@ -515,8 +769,10 @@ bool delete_at(int dirfd, const char* name, ProgressInfo& progress, const Progre
         return false;
     }
 
-    StatInfo info;
-    if (!stat_at(dirfd, name, /*follow=*/false, info, err)) {
+    Fd subDir(openat2_raw(dirfd, name, open_dir_flags(), 0, kResolveNoSymlinks));
+    const bool isDirectory = subDir.valid();
+    if (!isDirectory && errno != ENOTDIR && errno != ELOOP) {
+        set_openat2_error(err, "openat2");
         return false;
     }
 
@@ -526,18 +782,18 @@ bool delete_at(int dirfd, const char* name, ProgressInfo& progress, const Progre
         return false;
     }
 
-    if (S_ISDIR(info.st.st_mode)) {
-        Fd sub(::openat(dirfd, name, O_RDONLY | O_CLOEXEC | O_DIRECTORY));
-        if (!sub.valid()) {
-            set_error(err, "openat");
+    if (isDirectory) {
+        Fd iterFd;
+        if (!duplicate_fd(subDir.fd, iterFd, err)) {
             return false;
         }
-        Dir dir(::fdopendir(sub.fd));
+
+        Dir dir(::fdopendir(iterFd.fd));
         if (!dir.valid()) {
             set_error(err, "fdopendir");
             return false;
         }
-        sub.fd = -1;
+        iterFd.fd = -1;
 
         for (;;) {
             errno = 0;
@@ -550,7 +806,7 @@ bool delete_at(int dirfd, const char* name, ProgressInfo& progress, const Progre
                 break;
             }
             const char* child = ent->d_name;
-            if (!child || child[0] == '\0' || std::strcmp(child, ".") == 0 || std::strcmp(child, "..") == 0) {
+            if (!child || child[0] == '\0' || is_dot_or_dotdot(child)) {
                 continue;
             }
             if (!delete_at(::dirfd(dir.dir), child, progress, cb, err, depth + 1)) {
@@ -720,11 +976,6 @@ bool copy_path(const std::string& source,
                bool preserveOwnership) {
     err = {};
 
-    // Ensure destination parent exists
-    if (!ensure_parent_dirs(destination, err)) {
-        return false;
-    }
-
     auto splitPath = [](const std::string& path, std::string& parentOut, std::string& nameOut) {
         const auto pos = path.find_last_of('/');
         if (pos == std::string::npos) {
@@ -745,40 +996,31 @@ bool copy_path(const std::string& source,
     std::string destParent, destName;
     splitPath(destination, destParent, destName);
 
-    Fd srcParentFd(::open(srcParent.c_str(), O_RDONLY | O_CLOEXEC | O_DIRECTORY));
-    if (!srcParentFd.valid()) {
-        set_error(err, "open");
+    if (srcName.empty() || is_dot_or_dotdot(srcName.c_str())) {
+        err.code = EINVAL;
+        err.message = "Invalid source path";
+        return false;
+    }
+    if (destName.empty() || is_dot_or_dotdot(destName.c_str())) {
+        err.code = EINVAL;
+        err.message = "Invalid destination path";
         return false;
     }
 
-    StatInfo rootInfo;
-    if (!stat_at(srcParentFd.fd, srcName.c_str(), /*follow=*/false, rootInfo, err)) {
+    Fd srcParentFd;
+    if (!open_dir_path_secure(srcParent, /*createMissing=*/false, srcParentFd, err)) {
         return false;
     }
-    const bool srcIsDir = S_ISDIR(rootInfo.st.st_mode);
 
-    Fd destParentFd(::open(destParent.c_str(), O_RDONLY | O_CLOEXEC | O_DIRECTORY));
-    if (!destParentFd.valid()) {
-        set_error(err, "open");
+    Fd destParentFd;
+    if (!open_dir_path_secure(destParent, /*createMissing=*/true, destParentFd, err)) {
         return false;
     }
 
     CopyJournal journal;
 
-    bool ok = false;
-    if (srcIsDir) {
-        ok = copy_dir_at(srcParentFd.fd, srcName.c_str(), destParentFd.fd, destName.c_str(), progress, callback, err, 0,
-                         destination, &journal, preserveOwnership);
-    }
-    else if (S_ISREG(rootInfo.st.st_mode) || S_ISLNK(rootInfo.st.st_mode)) {
-        ok = copy_entry_at(srcParentFd.fd, srcName.c_str(), destParentFd.fd, destName.c_str(), progress, callback, err,
-                           0, destination, &journal, preserveOwnership);
-    }
-    else {
-        err.code = ENOTSUP;
-        err.message = "Unsupported file type";
-        return false;
-    }
+    const bool ok = copy_entry_at(srcParentFd.fd, srcName.c_str(), destParentFd.fd, destName.c_str(), progress,
+                                  callback, err, 0, destination, &journal, preserveOwnership);
 
     if (!ok) {
         journal.rollback();
@@ -833,10 +1075,14 @@ bool delete_path(const std::string& path, ProgressInfo& progress, const Progress
     if (parent.empty()) {
         parent = ".";
     }
+    if (name.empty() || is_dot_or_dotdot(name.c_str())) {
+        err.code = EINVAL;
+        err.message = "Invalid delete path";
+        return false;
+    }
 
-    Fd parentFd(::open(parent.c_str(), O_RDONLY | O_CLOEXEC | O_DIRECTORY));
-    if (!parentFd.valid()) {
-        set_error(err, "open");
+    Fd parentFd;
+    if (!open_dir_path_secure(parent, /*createMissing=*/false, parentFd, err)) {
         return false;
     }
 

@@ -8,6 +8,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QByteArray>
+#include <QDir>
 
 #include "../src/core/fs_ops.h"
 
@@ -62,11 +63,13 @@ class FsOpsTest : public QObject {
     void copyIntoExistingDestinationCancelledPreservesPreexisting();
     void copyIntoExistingDestinationErrorPreservesPreexisting();
     void copyRollbackRemovesOnlyCreatedPaths();
+    void copyRenameSwapRaceDoesNotFollowSymlink();
     void readMissingFileFails();
     void makeDirParentsFailsOnExistingFile();
     void setPermissionsFailsOnMissing();
     void copySymlinkPreservesLink();
     void copyPreservesMtime();
+    void deleteSymlinkSwapRaceDoesNotEscape();
 };
 
 void FsOpsTest::readWriteRoundTrip() {
@@ -380,6 +383,46 @@ void FsOpsTest::copyRollbackRemovesOnlyCreatedPaths() {
     QVERIFY(QFileInfo(dstDir).isDir());
 }
 
+void FsOpsTest::copyRenameSwapRaceDoesNotFollowSymlink() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcPath = writeTempFile(dir, QStringLiteral("source.txt"), "trusted");
+    const QString dstPath = makePath(dir, QStringLiteral("copied.txt"));
+    const QString srcRenamed = makePath(dir, QStringLiteral("source-original.txt"));
+
+    const QString outsideDir = makePath(dir, QStringLiteral("outside"));
+    QVERIFY(QDir().mkpath(outsideDir));
+    const QString outsidePayload = writeTempFile(dir, QStringLiteral("outside/payload.txt"), "evil");
+    const QString swapLink = makePath(dir, QStringLiteral("swap-link"));
+    QVERIFY(::symlink(outsidePayload.toLocal8Bit().constData(), swapLink.toLocal8Bit().constData()) == 0);
+
+    bool swapped = false;
+    int swapErr = 0;
+    auto swapCb = [&](const ProgressInfo&) {
+        if (!swapped) {
+            if (::rename(srcPath.toLocal8Bit().constData(), srcRenamed.toLocal8Bit().constData()) != 0) {
+                swapErr = errno;
+            }
+            else if (::rename(swapLink.toLocal8Bit().constData(), srcPath.toLocal8Bit().constData()) != 0) {
+                swapErr = errno;
+            }
+            swapped = true;
+        }
+        return true;
+    };
+
+    ProgressInfo progress;
+    progress.filesTotal = 1;
+    Error err;
+    QVERIFY(copy_path(srcPath.toLocal8Bit().toStdString(), dstPath.toLocal8Bit().toStdString(), progress, swapCb, err));
+    QVERIFY(!err.isSet());
+    QVERIFY(swapped);
+    QCOMPARE(swapErr, 0);
+    QCOMPARE(readQtFile(dstPath), QByteArray("trusted"));
+    QCOMPARE(readQtFile(outsidePayload), QByteArray("evil"));
+}
+
 void FsOpsTest::readMissingFileFails() {
     Error err;
     std::vector<std::uint8_t> out;
@@ -457,6 +500,48 @@ void FsOpsTest::copyPreservesMtime() {
     struct stat stDst{};
     QVERIFY(::stat(dstPath.toLocal8Bit().constData(), &stDst) == 0);
     QCOMPARE(stDst.st_mtim.tv_sec, stSrc.st_mtim.tv_sec);
+}
+
+void FsOpsTest::deleteSymlinkSwapRaceDoesNotEscape() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString victimDir = makePath(dir, QStringLiteral("victim"));
+    const QString victimNested = victimDir + QLatin1String("/nested");
+    QVERIFY(QDir().mkpath(victimNested));
+    QCOMPARE(readQtFile(writeTempFile(dir, QStringLiteral("victim/nested/data.txt"), "local")), QByteArray("local"));
+
+    const QString outsideDir = makePath(dir, QStringLiteral("outside"));
+    QVERIFY(QDir().mkpath(outsideDir));
+    const QString outsideKeep = writeTempFile(dir, QStringLiteral("outside/keep.txt"), "keep");
+
+    const QString swapLink = makePath(dir, QStringLiteral("swap-link"));
+    QVERIFY(::symlink(outsideDir.toLocal8Bit().constData(), swapLink.toLocal8Bit().constData()) == 0);
+    const QString victimRenamed = makePath(dir, QStringLiteral("victim-original"));
+
+    bool swapped = false;
+    int swapErr = 0;
+    auto swapCb = [&](const ProgressInfo&) {
+        if (!swapped) {
+            if (::rename(victimDir.toLocal8Bit().constData(), victimRenamed.toLocal8Bit().constData()) != 0) {
+                swapErr = errno;
+            }
+            else if (::rename(swapLink.toLocal8Bit().constData(), victimDir.toLocal8Bit().constData()) != 0) {
+                swapErr = errno;
+            }
+            swapped = true;
+        }
+        return true;
+    };
+
+    ProgressInfo progress;
+    Error err;
+    QVERIFY(!delete_path(victimDir.toLocal8Bit().toStdString(), progress, swapCb, err));
+    QVERIFY(err.isSet());
+    QVERIFY(swapped);
+    QCOMPARE(swapErr, 0);
+    QCOMPARE(readQtFile(outsideKeep), QByteArray("keep"));
+    QVERIFY(QFileInfo(outsideDir).isDir());
 }
 
 QTEST_MAIN(FsOpsTest)
