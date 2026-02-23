@@ -58,6 +58,19 @@ pcmanfm_add_test(oneg4fm-ops-tests
         qt_fileops_test.cpp
         ../src/backends/qt/qt_fileops.cpp
         ../src/core/ifileops.cpp
+        ../src/core/file_ops_contract.cpp
+        ../src/core/fs_ops.cpp
+        ../src/core/linux_fs_safety.cpp
+    LIBS
+        ${BLAKE3_LIBRARIES}
+    INCLUDES
+        ${BLAKE3_INCLUDE_DIRS}
+)
+
+pcmanfm_add_test(oneg4fm-file-ops-contract-tests
+    SOURCES
+        file_ops_contract_test.cpp
+        ../src/core/file_ops_contract.cpp
         ../src/core/fs_ops.cpp
         ../src/core/linux_fs_safety.cpp
     LIBS
