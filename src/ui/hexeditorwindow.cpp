@@ -79,6 +79,7 @@ void HexEditorWindow::setupUi() {
     view_ = new HexEditorView(doc_.get(), this);
     view_->setColorManager(colors_.get());
     setCentralWidget(view_);
+    statusBar()->setSizeGripEnabled(false);
 
     auto* toolbar = addToolBar(tr("Hex Editor"));
     toolbar->setMovable(false);

@@ -39,6 +39,7 @@ DisassemblyWindow::DisassemblyWindow(QWidget* parent) : QMainWindow(parent) {
 void DisassemblyWindow::setupUi() {
     setWindowTitle(tr("Disassembly"));
     setAttribute(Qt::WA_DeleteOnClose);
+    statusBar()->setSizeGripEnabled(false);
 
     auto* central = new QWidget(this);
     auto* layout = new QVBoxLayout(central);

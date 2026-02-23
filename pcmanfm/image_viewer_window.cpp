@@ -33,6 +33,7 @@ ImageViewerWindow::ImageViewerWindow(const QString& path, QWidget* parent)
     layout->addWidget(label_);
 
     setCentralWidget(central);
+    statusBar()->setSizeGripEnabled(false);
 
     auto* shortcutFull = new QShortcut(QKeySequence(Qt::Key_F11), this);
     connect(shortcutFull, &QShortcut::activated, this, &ImageViewerWindow::toggleFullScreen);

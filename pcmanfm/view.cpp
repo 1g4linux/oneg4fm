@@ -493,7 +493,7 @@ void View::onCalculateBlake3() {
             dialog->setModal(false);
             dialog->setWindowModality(Qt::NonModal);
             dialog->setMinimumWidth(640);
-            dialog->setSizeGripEnabled(true);
+            dialog->setSizeGripEnabled(false);
 
             auto* layout = new QVBoxLayout(dialog);
             widgets.pathLabel = new QLabel(dialog);
