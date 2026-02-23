@@ -31,6 +31,11 @@ struct SourcePlan {
     int workUnits = 1;
 };
 
+struct ConflictResolutionState {
+    bool hasApplyToAllResolution = false;
+    ConflictResolution applyToAllResolution = ConflictResolution::Overwrite;
+};
+
 bool is_copy_like(Operation operation) {
     return operation == Operation::Copy || operation == Operation::Move;
 }
@@ -111,6 +116,74 @@ std::string join_path(const std::string& parent, const std::string& child) {
         return parent + child;
     }
     return parent + "/" + child;
+}
+
+bool is_dot_or_dotdot(const std::string& name) {
+    return name == "." || name == "..";
+}
+
+bool split_parent_and_name(const std::string& path, std::string& parent, std::string& name) {
+    const std::size_t pos = path.find_last_of('/');
+    if (pos == std::string::npos) {
+        parent.clear();
+        name = path;
+    }
+    else if (pos == 0) {
+        parent = "/";
+        name = path.substr(1);
+    }
+    else {
+        parent = path.substr(0, pos);
+        name = path.substr(pos + 1);
+    }
+
+    if (name.empty() || is_dot_or_dotdot(name)) {
+        return false;
+    }
+    return true;
+}
+
+void split_stem_and_extension(const std::string& file_name, std::string& stem, std::string& extension) {
+    const std::size_t dot = file_name.find_last_of('.');
+    if (dot != std::string::npos && dot > 0 && dot + 1 < file_name.size()) {
+        stem = file_name.substr(0, dot);
+        extension = file_name.substr(dot);
+        return;
+    }
+
+    stem = file_name;
+    extension.clear();
+}
+
+bool normalize_conflict_resolution(ConflictResolution input,
+                                   ConflictResolution& normalized,
+                                   bool& apply_to_all,
+                                   Error& err) {
+    apply_to_all = false;
+    switch (input) {
+        case ConflictResolution::Overwrite:
+        case ConflictResolution::Skip:
+        case ConflictResolution::Rename:
+        case ConflictResolution::Abort:
+            normalized = input;
+            return true;
+        case ConflictResolution::OverwriteAll:
+            normalized = ConflictResolution::Overwrite;
+            apply_to_all = true;
+            return true;
+        case ConflictResolution::SkipAll:
+            normalized = ConflictResolution::Skip;
+            apply_to_all = true;
+            return true;
+        case ConflictResolution::RenameAll:
+            normalized = ConflictResolution::Rename;
+            apply_to_all = true;
+            return true;
+    }
+
+    set_error(err, EngineErrorCode::OperationFailed, OperationStep::ResolveConflict, EINVAL,
+              "Unknown conflict resolution decision");
+    return false;
 }
 
 bool scan_path_stats(const std::string& path, SourceStats& stats, Error& err, int depth = 0) {
@@ -212,12 +285,6 @@ bool validate_request(const Request& request, Error& err) {
     if (request.operation == Operation::Move && !request.atomicity.bestEffortAtomicMove) {
         set_error(err, EngineErrorCode::UnsupportedFeature, OperationStep::ValidateRequest, ENOTSUP,
                   "Disabling best-effort atomic move is not supported by the current engine");
-        return false;
-    }
-
-    if (request.conflictPolicy == ConflictPolicy::Rename) {
-        set_error(err, EngineErrorCode::UnsupportedPolicy, OperationStep::ValidateRequest, ENOTSUP,
-                  "Rename conflict policy is not yet supported");
         return false;
     }
 
@@ -347,6 +414,42 @@ bool destination_exists(const std::string& path, bool& exists, bool& is_dir, Err
     return false;
 }
 
+bool choose_rename_destination(const std::string& base_destination, std::string& renamed_destination, Error& err) {
+    std::string parent;
+    std::string name;
+    if (!split_parent_and_name(base_destination, parent, name)) {
+        set_error(err, EngineErrorCode::InvalidRequest, OperationStep::ResolveConflict, EINVAL,
+                  "Conflict rename destination is invalid");
+        return false;
+    }
+
+    std::string stem;
+    std::string extension;
+    split_stem_and_extension(name, stem, extension);
+
+    constexpr int kMaxAttempts = 10000;
+    for (int attempt = 1; attempt <= kMaxAttempts; ++attempt) {
+        const std::string suffix =
+            (attempt == 1) ? std::string(" (copy)") : std::string(" (copy ") + std::to_string(attempt) + ")";
+        const std::string candidate_name = stem + suffix + extension;
+        const std::string candidate = join_path(parent, candidate_name);
+
+        bool exists = false;
+        bool is_dir = false;
+        if (!destination_exists(candidate, exists, is_dir, err)) {
+            return false;
+        }
+        if (!exists) {
+            renamed_destination = candidate;
+            return true;
+        }
+    }
+
+    set_error(err, EngineErrorCode::OperationFailed, OperationStep::ResolveConflict, EEXIST,
+              "Unable to find a unique destination name");
+    return false;
+}
+
 void mark_plan_complete_without_execution(const SourcePlan& plan,
                                           const ProgressSnapshot& totals,
                                           int& completed_units,
@@ -368,6 +471,9 @@ void mark_plan_complete_without_execution(const SourcePlan& plan,
 bool resolve_conflict_for_plan(const Request& request,
                                const EventHandlers& handlers,
                                const SourcePlan& plan,
+                               const std::string& preferred_destination,
+                               std::string& resolved_destination,
+                               ConflictResolutionState& resolution_state,
                                bool& skip,
                                bool& allow_overwrite,
                                Error& err) {
@@ -379,7 +485,7 @@ bool resolve_conflict_for_plan(const Request& request,
 
     bool exists = false;
     bool is_dir = false;
-    if (!destination_exists(plan.destinationPath, exists, is_dir, err)) {
+    if (!destination_exists(resolved_destination, exists, is_dir, err)) {
         return false;
     }
     if (!exists) {
@@ -391,14 +497,34 @@ bool resolve_conflict_for_plan(const Request& request,
                 // Enforce skip semantics for late destination races.
                 allow_overwrite = false;
                 return true;
-            case ConflictPolicy::Prompt:
-                // Defer decision until an actual conflict exists.
+            case ConflictPolicy::Rename:
+                // Require no-overwrite so late races are handled via rename policy.
                 allow_overwrite = false;
                 return true;
-            case ConflictPolicy::Rename:
-                set_error(err, EngineErrorCode::UnsupportedPolicy, OperationStep::ResolveConflict, ENOTSUP,
-                          "Rename conflict policy is not yet supported");
-                return false;
+            case ConflictPolicy::Prompt:
+                if (!resolution_state.hasApplyToAllResolution) {
+                    // Defer decision until an actual conflict exists.
+                    allow_overwrite = false;
+                    return true;
+                }
+
+                switch (resolution_state.applyToAllResolution) {
+                    case ConflictResolution::Overwrite:
+                        allow_overwrite = true;
+                        return true;
+                    case ConflictResolution::Skip:
+                    case ConflictResolution::Rename:
+                        allow_overwrite = false;
+                        return true;
+                    case ConflictResolution::Abort:
+                        set_error(err, EngineErrorCode::ConflictAborted, OperationStep::ResolveConflict, ECANCELED,
+                                  "Operation aborted during conflict resolution");
+                        return false;
+                    case ConflictResolution::OverwriteAll:
+                    case ConflictResolution::SkipAll:
+                    case ConflictResolution::RenameAll:
+                        break;
+                }
         }
         return true;
     }
@@ -411,23 +537,37 @@ bool resolve_conflict_for_plan(const Request& request,
         case ConflictPolicy::Skip:
             resolution = ConflictResolution::Skip;
             break;
+        case ConflictPolicy::Rename:
+            resolution = ConflictResolution::Rename;
+            break;
         case ConflictPolicy::Prompt:
+            if (resolution_state.hasApplyToAllResolution) {
+                resolution = resolution_state.applyToAllResolution;
+                break;
+            }
             if (!handlers.onConflict) {
                 set_error(err, EngineErrorCode::UnsupportedPolicy, OperationStep::ResolveConflict, ENOTSUP,
                           "Prompt conflict policy requires an onConflict handler");
                 return false;
             }
-            resolution = handlers.onConflict(ConflictEvent{
-                ConflictKind::DestinationExists,
-                plan.sourcePath,
-                plan.destinationPath,
-                is_dir,
-            });
+
+            {
+                const ConflictResolution raw_resolution = handlers.onConflict(ConflictEvent{
+                    ConflictKind::DestinationExists,
+                    plan.sourcePath,
+                    resolved_destination,
+                    is_dir,
+                });
+                bool apply_to_all = false;
+                if (!normalize_conflict_resolution(raw_resolution, resolution, apply_to_all, err)) {
+                    return false;
+                }
+                if (apply_to_all) {
+                    resolution_state.hasApplyToAllResolution = true;
+                    resolution_state.applyToAllResolution = resolution;
+                }
+            }
             break;
-        case ConflictPolicy::Rename:
-            set_error(err, EngineErrorCode::UnsupportedPolicy, OperationStep::ResolveConflict, ENOTSUP,
-                      "Rename conflict policy is not yet supported");
-            return false;
     }
 
     switch (resolution) {
@@ -444,9 +584,16 @@ bool resolve_conflict_for_plan(const Request& request,
                       "Operation aborted during conflict resolution");
             return false;
         case ConflictResolution::Rename:
-            set_error(err, EngineErrorCode::UnsupportedPolicy, OperationStep::ResolveConflict, ENOTSUP,
-                      "Rename conflict resolution is not yet supported");
-            return false;
+            if (!choose_rename_destination(preferred_destination, resolved_destination, err)) {
+                return false;
+            }
+            skip = false;
+            allow_overwrite = false;
+            return true;
+        case ConflictResolution::OverwriteAll:
+        case ConflictResolution::SkipAll:
+        case ConflictResolution::RenameAll:
+            break;
     }
 
     set_error(err, EngineErrorCode::OperationFailed, OperationStep::ResolveConflict, EINVAL,
@@ -456,16 +603,17 @@ bool resolve_conflict_for_plan(const Request& request,
 
 bool execute_plan_operation(const Request& request,
                             const SourcePlan& plan,
+                            const std::string& destination_path,
                             FsOps::ProgressInfo& source_progress,
                             const FsOps::ProgressCallback& callback,
                             FsOps::Error& fs_err,
                             bool overwrite_existing) {
     switch (request.operation) {
         case Operation::Copy:
-            return FsOps::copy_path(plan.sourcePath, plan.destinationPath, source_progress, callback, fs_err,
+            return FsOps::copy_path(plan.sourcePath, destination_path, source_progress, callback, fs_err,
                                     request.metadata.preserveOwnership, overwrite_existing);
         case Operation::Move:
-            return FsOps::move_path(plan.sourcePath, plan.destinationPath, source_progress, callback, fs_err,
+            return FsOps::move_path(plan.sourcePath, destination_path, source_progress, callback, fs_err,
                                     /*forceCopyFallbackForTests=*/false, request.metadata.preserveOwnership,
                                     overwrite_existing);
         case Operation::Delete:
@@ -509,6 +657,7 @@ Result run(const Request& request, const EventHandlers& handlers) {
 
     int completed_units = 0;
     std::uint64_t completed_bytes = 0;
+    ConflictResolutionState conflict_resolution_state;
 
     for (const SourcePlan& plan : plans) {
         if (is_cancel_requested(request)) {
@@ -518,10 +667,12 @@ Result run(const Request& request, const EventHandlers& handlers) {
             return result;
         }
 
+        std::string execution_destination = plan.destinationPath;
         bool skip = false;
         bool allow_overwrite = true;
         Error conflict_error;
-        if (!resolve_conflict_for_plan(request, handlers, plan, skip, allow_overwrite, conflict_error)) {
+        if (!resolve_conflict_for_plan(request, handlers, plan, plan.destinationPath, execution_destination,
+                                       conflict_resolution_state, skip, allow_overwrite, conflict_error)) {
             if (conflict_error.code == EngineErrorCode::ConflictAborted || conflict_error.sysErrno == ECANCELED) {
                 result.cancelled = true;
                 set_cancelled(result.error, OperationStep::ResolveConflict, conflict_error.message);
@@ -571,12 +722,15 @@ Result run(const Request& request, const EventHandlers& handlers) {
         };
 
         FsOps::Error fs_err;
-        bool executed = execute_plan_operation(request, plan, source_progress, progress_cb, fs_err, allow_overwrite);
+        bool executed = execute_plan_operation(request, plan, execution_destination, source_progress, progress_cb,
+                                               fs_err, allow_overwrite);
         if (!executed && is_copy_like(request.operation) && fs_err.code == EEXIST && !allow_overwrite) {
             bool late_skip = false;
             bool late_allow_overwrite = false;
+            const std::string attempted_destination = execution_destination;
             Error late_conflict_error;
-            if (!resolve_conflict_for_plan(request, handlers, plan, late_skip, late_allow_overwrite,
+            if (!resolve_conflict_for_plan(request, handlers, plan, plan.destinationPath, execution_destination,
+                                           conflict_resolution_state, late_skip, late_allow_overwrite,
                                            late_conflict_error)) {
                 if (late_conflict_error.code == EngineErrorCode::ConflictAborted ||
                     late_conflict_error.sysErrno == ECANCELED) {
@@ -596,10 +750,11 @@ Result run(const Request& request, const EventHandlers& handlers) {
                 continue;
             }
 
-            if (late_allow_overwrite) {
+            if (late_allow_overwrite || execution_destination != attempted_destination) {
                 reset_source_progress();
                 fs_err = {};
-                executed = execute_plan_operation(request, plan, source_progress, progress_cb, fs_err, true);
+                executed = execute_plan_operation(request, plan, execution_destination, source_progress, progress_cb,
+                                                  fs_err, late_allow_overwrite);
             }
         }
 

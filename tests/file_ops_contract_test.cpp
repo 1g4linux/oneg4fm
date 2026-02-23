@@ -53,8 +53,12 @@ class FileOpsContractTest : public QObject {
     void copyReportsMonotonicProgressAndStableTotals();
     void cancelReturnsEcanceled();
     void skipConflictPolicyHandlesLateDestinationConflict();
+    void renameConflictPolicyCreatesUniqueDestination();
     void promptConflictCanSkipWithStructuredEvent();
     void promptConflictOverwriteReplacesDestinationForSymlinkSource();
+    void promptConflictCanRenameWithStructuredEvent();
+    void promptConflictSkipAllAppliesAcrossSources();
+    void promptConflictRenameAllAppliesAcrossSources();
     void unsupportedOperationRejected();
     void requireLandlockFailsFast();
 };
@@ -193,6 +197,37 @@ void FileOpsContractTest::skipConflictPolicyHandlesLateDestinationConflict() {
     QCOMPARE(result.finalProgress.filesDone, 2);
 }
 
+void FileOpsContractTest::renameConflictPolicyCreatesUniqueDestination() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcRoot = dir.path() + QLatin1String("/src");
+    const QString dstDir = dir.path() + QLatin1String("/dst");
+    QVERIFY(QDir().mkpath(srcRoot + QLatin1String("/a")));
+    QVERIFY(QDir().mkpath(srcRoot + QLatin1String("/b")));
+    QVERIFY(QDir().mkpath(dstDir));
+
+    const QString srcFirst = writeTempFile(srcRoot + QLatin1String("/a/item.txt"), QByteArray("new-a"));
+    const QString srcSecond = writeTempFile(srcRoot + QLatin1String("/b/item.txt"), QByteArray("new-b"));
+    const QString existing = writeTempFile(dstDir + QLatin1String("/item.txt"), QByteArray("old"));
+
+    Request req;
+    req.operation = Operation::Copy;
+    req.sources = {toNative(srcFirst), toNative(srcSecond)};
+    req.destination.targetDir = toNative(dstDir);
+    req.destination.mappingMode = DestinationMappingMode::SourceBasename;
+    req.conflictPolicy = ConflictPolicy::Rename;
+
+    const Result result = run(req);
+    QVERIFY(result.success);
+    QVERIFY(!result.cancelled);
+    QCOMPARE(readFile(existing), QByteArray("old"));
+    QCOMPARE(readFile(dstDir + QLatin1String("/item (copy).txt")), QByteArray("new-a"));
+    QCOMPARE(readFile(dstDir + QLatin1String("/item (copy 2).txt")), QByteArray("new-b"));
+    QCOMPARE(result.finalProgress.filesTotal, 2);
+    QCOMPARE(result.finalProgress.filesDone, 2);
+}
+
 void FileOpsContractTest::promptConflictCanSkipWithStructuredEvent() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -284,6 +319,116 @@ void FileOpsContractTest::promptConflictOverwriteReplacesDestinationForSymlinkSo
     QVERIFY(linkLen > 0);
     linkBuf[linkLen] = '\0';
     QCOMPARE(QString::fromLocal8Bit(linkBuf), linkTarget);
+}
+
+void FileOpsContractTest::promptConflictCanRenameWithStructuredEvent() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcDir = dir.path() + QLatin1String("/src");
+    const QString dstDir = dir.path() + QLatin1String("/dst");
+    QVERIFY(QDir().mkpath(srcDir));
+    QVERIFY(QDir().mkpath(dstDir));
+
+    const QString src = writeTempFile(srcDir + QLatin1String("/item.txt"), QByteArray("new-content"));
+    const QString existing = writeTempFile(dstDir + QLatin1String("/item.txt"), QByteArray("old-content"));
+
+    Request req;
+    req.operation = Operation::Copy;
+    req.sources = {toNative(src)};
+    req.destination.targetDir = toNative(dstDir);
+    req.destination.mappingMode = DestinationMappingMode::SourceBasename;
+    req.conflictPolicy = ConflictPolicy::Prompt;
+
+    int conflictCount = 0;
+    EventHandlers handlers;
+    handlers.onConflict = [&conflictCount](const ConflictEvent&) -> ConflictResolution {
+        ++conflictCount;
+        return ConflictResolution::Rename;
+    };
+
+    const Result result = run(req, handlers);
+    QVERIFY(result.success);
+    QVERIFY(!result.cancelled);
+    QCOMPARE(conflictCount, 1);
+    QCOMPARE(readFile(existing), QByteArray("old-content"));
+    QCOMPARE(readFile(dstDir + QLatin1String("/item (copy).txt")), QByteArray("new-content"));
+}
+
+void FileOpsContractTest::promptConflictSkipAllAppliesAcrossSources() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcDir = dir.path() + QLatin1String("/src");
+    const QString dstDir = dir.path() + QLatin1String("/dst");
+    QVERIFY(QDir().mkpath(srcDir));
+    QVERIFY(QDir().mkpath(dstDir));
+
+    const QString firstSrc = writeTempFile(srcDir + QLatin1String("/first.txt"), QByteArray("new-first"));
+    const QString secondSrc = writeTempFile(srcDir + QLatin1String("/second.txt"), QByteArray("new-second"));
+    const QString firstDst = writeTempFile(dstDir + QLatin1String("/first.txt"), QByteArray("old-first"));
+    const QString secondDst = writeTempFile(dstDir + QLatin1String("/second.txt"), QByteArray("old-second"));
+
+    Request req;
+    req.operation = Operation::Copy;
+    req.sources = {toNative(firstSrc), toNative(secondSrc)};
+    req.destination.targetDir = toNative(dstDir);
+    req.destination.mappingMode = DestinationMappingMode::SourceBasename;
+    req.conflictPolicy = ConflictPolicy::Prompt;
+
+    int conflictCount = 0;
+    EventHandlers handlers;
+    handlers.onConflict = [&conflictCount](const ConflictEvent&) -> ConflictResolution {
+        ++conflictCount;
+        return ConflictResolution::SkipAll;
+    };
+
+    const Result result = run(req, handlers);
+    QVERIFY(result.success);
+    QVERIFY(!result.cancelled);
+    QCOMPARE(conflictCount, 1);
+    QCOMPARE(readFile(firstDst), QByteArray("old-first"));
+    QCOMPARE(readFile(secondDst), QByteArray("old-second"));
+    QCOMPARE(result.finalProgress.filesTotal, 2);
+    QCOMPARE(result.finalProgress.filesDone, 2);
+}
+
+void FileOpsContractTest::promptConflictRenameAllAppliesAcrossSources() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcDir = dir.path() + QLatin1String("/src");
+    const QString dstDir = dir.path() + QLatin1String("/dst");
+    QVERIFY(QDir().mkpath(srcDir));
+    QVERIFY(QDir().mkpath(dstDir));
+
+    const QString firstSrc = writeTempFile(srcDir + QLatin1String("/first.txt"), QByteArray("new-first"));
+    const QString secondSrc = writeTempFile(srcDir + QLatin1String("/second.txt"), QByteArray("new-second"));
+    const QString firstDst = writeTempFile(dstDir + QLatin1String("/first.txt"), QByteArray("old-first"));
+    const QString secondDst = writeTempFile(dstDir + QLatin1String("/second.txt"), QByteArray("old-second"));
+
+    Request req;
+    req.operation = Operation::Copy;
+    req.sources = {toNative(firstSrc), toNative(secondSrc)};
+    req.destination.targetDir = toNative(dstDir);
+    req.destination.mappingMode = DestinationMappingMode::SourceBasename;
+    req.conflictPolicy = ConflictPolicy::Prompt;
+
+    int conflictCount = 0;
+    EventHandlers handlers;
+    handlers.onConflict = [&conflictCount](const ConflictEvent&) -> ConflictResolution {
+        ++conflictCount;
+        return ConflictResolution::RenameAll;
+    };
+
+    const Result result = run(req, handlers);
+    QVERIFY(result.success);
+    QVERIFY(!result.cancelled);
+    QCOMPARE(conflictCount, 1);
+    QCOMPARE(readFile(firstDst), QByteArray("old-first"));
+    QCOMPARE(readFile(secondDst), QByteArray("old-second"));
+    QCOMPARE(readFile(dstDir + QLatin1String("/first (copy).txt")), QByteArray("new-first"));
+    QCOMPARE(readFile(dstDir + QLatin1String("/second (copy).txt")), QByteArray("new-second"));
 }
 
 void FileOpsContractTest::unsupportedOperationRejected() {

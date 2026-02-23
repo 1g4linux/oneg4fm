@@ -107,6 +107,9 @@ enum class ConflictResolution {
     Skip,
     Rename,
     Abort,
+    OverwriteAll,
+    SkipAll,
+    RenameAll,
 };
 
 enum class EngineErrorCode {
