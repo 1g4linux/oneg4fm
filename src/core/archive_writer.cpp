@@ -451,14 +451,129 @@ bool sanitize_relative_path(const char* raw, std::string& out) {
     return !out.empty();
 }
 
-bool mkdir_all_under(const std::string& root, const std::string& relPath, Error& err) {
-    if (relPath.empty()) {
-        return true;
+struct RelativePath {
+    std::string normalized;
+    std::vector<std::string> components;
+};
+
+bool parse_relative_path(const char* raw, RelativePath& out) {
+    out = {};
+    if (!sanitize_relative_path(raw, out.normalized)) {
+        return false;
     }
-    std::string full = root;
-    full.push_back('/');
-    full += relPath;
-    return FsOps::make_dir_parents(full, err);
+
+    std::string current;
+    for (char c : out.normalized) {
+        if (c == '/') {
+            if (current.empty()) {
+                return false;
+            }
+            out.components.emplace_back(std::move(current));
+            current.clear();
+        }
+        else {
+            current.push_back(c);
+        }
+    }
+    if (current.empty()) {
+        return false;
+    }
+    out.components.emplace_back(std::move(current));
+    return !out.components.empty();
+}
+
+bool duplicate_fd(int fd, Fd& out, Error& err) {
+    Fd dupFd(::dup(fd));
+    if (!dupFd.valid()) {
+        set_error(err, "dup");
+        return false;
+    }
+    out = std::move(dupFd);
+    return true;
+}
+
+int open_dir_flags() {
+    int flags = O_RDONLY | O_CLOEXEC | O_DIRECTORY;
+#ifdef O_NOFOLLOW
+    flags |= O_NOFOLLOW;
+#endif
+    return flags;
+}
+
+bool open_dir_nofollow_at(int parentFd, const std::string& name, Fd& out, Error& err) {
+    Fd next(::openat(parentFd, name.c_str(), open_dir_flags()));
+    if (!next.valid()) {
+        set_error(err, "openat");
+        return false;
+    }
+    out = std::move(next);
+    return true;
+}
+
+bool ensure_dir_components(int rootFd,
+                           const std::vector<std::string>& components,
+                           bool createMissing,
+                           mode_t mode,
+                           Fd& outDir,
+                           Error& err) {
+    if (!duplicate_fd(rootFd, outDir, err)) {
+        return false;
+    }
+
+    for (const auto& comp : components) {
+        if (createMissing) {
+            if (::mkdirat(outDir.fd, comp.c_str(), mode) != 0 && errno != EEXIST) {
+                set_error(err, "mkdirat");
+                return false;
+            }
+        }
+        Fd next;
+        if (!open_dir_nofollow_at(outDir.fd, comp, next, err)) {
+            return false;
+        }
+        outDir = std::move(next);
+    }
+    return true;
+}
+
+bool resolve_parent_dir(int rootFd,
+                        const RelativePath& relPath,
+                        bool createParents,
+                        Fd& outParent,
+                        std::string& outLeaf,
+                        Error& err) {
+    if (relPath.components.empty()) {
+        err.code = EINVAL;
+        err.message = "Empty path components";
+        return false;
+    }
+
+    const std::vector<std::string> parentComponents(relPath.components.begin(), relPath.components.end() - 1);
+    if (!ensure_dir_components(rootFd, parentComponents, createParents, 0777, outParent, err)) {
+        return false;
+    }
+
+    outLeaf = relPath.components.back();
+    return true;
+}
+
+void populate_times(archive_entry* entry, struct timespec times[2]) {
+    times[0].tv_sec = archive_entry_atime(entry);
+    times[0].tv_nsec = archive_entry_atime_nsec(entry);
+    times[1].tv_sec = archive_entry_mtime(entry);
+    times[1].tv_nsec = archive_entry_mtime_nsec(entry);
+}
+
+void restore_times_fd(int fd, archive_entry* entry) {
+    struct timespec times[2];
+    populate_times(entry, times);
+    ::futimens(fd, times);  // best effort
+}
+
+void restore_times_at(int dirFd, const std::string& name, archive_entry* entry, bool isSymlink) {
+    struct timespec times[2];
+    populate_times(entry, times);
+    ::utimensat(dirFd, name.c_str(), times, isSymlink ? AT_SYMLINK_NOFOLLOW : 0);  // best effort
 }
 
 bool write_all_fd_local(int fd, const std::uint8_t* data, std::size_t size, Error& err) {
@@ -478,14 +593,20 @@ bool write_all_fd_local(int fd, const std::uint8_t* data, std::size_t size, Erro
 }
 
 bool write_file_from_archive(struct archive* ar,
-                             const std::string& destPath,
+                             archive_entry* entry,
+                             int parentFd,
+                             const std::string& name,
                              mode_t mode,
                              ProgressInfo& progress,
                              const ProgressCallback& cb,
                              Error& err) {
-    Fd fd(::open(destPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, mode & 0777));
+    int flags = O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC;
+#ifdef O_NOFOLLOW
+    flags |= O_NOFOLLOW;
+#endif
+    Fd fd(::openat(parentFd, name.c_str(), flags, mode & 0777));
     if (!fd.valid()) {
-        set_error(err, "open");
+        set_error(err, "openat");
         return false;
     }
 
@@ -512,6 +633,11 @@ bool write_file_from_archive(struct archive* ar,
             return false;
         }
     }
+
+    if ((mode & 0777) != 0) {
+        ::fchmod(fd.fd, mode & 0777);  // best effort
+    }
+    restore_times_fd(fd.fd, entry);
     return true;
 }
 
@@ -578,10 +704,11 @@ bool extract_tar_zst(const std::string& archivePath,
 
     bool ok = true;
     archive_entry* entry = nullptr;
-    while (archive_read_next_header(ar, &entry) == ARCHIVE_OK) {
+    int readStatus = ARCHIVE_OK;
+    while ((readStatus = archive_read_next_header(ar, &entry)) == ARCHIVE_OK) {
         const char* rawPath = archive_entry_pathname(entry);
-        std::string rel;
-        if (!sanitize_relative_path(rawPath, rel)) {
+        RelativePath relPath;
+        if (!parse_relative_path(rawPath, relPath)) {
             err.code = EINVAL;
             err.message = "Unsafe path in archive entry";
             ok = false;
@@ -597,7 +724,7 @@ bool extract_tar_zst(const std::string& archivePath,
                 progress.bytesTotal += s;
             }
         }
-        progress.currentPath = rel;
+        progress.currentPath = relPath.normalized;
         if (!should_continue(callback, progress)) {
             err.code = ECANCELED;
             err.message = "Cancelled";
@@ -605,19 +732,21 @@ bool extract_tar_zst(const std::string& archivePath,
             break;
         }
 
-        std::string fullPath = destinationDir;
-        fullPath.push_back('/');
-        fullPath += rel;
-
         if (type == AE_IFDIR) {
-            if (!mkdir_all_under(destinationDir, rel, err)) {
+            Fd dirFd;
+            if (!ensure_dir_components(rootFd.fd, relPath.components, true, 0777, dirFd, err)) {
                 ok = false;
                 break;
             }
-            ::chmod(fullPath.c_str(), mode & 0777);  // best effort
+            if ((mode & 0777) != 0) {
+                ::fchmod(dirFd.fd, mode & 0777);  // best effort
+            }
+            restore_times_fd(dirFd.fd, entry);
         }
         else if (type == AE_IFLNK) {
-            if (!mkdir_all_under(destinationDir, parent_dir(rel), err)) {
+            Fd parentFd;
+            std::string leaf;
+            if (!resolve_parent_dir(rootFd.fd, relPath, true, parentFd, leaf, err)) {
                 ok = false;
                 break;
             }
@@ -628,22 +757,24 @@ bool extract_tar_zst(const std::string& archivePath,
                 ok = false;
                 break;
             }
-            if (::symlinkat(link, rootFd.fd, rel.c_str()) < 0) {
+            if (::symlinkat(link, parentFd.fd, leaf.c_str()) < 0) {
                 set_error(err, "symlinkat");
                 ok = false;
                 break;
             }
+            restore_times_at(parentFd.fd, leaf, entry, true);
         }
         else if (type == AE_IFREG) {
-            if (!mkdir_all_under(destinationDir, parent_dir(rel), err)) {
+            Fd parentFd;
+            std::string leaf;
+            if (!resolve_parent_dir(rootFd.fd, relPath, true, parentFd, leaf, err)) {
                 ok = false;
                 break;
             }
-            if (!write_file_from_archive(ar, fullPath, mode, progress, callback, err)) {
+            if (!write_file_from_archive(ar, entry, parentFd.fd, leaf, mode, progress, callback, err)) {
                 ok = false;
                 break;
             }
-            ::chmod(fullPath.c_str(), mode & 0777);
         }
         else {
             err.code = ENOTSUP;
@@ -652,15 +783,12 @@ bool extract_tar_zst(const std::string& archivePath,
             break;
         }
 
-        // Restore times best effort
-        struct timespec times[2];
-        times[0].tv_sec = archive_entry_atime(entry);
-        times[0].tv_nsec = archive_entry_atime_nsec(entry);
-        times[1].tv_sec = archive_entry_mtime(entry);
-        times[1].tv_nsec = archive_entry_mtime_nsec(entry);
-        ::utimensat(AT_FDCWD, fullPath.c_str(), times, AT_SYMLINK_NOFOLLOW);
-
         progress.filesDone += 1;
+    }
+
+    if (ok && readStatus != ARCHIVE_EOF) {
+        set_archive_error(err, ar, "archive_read_next_header");
+        ok = false;
     }
 
     archive_read_close(ar);

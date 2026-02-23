@@ -62,6 +62,7 @@ pcmanfm_add_test(oneg4fm-archive-tests
     SOURCES
         archive_extract_test.cpp
         ../src/core/archive_extract.cpp
+        ../src/core/archive_writer.cpp
         ../src/core/fs_ops.cpp
     LIBS
         ${LIBARCHIVE_LIBRARIES}

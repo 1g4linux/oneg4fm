@@ -7,11 +7,13 @@
 #include <QTemporaryDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QDir>
 
 #include <archive.h>
 #include <archive_entry.h>
 
 #include "../src/core/archive_extract.h"
+#include "../src/core/archive_writer.h"
 #include "../src/core/fs_ops.h"
 
 #include <vector>
@@ -31,12 +33,26 @@ struct FormatCase {
     QString extension;
 };
 
-bool write_archive_file(const QString& path,
-                        const QString& entryPath,
-                        const QByteArray& data,
-                        const QString& format,
-                        const QString& filter,
-                        QString* errorOut) {
+enum class EntryKind {
+    Regular,
+    Symlink,
+    Hardlink,
+    Directory,
+};
+
+struct ArchiveEntrySpec {
+    EntryKind kind;
+    QString path;
+    QByteArray data;
+    QString linkTarget;
+    int permissions = 0644;
+};
+
+bool write_archive_entries(const QString& path,
+                           const std::vector<ArchiveEntrySpec>& entries,
+                           const QString& format,
+                           const QString& filter,
+                           QString* errorOut) {
     struct archive* ar = archive_write_new();
     if (!ar) {
         *errorOut = QStringLiteral("archive_write_new failed");
@@ -66,30 +82,72 @@ bool write_archive_file(const QString& path,
         return false;
     }
 
-    archive_entry* entry = archive_entry_new();
-    archive_entry_set_pathname(entry, entryPath.toUtf8().constData());
-    archive_entry_set_size(entry, data.size());
-    archive_entry_set_filetype(entry, AE_IFREG);
-    archive_entry_set_perm(entry, 0644);
+    for (const auto& spec : entries) {
+        archive_entry* entry = archive_entry_new();
+        if (!entry) {
+            *errorOut = QStringLiteral("archive_entry_new failed");
+            archive_write_free(ar);
+            return false;
+        }
 
-    if (archive_write_header(ar, entry) != ARCHIVE_OK) {
-        *errorOut = QStringLiteral("write_header failed: %1").arg(QString::fromUtf8(archive_error_string(ar)));
+        archive_entry_set_pathname(entry, spec.path.toUtf8().constData());
+        archive_entry_set_perm(entry, spec.permissions);
+
+        switch (spec.kind) {
+            case EntryKind::Regular:
+                archive_entry_set_filetype(entry, AE_IFREG);
+                archive_entry_set_size(entry, spec.data.size());
+                break;
+            case EntryKind::Symlink:
+                archive_entry_set_filetype(entry, AE_IFLNK);
+                archive_entry_set_size(entry, 0);
+                archive_entry_set_symlink(entry, spec.linkTarget.toUtf8().constData());
+                break;
+            case EntryKind::Hardlink:
+                archive_entry_set_filetype(entry, AE_IFREG);
+                archive_entry_set_size(entry, 0);
+                archive_entry_set_hardlink(entry, spec.linkTarget.toUtf8().constData());
+                break;
+            case EntryKind::Directory:
+                archive_entry_set_filetype(entry, AE_IFDIR);
+                archive_entry_set_size(entry, 0);
+                break;
+        }
+
+        if (archive_write_header(ar, entry) != ARCHIVE_OK) {
+            *errorOut = QStringLiteral("write_header failed: %1").arg(QString::fromUtf8(archive_error_string(ar)));
+            archive_entry_free(entry);
+            archive_write_free(ar);
+            return false;
+        }
+
+        if (spec.kind == EntryKind::Regular && !spec.data.isEmpty()) {
+            if (archive_write_data(ar, spec.data.constData(), static_cast<size_t>(spec.data.size())) < 0) {
+                *errorOut = QStringLiteral("write_data failed: %1").arg(QString::fromUtf8(archive_error_string(ar)));
+                archive_entry_free(entry);
+                archive_write_free(ar);
+                return false;
+            }
+        }
+
         archive_entry_free(entry);
-        archive_write_free(ar);
-        return false;
     }
 
-    if (archive_write_data(ar, data.constData(), static_cast<size_t>(data.size())) < 0) {
-        *errorOut = QStringLiteral("write_data failed: %1").arg(QString::fromUtf8(archive_error_string(ar)));
-        archive_entry_free(entry);
-        archive_write_free(ar);
-        return false;
-    }
-
-    archive_entry_free(entry);
     archive_write_close(ar);
     archive_write_free(ar);
     return true;
+}
+
+bool write_archive_file(const QString& path,
+                        const QString& entryPath,
+                        const QByteArray& data,
+                        const QString& format,
+                        const QString& filter,
+                        QString* errorOut) {
+    const std::vector<ArchiveEntrySpec> entries = {
+        {EntryKind::Regular, entryPath, data, QString(), 0644},
+    };
+    return write_archive_entries(path, entries, format, filter, errorOut);
 }
 
 bool write_archive_with_symlink(const QString& path,
@@ -100,61 +158,11 @@ bool write_archive_with_symlink(const QString& path,
                                 const QString& format,
                                 const QString& filter,
                                 QString* errorOut) {
-    struct archive* ar = archive_write_new();
-    if (!ar) {
-        *errorOut = QStringLiteral("archive_write_new failed");
-        return false;
-    }
-
-    if (!filter.isEmpty()) {
-        archive_write_add_filter_by_name(ar, filter.toUtf8().constData());
-    }
-    else {
-        archive_write_add_filter_none(ar);
-    }
-
-    if (archive_write_set_format_by_name(ar, format.toUtf8().constData()) != ARCHIVE_OK) {
-        *errorOut = QStringLiteral("set_format failed: %1").arg(QString::fromUtf8(archive_error_string(ar)));
-        archive_write_free(ar);
-        return false;
-    }
-
-    if (archive_write_open_filename(ar, path.toUtf8().constData()) != ARCHIVE_OK) {
-        *errorOut = QStringLiteral("open_filename failed: %1").arg(QString::fromUtf8(archive_error_string(ar)));
-        archive_write_free(ar);
-        return false;
-    }
-
-    archive_entry* fileEntryStruct = archive_entry_new();
-    archive_entry_set_pathname(fileEntryStruct, fileEntry.toUtf8().constData());
-    archive_entry_set_size(fileEntryStruct, fileData.size());
-    archive_entry_set_filetype(fileEntryStruct, AE_IFREG);
-    archive_entry_set_perm(fileEntryStruct, 0644);
-    if (archive_write_header(ar, fileEntryStruct) != ARCHIVE_OK ||
-        archive_write_data(ar, fileData.constData(), static_cast<size_t>(fileData.size())) < 0) {
-        *errorOut = QStringLiteral("write file failed: %1").arg(QString::fromUtf8(archive_error_string(ar)));
-        archive_entry_free(fileEntryStruct);
-        archive_write_free(ar);
-        return false;
-    }
-    archive_entry_free(fileEntryStruct);
-
-    archive_entry* symlinkEntryStruct = archive_entry_new();
-    archive_entry_set_pathname(symlinkEntryStruct, symlinkEntry.toUtf8().constData());
-    archive_entry_set_filetype(symlinkEntryStruct, AE_IFLNK);
-    archive_entry_set_perm(symlinkEntryStruct, 0777);
-    archive_entry_set_symlink(symlinkEntryStruct, symlinkTarget.toUtf8().constData());
-    if (archive_write_header(ar, symlinkEntryStruct) != ARCHIVE_OK) {
-        *errorOut = QStringLiteral("write symlink failed: %1").arg(QString::fromUtf8(archive_error_string(ar)));
-        archive_entry_free(symlinkEntryStruct);
-        archive_write_free(ar);
-        return false;
-    }
-    archive_entry_free(symlinkEntryStruct);
-
-    archive_write_close(ar);
-    archive_write_free(ar);
-    return true;
+    const std::vector<ArchiveEntrySpec> entries = {
+        {EntryKind::Regular, fileEntry, fileData, QString(), 0644},
+        {EntryKind::Symlink, symlinkEntry, QByteArray(), symlinkTarget, 0777},
+    };
+    return write_archive_entries(path, entries, format, filter, errorOut);
 }
 
 QString readFile(const QString& path) {
@@ -163,6 +171,25 @@ QString readFile(const QString& path) {
         return {};
     }
     return QString::fromUtf8(f.readAll());
+}
+
+bool extract_with_archive_extract(const QString& archivePath,
+                                  const QString& destDir,
+                                  ProgressInfo& progress,
+                                  Error& err) {
+    auto cb = [](const ProgressInfo&) { return true; };
+    Options opts;
+    return PCManFM::ArchiveExtract::extract_archive(archivePath.toLocal8Bit().toStdString(),
+                                                    destDir.toLocal8Bit().toStdString(), progress, cb, err, opts);
+}
+
+bool extract_with_archive_writer(const QString& archivePath,
+                                 const QString& destDir,
+                                 ProgressInfo& progress,
+                                 Error& err) {
+    auto cb = [](const ProgressInfo&) { return true; };
+    return PCManFM::ArchiveWriter::extract_tar_zst(archivePath.toLocal8Bit().toStdString(),
+                                                   destDir.toLocal8Bit().toStdString(), progress, cb, err);
 }
 
 }  // namespace
@@ -176,6 +203,11 @@ class ArchiveExtractTest : public QObject {
     void extractPreservesSymlinkInTar();
     void cancelStopsAndCleansUp();
     void rejectsUnsafePaths();
+    void rejectsAbsolutePaths();
+    void rejectsSymlinkComponentEscape();
+    void rejectsParentReplacementWithSymlink();
+    void rejectsUnsafeHardlinkTarget();
+    void tarExtractorRejectsSymlinkComponentEscape();
 };
 
 void ArchiveExtractTest::extractKnownFormats_data() {
@@ -329,6 +361,117 @@ void ArchiveExtractTest::rejectsUnsafePaths() {
     QVERIFY(!ok);
     QVERIFY(err.code == EINVAL || !err.message.empty());
     QVERIFY(!QFileInfo::exists(destDir));
+}
+
+void ArchiveExtractTest::rejectsAbsolutePaths() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString archivePath = dir.path() + QLatin1String("/absolute.tar");
+    QString error;
+    QVERIFY2(write_archive_file(archivePath, QStringLiteral("/etc/passwd"), QByteArray("bad"), QStringLiteral("gnutar"),
+                                QStringLiteral(""), &error),
+             qPrintable(error));
+
+    const QString destDir = dir.path() + QLatin1String("/out-absolute");
+    ProgressInfo progress;
+    Error err;
+    const bool ok = extract_with_archive_extract(archivePath, destDir, progress, err);
+    QVERIFY(!ok);
+    QVERIFY(err.code == EINVAL || !err.message.empty());
+    QVERIFY(!QFileInfo::exists(destDir));
+}
+
+void ArchiveExtractTest::rejectsSymlinkComponentEscape() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString outsideDir = dir.path() + QLatin1String("/outside-root");
+    QVERIFY(QDir().mkpath(outsideDir));
+
+    const QString archivePath = dir.path() + QLatin1String("/symlink-escape.tar");
+    const std::vector<ArchiveEntrySpec> entries = {
+        {EntryKind::Symlink, QStringLiteral("dirlink"), QByteArray(), outsideDir, 0777},
+        {EntryKind::Regular, QStringLiteral("dirlink/escape.txt"), QByteArray("escape"), QString(), 0644},
+    };
+    QString error;
+    QVERIFY2(write_archive_entries(archivePath, entries, QStringLiteral("gnutar"), QStringLiteral(""), &error),
+             qPrintable(error));
+
+    const QString destDir = dir.path() + QLatin1String("/out-symlink-escape");
+    ProgressInfo progress;
+    Error err;
+    const bool ok = extract_with_archive_extract(archivePath, destDir, progress, err);
+    QVERIFY(!ok);
+    QVERIFY(!QFileInfo::exists(outsideDir + QLatin1String("/escape.txt")));
+}
+
+void ArchiveExtractTest::rejectsParentReplacementWithSymlink() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString outsideDir = dir.path() + QLatin1String("/outside-parent");
+    QVERIFY(QDir().mkpath(outsideDir));
+
+    const QString archivePath = dir.path() + QLatin1String("/replace-parent.tar");
+    const std::vector<ArchiveEntrySpec> entries = {
+        {EntryKind::Regular, QStringLiteral("a/b.txt"), QByteArray("first"), QString(), 0644},
+        {EntryKind::Symlink, QStringLiteral("a"), QByteArray(), outsideDir, 0777},
+    };
+    QString error;
+    QVERIFY2(write_archive_entries(archivePath, entries, QStringLiteral("gnutar"), QStringLiteral(""), &error),
+             qPrintable(error));
+
+    const QString destDir = dir.path() + QLatin1String("/out-replace-parent");
+    ProgressInfo progress;
+    Error err;
+    const bool ok = extract_with_archive_extract(archivePath, destDir, progress, err);
+    QVERIFY(!ok);
+    QVERIFY(!QFileInfo::exists(outsideDir + QLatin1String("/b.txt")));
+}
+
+void ArchiveExtractTest::rejectsUnsafeHardlinkTarget() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString archivePath = dir.path() + QLatin1String("/hardlink-unsafe.tar");
+    const std::vector<ArchiveEntrySpec> entries = {
+        {EntryKind::Hardlink, QStringLiteral("links/unsafe"), QByteArray(), QStringLiteral("/etc/passwd"), 0644},
+    };
+    QString error;
+    QVERIFY2(write_archive_entries(archivePath, entries, QStringLiteral("gnutar"), QStringLiteral(""), &error),
+             qPrintable(error));
+
+    const QString destDir = dir.path() + QLatin1String("/out-hardlink-unsafe");
+    ProgressInfo progress;
+    Error err;
+    const bool ok = extract_with_archive_extract(archivePath, destDir, progress, err);
+    QVERIFY(!ok);
+    QVERIFY(err.code == EINVAL || !err.message.empty());
+}
+
+void ArchiveExtractTest::tarExtractorRejectsSymlinkComponentEscape() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString outsideDir = dir.path() + QLatin1String("/outside-tar");
+    QVERIFY(QDir().mkpath(outsideDir));
+
+    const QString archivePath = dir.path() + QLatin1String("/tar-symlink-escape.tar");
+    const std::vector<ArchiveEntrySpec> entries = {
+        {EntryKind::Symlink, QStringLiteral("dirlink"), QByteArray(), outsideDir, 0777},
+        {EntryKind::Regular, QStringLiteral("dirlink/escape.txt"), QByteArray("escape"), QString(), 0644},
+    };
+    QString error;
+    QVERIFY2(write_archive_entries(archivePath, entries, QStringLiteral("gnutar"), QStringLiteral(""), &error),
+             qPrintable(error));
+
+    const QString destDir = dir.path() + QLatin1String("/out-tar-symlink-escape");
+    ProgressInfo progress;
+    Error err;
+    const bool ok = extract_with_archive_writer(archivePath, destDir, progress, err);
+    QVERIFY(!ok);
+    QVERIFY(!QFileInfo::exists(outsideDir + QLatin1String("/escape.txt")));
 }
 
 QTEST_MAIN(ArchiveExtractTest)
