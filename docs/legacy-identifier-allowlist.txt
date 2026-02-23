@@ -1,0 +1,3 @@
+# Legacy identifier allowlist for user-facing identity sweep.
+# Format: <repo-relative-path>|<why this legacy reference is required>
+docs/adr/0001-dbus-compat-policy.md|Documents the historical org.pcmanfm to org.oneg4fm DBus migration and hard-cut policy.

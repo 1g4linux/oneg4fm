@@ -14,6 +14,7 @@
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QRegularExpression>
+#include <QSet>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -28,6 +29,7 @@ class FileOpsInventoryTest : public QObject {
     void dbusCompatibilityAdrExistsAndSpecifiesPolicy();
     void dbusBuildArtifactsEnforceHardCutServiceIdentity();
     void installArtifactsUseOneg4fmIdentity();
+    void userFacingIdentitySweepUsesExplicitCompatibilityAllowlist();
     void hackingDocCoversLinuxSecurityModelAndContract();
     void coreContractDocCoversFieldsEventsAndErrors();
     void adapterDocCoversQtAndLibfmQtBridge();
@@ -331,6 +333,95 @@ void FileOpsInventoryTest::installArtifactsUseOneg4fmIdentity() {
     QVERIFY2(foundService, "Missing installed service artifact: share/dbus-1/services/org.oneg4fm.oneg4fm.service");
     QVERIFY2(foundIcon, "Missing installed icon artifact: share/icons/hicolor/scalable/apps/oneg4fm.svg");
     QVERIFY2(foundMimePackage, "Missing installed MIME artifact: share/mime/packages/libfm-qt6-mimetypes.xml");
+}
+
+void FileOpsInventoryTest::userFacingIdentitySweepUsesExplicitCompatibilityAllowlist() {
+    const auto [allowlistContent, allowlistError] =
+        readTextFile(QStringLiteral("docs/legacy-identifier-allowlist.txt"));
+    QVERIFY2(allowlistError.isEmpty(), qPrintable(allowlistError));
+
+    QSet<QString> allowlistedFiles;
+    const QStringList allowlistLines = allowlistContent.split(QLatin1Char('\n'));
+    for (int i = 0; i < allowlistLines.size(); ++i) {
+        const QString line = allowlistLines.at(i).trimmed();
+        if (line.isEmpty() || line.startsWith(QLatin1Char('#'))) {
+            continue;
+        }
+
+        const QStringList parts = line.split(QLatin1Char('|'));
+        QVERIFY2(parts.size() == 2,
+                 qPrintable(QStringLiteral("Invalid allowlist entry at line %1 in docs/legacy-identifier-allowlist.txt")
+                                .arg(i + 1)));
+
+        const QString relPath = parts.at(0).trimmed();
+        const QString reason = parts.at(1).trimmed();
+        QVERIFY2(!relPath.isEmpty(),
+                 qPrintable(QStringLiteral("Allowlist entry at line %1 has empty path").arg(i + 1)));
+        QVERIFY2(!reason.isEmpty(),
+                 qPrintable(QStringLiteral("Allowlist entry at line %1 has empty reason").arg(i + 1)));
+        QVERIFY2(!allowlistedFiles.contains(relPath),
+                 qPrintable(QStringLiteral("Duplicate allowlist path at line %1: %2").arg(i + 1).arg(relPath)));
+
+        const auto [content, error] = readTextFile(relPath);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        Q_UNUSED(content);
+
+        allowlistedFiles.insert(relPath);
+    }
+    QVERIFY2(!allowlistedFiles.isEmpty(), "Legacy identifier allowlist must not be empty");
+
+    const QString root = sourceRoot();
+    QVERIFY2(!root.isEmpty(), "PCMANFM_SOURCE_DIR compile definition is missing");
+    const QDir rootDir(root);
+
+    QSet<QString> scannedFiles;
+    scannedFiles.insert(QStringLiteral("README.md"));
+
+    const auto addMatchingFiles = [&](const QString& relDir, const QStringList& nameFilters) {
+        QDirIterator it(root + QLatin1Char('/') + relDir, nameFilters, QDir::Files, QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            const QString absPath = it.next();
+            const QString relPath = rootDir.relativeFilePath(absPath).replace(QLatin1Char('\\'), QLatin1Char('/'));
+            scannedFiles.insert(relPath);
+        }
+    };
+
+    addMatchingFiles(QStringLiteral("docs"), {QStringLiteral("*.md")});
+    addMatchingFiles(QStringLiteral("oneg4fm"), {
+                                                    QStringLiteral("*.ui"),
+                                                    QStringLiteral("*.desktop.in"),
+                                                    QStringLiteral("*.desktop"),
+                                                    QStringLiteral("*.ts"),
+                                                    QStringLiteral("*.po"),
+                                                    QStringLiteral("*.pot"),
+                                                });
+
+    for (const QString& relPath : allowlistedFiles) {
+        QVERIFY2(scannedFiles.contains(relPath),
+                 qPrintable(QStringLiteral("Allowlisted path is outside the identity sweep scope: %1").arg(relPath)));
+    }
+
+    const QRegularExpression legacyIdPattern(QStringLiteral("(pcmanfm|org\\.pcmanfm)"),
+                                             QRegularExpression::CaseInsensitiveOption);
+
+    QStringList files = scannedFiles.values();
+    files.sort(Qt::CaseSensitive);
+    for (const QString& relPath : files) {
+        const auto [content, error] = readTextFile(relPath);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        const bool hasLegacyId = legacyIdPattern.match(content).hasMatch();
+
+        if (allowlistedFiles.contains(relPath)) {
+            QVERIFY2(
+                hasLegacyId,
+                qPrintable(
+                    QStringLiteral("Allowlisted file must contain a legacy identifier reference: %1").arg(relPath)));
+            continue;
+        }
+
+        QVERIFY2(!hasLegacyId,
+                 qPrintable(QStringLiteral("User-facing file contains a legacy identifier: %1").arg(relPath)));
+    }
 }
 
 void FileOpsInventoryTest::hackingDocCoversLinuxSecurityModelAndContract() {
