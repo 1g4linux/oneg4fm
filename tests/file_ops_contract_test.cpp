@@ -9,6 +9,7 @@
 #include <QFileInfo>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QUrl>
 
 #include "../src/core/file_ops_contract.h"
 
@@ -114,9 +115,9 @@ class FileOpsContractTest : public QObject {
     void unsupportedOperationRejected();
     void capabilityReportExposesLocalAndGioBackends();
     void routingSourceKindSizeMismatchRejected();
-    void uriSourceNeedsAvailableGioBackend();
+    void uriSourceCanRunViaGioBackend();
     void forcingLocalBackendForUriIsRejected();
-    void trashAndUntrashRequireBackendSupport();
+    void trashAndUntrashPreflightOnGioBackend();
     void requireLandlockFailsFast();
     void requireOpenat2ResolveFailsFastWhenUnavailable();
     void requireSeccompNeedsSandboxedWorkerMode();
@@ -816,11 +817,15 @@ void FileOpsContractTest::capabilityReportExposesLocalAndGioBackends() {
     QVERIFY(!report.localHardened.supportsUntrash);
 
     QCOMPARE(report.gio.backend, Backend::Gio);
-    QVERIFY(!report.gio.available);
+    QVERIFY(report.gio.available);
     QVERIFY(report.gio.supportsUriPaths);
+    QVERIFY(report.gio.supportsNativePaths);
+    QVERIFY(report.gio.supportsCopy);
+    QVERIFY(report.gio.supportsMove);
+    QVERIFY(report.gio.supportsDelete);
     QVERIFY(report.gio.supportsTrash);
     QVERIFY(report.gio.supportsUntrash);
-    QVERIFY(!report.gio.unavailableReason.empty());
+    QVERIFY(report.gio.unavailableReason.empty());
 }
 
 void FileOpsContractTest::routingSourceKindSizeMismatchRejected() {
@@ -846,29 +851,31 @@ void FileOpsContractTest::routingSourceKindSizeMismatchRejected() {
     QVERIFY(QString::fromLocal8Bit(result.error.message.c_str()).contains(QStringLiteral("sourceKinds")));
 }
 
-void FileOpsContractTest::uriSourceNeedsAvailableGioBackend() {
+void FileOpsContractTest::uriSourceCanRunViaGioBackend() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
 
+    const QString srcPath = writeTempFile(dir.path() + QLatin1String("/src.txt"), QByteArray("gio-copy"));
     const QString dstDir = dir.path() + QLatin1String("/dst");
     QVERIFY(QDir().mkpath(dstDir));
+    const QString dstPath = dstDir + QLatin1String("/src.txt");
 
     Request req;
     req.operation = Operation::Copy;
-    req.sources = {"sftp://example.invalid/path/to/file.txt"};
+    req.sources = {QUrl::fromLocalFile(srcPath).toString().toStdString()};
     req.destination.targetDir = toNative(dstDir);
     req.destination.mappingMode = DestinationMappingMode::SourceBasename;
+    req.routing.defaultBackend = Backend::Gio;
     req.routing.sourceKinds = {EndpointKind::Uri};
     req.routing.destinationKind = EndpointKind::NativePath;
 
-    const Result result = preflight(req);
-    QVERIFY(!result.success);
+    const Result result = run(req);
+    QVERIFY(result.success);
     QVERIFY(!result.cancelled);
-    QCOMPARE(result.error.code, EngineErrorCode::UnsupportedFeature);
-    QCOMPARE(result.error.sysErrno, ENOTSUP);
-    const QString message = QString::fromLocal8Bit(result.error.message.c_str());
-    QVERIFY(message.contains(QStringLiteral("unavailable"), Qt::CaseInsensitive));
-    QVERIFY(message.contains(QStringLiteral("GIO backend is not yet integrated"), Qt::CaseInsensitive));
+    QVERIFY(result.error.code == EngineErrorCode::None);
+    QCOMPARE(readFile(dstPath), QByteArray("gio-copy"));
+    QCOMPARE(result.finalProgress.filesTotal, 1);
+    QCOMPARE(result.finalProgress.filesDone, 1);
 }
 
 void FileOpsContractTest::forcingLocalBackendForUriIsRejected() {
@@ -895,7 +902,7 @@ void FileOpsContractTest::forcingLocalBackendForUriIsRejected() {
     QVERIFY(QString::fromLocal8Bit(result.error.message.c_str()).contains(QStringLiteral("LocalHardened")));
 }
 
-void FileOpsContractTest::trashAndUntrashRequireBackendSupport() {
+void FileOpsContractTest::trashAndUntrashPreflightOnGioBackend() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
 
@@ -904,24 +911,25 @@ void FileOpsContractTest::trashAndUntrashRequireBackendSupport() {
     Request trashReq;
     trashReq.operation = Operation::Trash;
     trashReq.sources = {toNative(src)};
+    trashReq.routing.defaultBackend = Backend::Gio;
+    trashReq.routing.sourceBackends = {Backend::Gio};
 
     const Result trashResult = preflight(trashReq);
-    QVERIFY(!trashResult.success);
+    QVERIFY(trashResult.success);
     QVERIFY(!trashResult.cancelled);
-    QCOMPARE(trashResult.error.code, EngineErrorCode::UnsupportedOperation);
-    QCOMPARE(trashResult.error.sysErrno, ENOTSUP);
-    QVERIFY(QString::fromLocal8Bit(trashResult.error.message.c_str()).contains(QStringLiteral("Trash")));
+    QCOMPARE(trashResult.error.code, EngineErrorCode::None);
 
     Request untrashReq;
     untrashReq.operation = Operation::Untrash;
-    untrashReq.sources = {toNative(src)};
+    untrashReq.sources = {"trash:///placeholder-entry"};
+    untrashReq.routing.defaultBackend = Backend::Gio;
+    untrashReq.routing.sourceKinds = {EndpointKind::Uri};
+    untrashReq.routing.sourceBackends = {Backend::Gio};
 
     const Result untrashResult = preflight(untrashReq);
-    QVERIFY(!untrashResult.success);
+    QVERIFY(untrashResult.success);
     QVERIFY(!untrashResult.cancelled);
-    QCOMPARE(untrashResult.error.code, EngineErrorCode::UnsupportedOperation);
-    QCOMPARE(untrashResult.error.sysErrno, ENOTSUP);
-    QVERIFY(QString::fromLocal8Bit(untrashResult.error.message.c_str()).contains(QStringLiteral("Untrash")));
+    QCOMPARE(untrashResult.error.code, EngineErrorCode::None);
 }
 
 void FileOpsContractTest::requireLandlockFailsFast() {

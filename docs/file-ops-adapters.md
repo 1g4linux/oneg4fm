@@ -38,12 +38,12 @@ Adapter-fixed core settings:
 - `linuxSafety.requireOpenat2Resolve = true`
 - `linuxSafety.requireLandlock = false`
 - `linuxSafety.workerMode = InProcess`
-- `routing.defaultBackend = Auto`
+- `routing.defaultBackend = Auto` for native-only requests
+- `routing.defaultBackend = Gio` when any endpoint is URI-shaped
 - `routing.destinationBackend = Auto`
 
 Before execution, the adapter runs `FileOpsContract::preflight()` so unsupported
-backend/capability combinations (for example URI paths requiring unavailable GIO
-backend integration) fail early with a clear core-generated reason.
+backend/capability combinations fail early with a clear core-generated reason.
 
 ### Signal/Conflict Bridge
 
@@ -64,6 +64,8 @@ Relevant files:
 
 - `libfm-qt/src/core/filetransferjob.cpp`
 - `libfm-qt/src/core/deletejob.cpp`
+- `libfm-qt/src/core/trashjob.cpp`
+- `libfm-qt/src/core/untrashjob.cpp`
 - `libfm-qt/src/core/fileops_bridge_policy.cpp`
 
 ### Routing Policy (`classifyPathForFileOps`)
@@ -71,19 +73,21 @@ Relevant files:
 `RoutingClass` values:
 
 - `RoutingClass::CoreLocal`: native local path on non-remote filesystem.
-- `RoutingClass::LegacyGio`: URI/non-native/remote path handled by legacy GIO.
+- `RoutingClass::LegacyGio`: URI/non-native/remote path that must run through
+  core with backend `Gio`.
 - `RoutingClass::Unsupported`: native-looking path that cannot be classified safely.
 
 Rules:
 
-- Core contract is used only for `RoutingClass::CoreLocal`.
+- Copy/move/delete requests route through `FileOpsContract::run` for both
+  `RoutingClass::CoreLocal` and `RoutingClass::LegacyGio`.
 - `RoutingClass::Unsupported` is a hard error; no unsafe local fallback.
-- Legacy GIO path remains for `trash:///`, remote mounts, and other URI schemes.
+- Adapters do not call GIO file-op mutation APIs directly for these operations.
 
 ### `FileTransferJob` Bridge
 
-- For copy/move (not link), core-local source+destination route through
-  `FileOpsContract::run`.
+- For copy/move (not link), requests route through core contract for both local
+  and legacy-GIO classifications.
 - Uses `DestinationMappingMode::ExplicitPerSource` for per-item destination.
 - Conflict dialog integration:
   - Legacy UI asks user via `askRename(...)`
@@ -95,9 +99,17 @@ Rules:
 
 ### `DeleteJob` Bridge
 
-- Core-local delete routes through core contract delete.
+- Delete routes through core contract for both `CoreLocal` and `LegacyGio`
+  classifications.
 - Progress is aggregated into legacy `finishedAmount`.
 - Unsupported routing class is reported as a critical error and operation abort.
+
+### `TrashJob` and `UntrashJob` Bridge
+
+- Trash/untrash requests are translated into core contract operations
+  (`Operation::Trash`, `Operation::Untrash`) with backend `Gio`.
+- Legacy dialogs continue to receive mapped conflict/error/cancel behavior
+  through the same job interfaces.
 
 ## Adapter Invariant
 

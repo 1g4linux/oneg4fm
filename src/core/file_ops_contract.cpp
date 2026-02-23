@@ -5,6 +5,8 @@
 
 #include "file_ops_contract.h"
 
+#include "gio_ops_executor.h"
+
 #include "fs_ops.h"
 #include "linux_fs_safety.h"
 
@@ -270,7 +272,7 @@ CapabilityReport make_capability_report() {
     report.localHardened.supportsUntrash = false;
 
     report.gio.backend = Backend::Gio;
-    report.gio.available = false;
+    report.gio.available = true;
     report.gio.supportsNativePaths = true;
     report.gio.supportsUriPaths = true;
     report.gio.supportsCopy = true;
@@ -278,7 +280,6 @@ CapabilityReport make_capability_report() {
     report.gio.supportsDelete = true;
     report.gio.supportsTrash = true;
     report.gio.supportsUntrash = true;
-    report.gio.unavailableReason = "GIO backend is not yet integrated into FileOpsContract";
 
     return report;
 }
@@ -1318,6 +1319,17 @@ Result run_in_process(const Request& request, const EventHandlers& handlers) {
 
     if (!validate_request(request, result.error)) {
         return result;
+    }
+
+    Backend request_backend = Backend::LocalHardened;
+    Error routing_error;
+    if (!validate_request_routing(request, request_backend, routing_error)) {
+        result.error = routing_error;
+        return result;
+    }
+
+    if (request_backend == Backend::Gio) {
+        return detail::run_gio_request(request, handlers);
     }
 
     std::vector<SourcePlan> plans;

@@ -213,6 +213,7 @@ class QtFileOps::Worker : public QObject {
     bool buildContractRequest(const FileOpRequest& req, FileOpsContract::Request& out, QString& requestError) {
         out = {};
         requestError.clear();
+        bool hasUriEndpoint = false;
 
         if (!toContractOperation(req.type, out.operation)) {
             Q_ASSERT_X(false, "QtFileOps::Worker::buildContractRequest", "Unknown file operation type");
@@ -229,6 +230,9 @@ class QtFileOps::Worker : public QObject {
             }
             out.sources.push_back(toNativePath(source));
             out.routing.sourceKinds.push_back(toContractEndpointKind(source));
+            if (out.routing.sourceKinds.back() == FileOpsContract::EndpointKind::Uri) {
+                hasUriEndpoint = true;
+            }
         }
 
         if (out.sources.empty()) {
@@ -244,6 +248,9 @@ class QtFileOps::Worker : public QObject {
             out.destination.targetDir = toNativePath(req.destination);
             out.destination.mappingMode = FileOpsContract::DestinationMappingMode::SourceBasename;
             out.routing.destinationKind = toContractEndpointKind(req.destination);
+            if (out.routing.destinationKind == FileOpsContract::EndpointKind::Uri) {
+                hasUriEndpoint = true;
+            }
         }
         else if (!req.destination.isEmpty()) {
             requestError = QStringLiteral("Delete operations do not accept a destination path");
@@ -293,7 +300,7 @@ class QtFileOps::Worker : public QObject {
         out.cancelGranularity = FileOpsContract::CancelCheckpointGranularity::PerChunk;
         out.linuxSafety.requireOpenat2Resolve = true;
         out.linuxSafety.requireLandlock = false;
-        out.routing.defaultBackend = FileOpsContract::Backend::Auto;
+        out.routing.defaultBackend = hasUriEndpoint ? FileOpsContract::Backend::Gio : FileOpsContract::Backend::Auto;
         out.routing.destinationBackend = FileOpsContract::Backend::Auto;
 
         return true;

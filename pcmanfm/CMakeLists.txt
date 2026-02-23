@@ -43,6 +43,7 @@ set(pcmanfm_SRCS
     ../src/backends/qt/qt_fileinfo.cpp
     ../src/backends/qt/qt_foldermodel.cpp
     ../src/core/file_ops_contract.cpp
+    ../src/core/gio_ops_executor.cpp
     ../src/core/fs_ops.cpp
     ../src/core/linux_fs_safety.cpp
     ../src/core/archive_writer.cpp

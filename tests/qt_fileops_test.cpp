@@ -6,6 +6,7 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QUrl>
 
 #include "../src/backends/qt/qt_fileops.h"
 
@@ -30,7 +31,7 @@ class QtFileOpsTest : public QObject {
     void deleteRejectsDestinationField();
     void deleteRejectsOverwriteExistingField();
     void copyRejectsFollowSymlinks();
-    void copyUriSourceFailsFastWithCapabilityError();
+    void copyUriSourceRoutesViaCoreGioBackend();
     void copyPromptConflictUsesUiResolution();
     void copyPromptConflictRequiresResponder();
     void copyRejectsPromptAndOverwriteTogether();
@@ -429,20 +430,21 @@ void QtFileOpsTest::copyRejectsFollowSymlinks() {
     QVERIFY(!QFileInfo::exists(dstPath));
 }
 
-void QtFileOpsTest::copyUriSourceFailsFastWithCapabilityError() {
+void QtFileOpsTest::copyUriSourceRoutesViaCoreGioBackend() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
 
+    const QString src = writeTempFile(dir, QStringLiteral("src.txt"), "gio-data");
     const QString dstDir = dir.path() + QLatin1String("/dst");
     QVERIFY(QDir().mkpath(dstDir));
-    const QString dstPath = dstDir + QLatin1String("/file.txt");
+    const QString dstPath = dstDir + QLatin1String("/src.txt");
 
     QtFileOps ops;
     QSignalSpy finishedSpy(&ops, &QtFileOps::finished);
 
     FileOpRequest req;
     req.type = FileOpType::Copy;
-    req.sources = QStringList{QStringLiteral("sftp://example.invalid/path/file.txt")};
+    req.sources = QStringList{QUrl::fromLocalFile(src).toString()};
     req.destination = dstDir;
     req.followSymlinks = false;
     req.overwriteExisting = false;
@@ -451,10 +453,10 @@ void QtFileOpsTest::copyUriSourceFailsFastWithCapabilityError() {
     ops.start(req);
     QTRY_VERIFY_WITH_TIMEOUT(finishedSpy.count() > 0, 2000);
     const QList<QVariant> args = finishedSpy.takeFirst();
-    QVERIFY(!args.at(0).toBool());
-    QVERIFY(args.at(1).toString().contains(QStringLiteral("GIO"), Qt::CaseInsensitive));
-    QVERIFY(args.at(1).toString().contains(QStringLiteral("backend"), Qt::CaseInsensitive));
-    QVERIFY(!QFileInfo::exists(dstPath));
+    QVERIFY(args.at(0).toBool());
+    QVERIFY(args.at(1).toString().isEmpty());
+    QVERIFY(QFileInfo::exists(dstPath));
+    QCOMPARE(readFile(dstPath), QByteArray("gio-data"));
 }
 
 void QtFileOpsTest::copyPromptConflictUsesUiResolution() {

@@ -8,9 +8,11 @@ This document defines the behavior of `PCManFM::FileOpsContract` in
 - API: `PCManFM::FileOpsContract::run(const Request&, const EventHandlers&)`
 - Preflight API: `PCManFM::FileOpsContract::preflight(const Request&)`
 - Capability API: `PCManFM::FileOpsContract::capabilities()`
-- Local hardened backend operations today: `Copy`, `Move`, `Delete`
-- `Trash` and `Untrash` are part of the contract operation enum, but currently
-  require the GIO backend, which is not integrated yet
+- Backend dispatch is resolved in core and executed through one entrypoint:
+  - `LocalHardened`: Linux-hardened local engine (`dirfd` + `openat2` policy)
+  - `Gio`: URI/non-local and trash workflows via GIO backend executor
+- Local hardened operations today: `Copy`, `Move`, `Delete`
+- GIO backend operations today: `Copy`, `Move`, `Delete`, `Trash`, `Untrash`
 - Rejected operations today: `Mkdir`, `Link` (`EngineErrorCode::UnsupportedOperation`)
 
 ## `Request` Fields
@@ -19,8 +21,8 @@ The contract accepts a `Request` and validates it before planning/execution.
 
 | Field | Behavior |
 | --- | --- |
-| `operation` | `Copy`, `Move`, `Delete`, `Trash`, `Untrash`, `Mkdir`, `Link`. `Trash`/`Untrash` currently fail with capability-based `UnsupportedOperation` on local backend. `Mkdir`/`Link` are currently rejected. |
-| `sources` | Must be non-empty; each source must be non-empty and stat-able during plan build. |
+| `operation` | `Copy`, `Move`, `Delete`, `Trash`, `Untrash`, `Mkdir`, `Link`. `Mkdir`/`Link` are currently rejected. `Trash`/`Untrash` require routing to backend `Gio`. |
+| `sources` | Must be non-empty; each source must be non-empty and must be stat-able during plan build by the resolved backend scanner (`lstat` for local, `g_file_query_info` for GIO). |
 | `destination.targetDir` | Required for `Copy`/`Move`; must be empty for `Trash`/`Untrash`. |
 | `destination.mappingMode` | `SourceBasename` or `ExplicitPerSource`. |
 | `destination.explicitTargets` | Required count match when `ExplicitPerSource` is used. |
@@ -51,8 +53,8 @@ Routing validation currently enforces single-backend execution per request.
 Mixed backend requests are rejected with `EngineErrorCode::UnsupportedPolicy`.
 
 When routing resolves to `LocalHardened`, `linuxSafety.requireOpenat2Resolve`
-is enforced. GIO-routed requests currently fail fast because that backend is
-declared unavailable until Phase 7.2 integration.
+is enforced. When routing resolves to `Gio`, local Linux hardening probes are
+not required for execution.
 
 ## Conflict and Event Model
 
@@ -84,8 +86,8 @@ If prompt mode is requested without `onConflict`, execution fails with
 `capabilities()` reports backend support matrix and availability:
 
 - `localHardened`: available, supports native-path `Copy`/`Move`/`Delete`
-- `gio`: declared capabilities for URI/non-local workflows, currently marked
-  unavailable with an explicit reason string
+- `gio`: available, supports native-path and URI-path `Copy`/`Move`/`Delete`
+  plus `Trash`/`Untrash`
 
 Adapters can call `preflight()` to fail early with the same structured contract
 errors used by `run()`, without executing planning or mutations.

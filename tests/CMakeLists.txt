@@ -1,18 +1,22 @@
 cmake_minimum_required(VERSION 3.18)
 
 find_package(Qt6 REQUIRED COMPONENTS Test)
+find_package(PkgConfig REQUIRED)
 include(CMakeParseArguments)
+pkg_check_modules(TEST_GIO REQUIRED gio-2.0 gobject-2.0 glib-2.0)
 
 set(PCMANFM_TEST_LIBS
     Qt6::Test
     Qt6::Core
     Qt6::Gui
     Qt6::Widgets
+    ${TEST_GIO_LIBRARIES}
 )
 
 set(PCMANFM_TEST_INCLUDES
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/pcmanfm
+    ${TEST_GIO_INCLUDE_DIRS}
 )
 
 function(pcmanfm_add_test target)
@@ -59,6 +63,7 @@ pcmanfm_add_test(oneg4fm-ops-tests
         ../src/backends/qt/qt_fileops.cpp
         ../src/core/ifileops.cpp
         ../src/core/file_ops_contract.cpp
+        ../src/core/gio_ops_executor.cpp
         ../src/core/fs_ops.cpp
         ../src/core/linux_fs_safety.cpp
     LIBS
@@ -83,6 +88,7 @@ pcmanfm_add_test(oneg4fm-cross-layer-parity-tests
         ../src/backends/qt/qt_fileops.cpp
         ../src/core/ifileops.cpp
         ../src/core/file_ops_contract.cpp
+        ../src/core/gio_ops_executor.cpp
         ../src/core/fs_ops.cpp
         ../src/core/linux_fs_safety.cpp
     LIBS
@@ -98,6 +104,7 @@ pcmanfm_add_test(oneg4fm-file-ops-contract-tests
     SOURCES
         file_ops_contract_test.cpp
         ../src/core/file_ops_contract.cpp
+        ../src/core/gio_ops_executor.cpp
         ../src/core/fs_ops.cpp
         ../src/core/linux_fs_safety.cpp
     LIBS

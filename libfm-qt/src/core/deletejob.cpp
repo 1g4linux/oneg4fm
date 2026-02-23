@@ -22,12 +22,7 @@ namespace {
 #if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
 namespace CoreFileOps = PCManFM::FileOpsContract;
 
-bool toNativeLocalPath(const FilePath& path, std::string& out) {
-    if (!FileOpsBridgePolicy::isCoreLocalPathEligible(path)) {
-        out.clear();
-        return false;
-    }
-
+bool toNativePath(const FilePath& path, std::string& out) {
     const auto localPath = path.localPath();
     if (!localPath || localPath.get()[0] == '\0') {
         out.clear();
@@ -38,11 +33,43 @@ bool toNativeLocalPath(const FilePath& path, std::string& out) {
     return true;
 }
 
-FilePath toFilePathFromNative(const std::string& nativePath, const FilePath& fallback) {
-    if (!nativePath.empty()) {
-        return FilePath::fromLocalPath(nativePath.c_str());
+bool toUriPath(const FilePath& path, std::string& out) {
+    const auto uri = path.uri();
+    if (!uri || uri.get()[0] == '\0') {
+        out.clear();
+        return false;
     }
-    return fallback;
+
+    out.assign(uri.get());
+    return true;
+}
+
+FilePath toFilePathFromCorePath(const std::string& path, const FilePath& fallback) {
+    if (path.empty()) {
+        return fallback;
+    }
+
+    if (path.find("://") != std::string::npos) {
+        return FilePath::fromUri(path.c_str());
+    }
+    return FilePath::fromLocalPath(path.c_str());
+}
+
+bool toCoreEndpointPath(const FilePath& path, std::string& out, CoreFileOps::EndpointKind& endpointKind) {
+    if (path.isNative()) {
+        endpointKind = CoreFileOps::EndpointKind::NativePath;
+        return toNativePath(path, out);
+    }
+
+    endpointKind = CoreFileOps::EndpointKind::Uri;
+    return toUriPath(path, out);
+}
+
+CoreFileOps::Backend backendForRouting(FileOpsBridgePolicy::RoutingClass routingClass) {
+    if (routingClass == FileOpsBridgePolicy::RoutingClass::LegacyGio) {
+        return CoreFileOps::Backend::Gio;
+    }
+    return CoreFileOps::Backend::LocalHardened;
 }
 
 GErrorPtr coreResultToError(const CoreFileOps::Result& result, const char* fallbackMessage) {
@@ -232,11 +259,14 @@ void DeleteJob::exec() {
     Q_EMIT preparedToRun();
 
 #if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
-    auto runCoreLocalDelete = [this](const FilePath& path) -> bool {
-        std::string sourceNative;
-        if (!toNativeLocalPath(path, sourceNative)) {
+    auto runCoreRoutedDelete = [this](const FilePath& path, FileOpsBridgePolicy::RoutingClass routingClass) -> bool {
+        std::string sourceEndpoint;
+        CoreFileOps::EndpointKind sourceKind = CoreFileOps::EndpointKind::NativePath;
+        if (!toCoreEndpointPath(path, sourceEndpoint, sourceKind)) {
             return false;
         }
+
+        const CoreFileOps::Backend requestBackend = backendForRouting(routingClass);
 
         while (!isCancelled()) {
             std::uint64_t baseFinishedBytes = 0;
@@ -245,7 +275,7 @@ void DeleteJob::exec() {
 
             CoreFileOps::Request request;
             request.operation = CoreFileOps::Operation::Delete;
-            request.sources = {sourceNative};
+            request.sources = {sourceEndpoint};
             request.symlinkPolicy.followSymlinks = false;
             request.symlinkPolicy.copyMode = CoreFileOps::SymlinkCopyMode::CopyLinkAsLink;
             request.metadata.preserveOwnership = true;
@@ -253,15 +283,18 @@ void DeleteJob::exec() {
             request.metadata.preserveTimestamps = true;
             request.cancelGranularity = CoreFileOps::CancelCheckpointGranularity::PerChunk;
             request.cancellationRequested = [this]() { return isCancelled(); };
-            request.linuxSafety.requireOpenat2Resolve = true;
+            request.linuxSafety.requireOpenat2Resolve = (requestBackend == CoreFileOps::Backend::LocalHardened);
             request.linuxSafety.requireLandlock = false;
             request.linuxSafety.requireSeccomp = false;
             request.linuxSafety.workerMode = CoreFileOps::WorkerMode::InProcess;
+            request.routing.defaultBackend = requestBackend;
+            request.routing.sourceKinds = {sourceKind};
+            request.routing.sourceBackends = {requestBackend};
 
             CoreFileOps::EventHandlers handlers;
             handlers.onProgress = [this, baseFinishedBytes, baseFinishedFiles,
                                    path](const CoreFileOps::ProgressSnapshot& progress) {
-                setCurrentFile(toFilePathFromNative(progress.currentPath, path));
+                setCurrentFile(toFilePathFromCorePath(progress.currentPath, path));
                 setCurrentFileProgress(0, 0);
 
                 const std::uint64_t bytesDone = progress.bytesDone;
@@ -286,7 +319,7 @@ void DeleteJob::exec() {
                 return false;
             }
 
-            GErrorPtr err = coreResultToError(result, "Local delete operation failed");
+            GErrorPtr err = coreResultToError(result, "Core delete operation failed");
             const ErrorAction action = emitError(err, ErrorSeverity::MODERATE);
             if (action == ErrorAction::RETRY) {
                 setFinishedAmount(baseFinishedBytes, baseFinishedFiles);
@@ -311,17 +344,15 @@ void DeleteJob::exec() {
 
 #if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
         const auto pathRouting = FileOpsBridgePolicy::classifyPathForFileOps(path);
-        if (pathRouting == FileOpsBridgePolicy::RoutingClass::CoreLocal) {
-            runCoreLocalDelete(path);
-            continue;
-        }
-
         if (pathRouting == FileOpsBridgePolicy::RoutingClass::Unsupported) {
             GErrorPtr err = unsupportedDeleteRoutingError(path, pathRouting);
             emitError(err, ErrorSeverity::CRITICAL);
             cancel();
             break;
         }
+
+        runCoreRoutedDelete(path, pathRouting);
+        continue;
 #endif
 
         deleteFile(path, GFileInfoPtr{nullptr});

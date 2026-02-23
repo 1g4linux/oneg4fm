@@ -53,6 +53,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../src/core/file_ops_contract.cpp" AND
     set(LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT 1)
     list(APPEND libfm_core_SRCS
         ../../src/core/file_ops_contract.cpp
+        ../../src/core/gio_ops_executor.cpp
         ../../src/core/fs_ops.cpp
         ../../src/core/linux_fs_safety.cpp
     )
