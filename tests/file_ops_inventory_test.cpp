@@ -35,6 +35,9 @@ class FileOpsInventoryTest : public QObject {
     void installedArtifactsRejectLegacyIdentityTokens();
     void userFacingIdentitySweepUsesExplicitCompatibilityAllowlist();
     void applicationUsesTypedMainWindowChecks();
+    void applicationLifecycleAndWindowOrchestrationAreSplitIntoDedicatedUnits();
+    void shutdownOrderingIsExplicitInLifecycleUnit();
+    void mainWindowUiKeysAndMimeTypesAreCentralized();
     void hackingDocCoversLinuxSecurityModelAndContract();
     void coreContractDocCoversFieldsEventsAndErrors();
     void adapterDocCoversQtAndLibfmQtBridge();
@@ -626,9 +629,124 @@ void FileOpsInventoryTest::applicationUsesTypedMainWindowChecks() {
     QVERIFY2(error.isEmpty(), qPrintable(error));
 
     QVERIFY2(!content.contains(QStringLiteral("inherits(\"Oneg4FM::MainWindow\")"), Qt::CaseSensitive),
-             "application.cpp must use typed MainWindow checks instead of inherits()");
-    QVERIFY2(content.contains(QStringLiteral("qobject_cast<MainWindow*>("), Qt::CaseSensitive),
-             "application.cpp must use qobject_cast<MainWindow*> for typed window checks");
+             "application.cpp must not use inherits() for MainWindow checks");
+
+    const auto [windowContent, windowError] =
+        readTextFile(QStringLiteral("oneg4fm/application_window_orchestration.cpp"));
+    QVERIFY2(windowError.isEmpty(), qPrintable(windowError));
+    QVERIFY2(!windowContent.contains(QStringLiteral("inherits(\"Oneg4FM::MainWindow\")"), Qt::CaseSensitive),
+             "application_window_orchestration.cpp must use typed MainWindow checks instead of inherits()");
+    QVERIFY2(windowContent.contains(QStringLiteral("qobject_cast<MainWindow*>("), Qt::CaseSensitive),
+             "application_window_orchestration.cpp must use qobject_cast<MainWindow*> for typed window checks");
+}
+
+void FileOpsInventoryTest::applicationLifecycleAndWindowOrchestrationAreSplitIntoDedicatedUnits() {
+    const auto [applicationContent, applicationError] = readTextFile(QStringLiteral("oneg4fm/application.cpp"));
+    QVERIFY2(applicationError.isEmpty(), qPrintable(applicationError));
+
+    const QStringList forbiddenInApplicationCpp = {
+        QStringLiteral("void Application::init("),
+        QStringLiteral("int Application::exec("),
+        QStringLiteral("void Application::findFiles("),
+        QStringLiteral("void Application::launchFiles("),
+        QStringLiteral("void Application::onSigtermNotified("),
+    };
+    for (const QString& signature : forbiddenInApplicationCpp) {
+        QVERIFY2(!applicationContent.contains(signature, Qt::CaseSensitive),
+                 qPrintable(QStringLiteral("application.cpp should not define %1 after decomposition").arg(signature)));
+    }
+
+    const auto [lifecycleContent, lifecycleError] = readTextFile(QStringLiteral("oneg4fm/application_lifecycle.cpp"));
+    QVERIFY2(lifecycleError.isEmpty(), qPrintable(lifecycleError));
+    const QStringList requiredLifecycleSignatures = {
+        QStringLiteral("void Application::initWatch("),
+        QStringLiteral("void Application::init("),
+        QStringLiteral("int Application::exec("),
+        QStringLiteral("void Application::onAboutToQuit("),
+        QStringLiteral("void Application::onSigtermNotified("),
+    };
+    for (const QString& signature : requiredLifecycleSignatures) {
+        QVERIFY2(lifecycleContent.contains(signature, Qt::CaseSensitive),
+                 qPrintable(QStringLiteral("application_lifecycle.cpp missing signature: %1").arg(signature)));
+    }
+
+    const auto [windowContent, windowError] =
+        readTextFile(QStringLiteral("oneg4fm/application_window_orchestration.cpp"));
+    QVERIFY2(windowError.isEmpty(), qPrintable(windowError));
+    const QStringList requiredWindowSignatures = {
+        QStringLiteral("void Application::findFiles("),
+        QStringLiteral("void Application::launchFiles("),
+        QStringLiteral("void Application::ShowItems("),
+        QStringLiteral("void Application::updateFromSettings("),
+    };
+    for (const QString& signature : requiredWindowSignatures) {
+        QVERIFY2(
+            windowContent.contains(signature, Qt::CaseSensitive),
+            qPrintable(QStringLiteral("application_window_orchestration.cpp missing signature: %1").arg(signature)));
+    }
+}
+
+void FileOpsInventoryTest::shutdownOrderingIsExplicitInLifecycleUnit() {
+    const auto [content, error] = readTextFile(QStringLiteral("oneg4fm/application_lifecycle.cpp"));
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+
+    const int shutdownFnPos = content.indexOf(QStringLiteral("void Application::performShutdownSequence()"));
+    QVERIFY2(shutdownFnPos >= 0, "application_lifecycle.cpp must define performShutdownSequence()");
+
+    const int savePos = content.indexOf(QStringLiteral("settings_.save();"), shutdownFnPos);
+    const int stopWatcherPos = content.indexOf(QStringLiteral("stopUserDirsWatcher();"), shutdownFnPos);
+    const int stopDbusPos = content.indexOf(QStringLiteral("stopPrimaryDbusServices();"), shutdownFnPos);
+
+    QVERIFY2(savePos >= 0, "performShutdownSequence must persist settings");
+    QVERIFY2(stopWatcherPos >= 0, "performShutdownSequence must stop user-dir watchers");
+    QVERIFY2(stopDbusPos >= 0, "performShutdownSequence must stop DBus services");
+    QVERIFY2(savePos < stopWatcherPos && stopWatcherPos < stopDbusPos,
+             "performShutdownSequence must enforce save -> stop watcher -> stop DBus ordering");
+
+    const int aboutToQuitPos = content.indexOf(QStringLiteral("void Application::onAboutToQuit()"));
+    QVERIFY2(aboutToQuitPos >= 0, "application_lifecycle.cpp must define onAboutToQuit()");
+    const int invokeShutdownPos = content.indexOf(QStringLiteral("performShutdownSequence();"), aboutToQuitPos);
+    QVERIFY2(invokeShutdownPos >= 0, "onAboutToQuit must invoke performShutdownSequence()");
+}
+
+void FileOpsInventoryTest::mainWindowUiKeysAndMimeTypesAreCentralized() {
+    const auto [constantsContent, constantsError] = readTextFile(QStringLiteral("oneg4fm/mainwindow_ui_constants.h"));
+    QVERIFY2(constantsError.isEmpty(), qPrintable(constantsError));
+    QVERIFY2(constantsContent.contains(QStringLiteral("kTabMimeType"), Qt::CaseSensitive),
+             "mainwindow_ui_constants.h must define kTabMimeType");
+    QVERIFY2(constantsContent.contains(QStringLiteral("application/oneg4fm-tab"), Qt::CaseSensitive),
+             "mainwindow_ui_constants.h must define the tab drag MIME type");
+    QVERIFY2(constantsContent.contains(QStringLiteral("kBookmarkActionProperty"), Qt::CaseSensitive),
+             "mainwindow_ui_constants.h must define kBookmarkActionProperty");
+    QVERIFY2(constantsContent.contains(QStringLiteral("oneg4fm_bookmark"), Qt::CaseSensitive),
+             "mainwindow_ui_constants.h must define the bookmark action property key");
+    QVERIFY2(constantsContent.contains(QStringLiteral("kTabDroppedProperty"), Qt::CaseSensitive),
+             "mainwindow_ui_constants.h must define kTabDroppedProperty");
+    QVERIFY2(constantsContent.contains(QStringLiteral("_oneg4fm_tab_dropped"), Qt::CaseSensitive),
+             "mainwindow_ui_constants.h must define the tab-drop property key");
+
+    const auto [dragDropContent, dragDropError] = readTextFile(QStringLiteral("oneg4fm/mainwindow_dragdrop.cpp"));
+    QVERIFY2(dragDropError.isEmpty(), qPrintable(dragDropError));
+    QVERIFY2(dragDropContent.contains(QStringLiteral("UiConstants::kTabMimeType"), Qt::CaseSensitive),
+             "mainwindow_dragdrop.cpp must use UiConstants::kTabMimeType");
+    QVERIFY2(!dragDropContent.contains(QStringLiteral("\"application/oneg4fm-tab\""), Qt::CaseSensitive),
+             "mainwindow_dragdrop.cpp must not hardcode the tab MIME type");
+
+    const auto [tabbarContent, tabbarError] = readTextFile(QStringLiteral("oneg4fm/tabbar.cpp"));
+    QVERIFY2(tabbarError.isEmpty(), qPrintable(tabbarError));
+    QVERIFY2(tabbarContent.contains(QStringLiteral("UiConstants::kTabMimeType"), Qt::CaseSensitive),
+             "tabbar.cpp must use UiConstants::kTabMimeType");
+    QVERIFY2(!tabbarContent.contains(QStringLiteral("\"application/oneg4fm-tab\""), Qt::CaseSensitive),
+             "tabbar.cpp must not hardcode the tab MIME type");
+    QVERIFY2(tabbarContent.contains(QStringLiteral("UiConstants::kTabDroppedProperty"), Qt::CaseSensitive),
+             "tabbar.cpp must use UiConstants::kTabDroppedProperty");
+
+    const auto [bookmarksContent, bookmarksError] = readTextFile(QStringLiteral("oneg4fm/mainwindow_bookmarks.cpp"));
+    QVERIFY2(bookmarksError.isEmpty(), qPrintable(bookmarksError));
+    QVERIFY2(bookmarksContent.contains(QStringLiteral("UiConstants::kBookmarkActionProperty"), Qt::CaseSensitive),
+             "mainwindow_bookmarks.cpp must use UiConstants::kBookmarkActionProperty");
+    QVERIFY2(!bookmarksContent.contains(QStringLiteral("\"oneg4fm_bookmark\""), Qt::CaseSensitive),
+             "mainwindow_bookmarks.cpp must not hardcode bookmark property keys");
 }
 
 void FileOpsInventoryTest::hackingDocCoversLinuxSecurityModelAndContract() {

@@ -13,6 +13,7 @@
 #include "mainwindow.h"
 #include "tabbar.h"
 #include "tabpage.h"
+#include "mainwindow_ui_constants.h"
 
 namespace Oneg4FM {
 
@@ -22,7 +23,7 @@ void MainWindow::dragEnterEvent(QDragEnterEvent* event) {
     }
 
     const QMimeData* mime = event->mimeData();
-    if (!mime || !mime->hasFormat(QStringLiteral("application/oneg4fm-tab"))) {
+    if (!mime || !mime->hasFormat(UiConstants::kTabMimeType)) {
         return;
     }
 
@@ -38,7 +39,7 @@ void MainWindow::dropEvent(QDropEvent* event) {
     }
 
     const QMimeData* mime = event->mimeData();
-    if (mime && mime->hasFormat(QStringLiteral("application/oneg4fm-tab"))) {
+    if (mime && mime->hasFormat(UiConstants::kTabMimeType)) {
         if (QObject* sourceObject = event->source()) {
             // announce that the tab drop is accepted by us (see TabBar::mouseMoveEvent)
             sourceObject->setProperty(TabBar::tabDropped, true);

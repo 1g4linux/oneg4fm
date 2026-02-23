@@ -6,6 +6,9 @@ endif()
 
 set(oneg4fm_SRCS
     application.cpp
+    application_lifecycle.cpp
+    application_startup_plan.cpp
+    application_window_orchestration.cpp
     oneg4fm.cpp
     mainwindow.cpp
     mainwindow_viewframe.cpp

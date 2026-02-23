@@ -103,6 +103,9 @@ class Application : public QApplication {
    private:
     void initWatch();
     void installSigtermHandler();
+    void performShutdownSequence();
+    void stopUserDirsWatcher();
+    void stopPrimaryDbusServices();
 
     bool isPrimaryInstance;
     Panel::LibFmQt libFm_;
@@ -117,6 +120,7 @@ class Application : public QApplication {
     QFileSystemWatcher* userDirsWatcher_;
     QString userDirsFile_;
     bool openingLastTabs_;
+    bool shutdownSequenceDone_;
 
     int argc_;
     char** argv_;

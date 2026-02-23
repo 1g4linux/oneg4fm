@@ -13,6 +13,7 @@
 #include "application.h"
 #include "mainwindow.h"
 #include "tabpage.h"
+#include "mainwindow_ui_constants.h"
 
 namespace Oneg4FM {
 
@@ -30,7 +31,7 @@ void MainWindow::loadBookmarksMenu() {
         }
 
         // identify bookmark actions via a custom property
-        if (action->property("oneg4fm_bookmark").toBool()) {
+        if (action->property(UiConstants::kBookmarkActionProperty).toBool()) {
             menu->removeAction(action);
             action->deleteLater();
         }

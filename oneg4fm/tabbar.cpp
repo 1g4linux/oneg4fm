@@ -4,6 +4,7 @@
  */
 
 #include "tabbar.h"
+#include "mainwindow_ui_constants.h"
 
 // Qt Headers
 #include <QApplication>
@@ -15,12 +16,7 @@
 
 namespace Oneg4FM {
 
-namespace {
-// Use QStringLiteral for MIME type to avoid runtime allocation
-const QString kTabMimeType = QStringLiteral("application/oneg4fm-tab");
-}  // namespace
-
-const char* TabBar::tabDropped = "_oneg4fm_tab_dropped";
+const char* TabBar::tabDropped = UiConstants::kTabDroppedProperty;
 
 TabBar::TabBar(QWidget* parent) : QTabBar(parent), dragStarted_(false), detachable_(true) {
     // elide long tab titles on the right, in combination with minimumTabSizeHint()
@@ -77,7 +73,7 @@ void TabBar::handleTabDrag(QMouseEvent* event) {
 
     QPointer<QDrag> drag = new QDrag(this);
     auto* mimeData = new QMimeData;
-    mimeData->setData(kTabMimeType, QByteArray());
+    mimeData->setData(UiConstants::kTabMimeType, QByteArray());
     drag->setMimeData(mimeData);
 
     const int tabCountBefore = count();
@@ -149,7 +145,7 @@ void TabBar::mouseReleaseEvent(QMouseEvent* event) {
 
 // Let the main window receive dragged tabs
 void TabBar::dragEnterEvent(QDragEnterEvent* event) {
-    if (detachable_ && event->mimeData()->hasFormat(kTabMimeType)) {
+    if (detachable_ && event->mimeData()->hasFormat(UiConstants::kTabMimeType)) {
         // ignore here so the main window can handle the drop
         event->ignore();
     }
