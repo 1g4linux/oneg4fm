@@ -2,7 +2,89 @@
 #include "totalsizejob.h"
 #include "fileinfo_p.h"
 
+#include <algorithm>
+#include <cerrno>
+#include <cstdint>
+#include <string>
+
+#ifndef LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
+#define LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT 0
+#endif
+
+#if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
+#include "../../../src/core/file_ops_contract.h"
+#endif
+
 namespace Fm {
+
+namespace {
+
+#if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
+namespace CoreFileOps = PCManFM::FileOpsContract;
+
+bool toNativeLocalPath(const FilePath& path, std::string& out) {
+    if (!path.isNative()) {
+        out.clear();
+        return false;
+    }
+
+    const auto localPath = path.localPath();
+    if (!localPath || localPath.get()[0] == '\0') {
+        out.clear();
+        return false;
+    }
+
+    out.assign(localPath.get());
+    return true;
+}
+
+FilePath toFilePathFromNative(const std::string& nativePath, const FilePath& fallback) {
+    if (!nativePath.empty()) {
+        return FilePath::fromLocalPath(nativePath.c_str());
+    }
+    return fallback;
+}
+
+GFileInfoPtr queryInfoOrFallback(const FilePath& path, GCancellable* cancellable) {
+    if (path) {
+        GErrorPtr err;
+        GFileInfo* info = g_file_query_info(path.gfile().get(), defaultGFileInfoQueryAttribs,
+                                            G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, cancellable, &err);
+        if (info) {
+            return GFileInfoPtr{info, false};
+        }
+    }
+
+    GFileInfo* fallback = g_file_info_new();
+    if (path) {
+        const auto basename = path.baseName();
+        if (basename) {
+            g_file_info_set_name(fallback, basename.get());
+            g_file_info_set_display_name(fallback, basename.get());
+        }
+    }
+    return GFileInfoPtr{fallback, false};
+}
+
+CoreFileOps::Operation toCoreOperation(FileTransferJob::Mode mode) {
+    return mode == FileTransferJob::Mode::MOVE ? CoreFileOps::Operation::Move : CoreFileOps::Operation::Copy;
+}
+
+GErrorPtr coreResultToError(const CoreFileOps::Result& result, const char* fallbackMessage) {
+    const int code =
+        result.error.sysErrno != 0 ? g_io_error_from_errno(result.error.sysErrno) : static_cast<int>(G_IO_ERROR_FAILED);
+    const char* message = fallbackMessage;
+    if (!result.error.message.empty()) {
+        message = result.error.message.c_str();
+    }
+
+    GErrorPtr err;
+    g_set_error(&err, G_IO_ERROR, code, "%s", message);
+    return err;
+}
+#endif
+
+}  // namespace
 
 FileTransferJob::FileTransferJob(FilePathList srcPaths, Mode mode)
     : FileOperationJob{}, srcPaths_{std::move(srcPaths)}, mode_{mode}, hasDestDirPath_{false} {}
@@ -669,6 +751,145 @@ void FileTransferJob::exec() {
         return;
     }
 
+#if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
+    auto runCoreLocalPath = [this](const FilePath& srcPath, const FilePath& originalDestPath) -> bool {
+        std::string sourceNative;
+        std::string destinationNative;
+        if (!toNativeLocalPath(srcPath, sourceNative) || !toNativeLocalPath(originalDestPath, destinationNative)) {
+            return false;
+        }
+
+        while (!isCancelled()) {
+            std::uint64_t baseFinishedBytes = 0;
+            std::uint64_t baseFinishedFiles = 0;
+            finishedAmount(baseFinishedBytes, baseFinishedFiles);
+
+            const FilePath destinationPath = FilePath::fromLocalPath(destinationNative.c_str());
+            const FilePath destinationDir = destinationPath.parent();
+            std::string destinationDirNative;
+            if (!destinationDir || !toNativeLocalPath(destinationDir, destinationDirNative)) {
+                GErrorPtr err;
+                g_set_error(&err, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "%s",
+                            "Destination parent directory is invalid");
+                const ErrorAction action = emitError(err, ErrorSeverity::MODERATE);
+                if (action == ErrorAction::ABORT) {
+                    cancel();
+                }
+                return false;
+            }
+
+            struct RenameRequestState {
+                bool requested = false;
+                std::string destination;
+            } renameRequest;
+
+            CoreFileOps::Request request;
+            request.operation = toCoreOperation(mode_);
+            request.sources = {sourceNative};
+            request.destination.targetDir = destinationDirNative;
+            request.destination.mappingMode = CoreFileOps::DestinationMappingMode::ExplicitPerSource;
+            request.destination.explicitTargets = {destinationNative};
+            request.conflictPolicy = CoreFileOps::ConflictPolicy::Prompt;
+            request.symlinkPolicy.followSymlinks = false;
+            request.symlinkPolicy.copyMode = CoreFileOps::SymlinkCopyMode::CopyLinkAsLink;
+            request.metadata.preserveOwnership = true;
+            request.metadata.preservePermissions = true;
+            request.metadata.preserveTimestamps = true;
+            request.atomicity.requireAtomicReplace = false;
+            request.atomicity.bestEffortAtomicMove = true;
+            request.cancelGranularity = CoreFileOps::CancelCheckpointGranularity::PerChunk;
+            request.cancellationRequested = [this]() { return isCancelled(); };
+            request.linuxSafety.requireOpenat2Resolve = true;
+            request.linuxSafety.requireLandlock = false;
+            request.linuxSafety.requireSeccomp = false;
+            request.linuxSafety.workerMode = CoreFileOps::WorkerMode::InProcess;
+
+            CoreFileOps::EventHandlers handlers;
+            handlers.onProgress = [this, baseFinishedBytes, baseFinishedFiles,
+                                   srcPath](const CoreFileOps::ProgressSnapshot& progress) {
+                setCurrentFile(toFilePathFromNative(progress.currentPath, srcPath));
+                setCurrentFileProgress(0, 0);
+
+                const std::uint64_t bytesDone = progress.bytesDone;
+                const std::uint64_t filesDone =
+                    progress.filesDone > 0 ? static_cast<std::uint64_t>(progress.filesDone) : 0;
+                setFinishedAmount(baseFinishedBytes + bytesDone, baseFinishedFiles + filesDone);
+            };
+
+            handlers.onConflict = [this, &renameRequest, srcPath,
+                                   originalDestPath](const CoreFileOps::ConflictEvent& event) {
+                const FilePath eventSource = toFilePathFromNative(event.sourcePath, srcPath);
+                const FilePath eventDestination = toFilePathFromNative(event.destinationPath, originalDestPath);
+
+                GFileInfoPtr sourceInfo = queryInfoOrFallback(eventSource, cancellable().get());
+                GFileInfoPtr destinationInfo = queryInfoOrFallback(eventDestination, cancellable().get());
+
+                FilePath newDestination;
+                const FileExistsAction action = askRename(FileInfo{sourceInfo, eventSource},
+                                                          FileInfo{destinationInfo, eventDestination}, newDestination);
+                switch (action) {
+                    case FileOperationJob::OVERWRITE:
+                        return CoreFileOps::ConflictResolution::Overwrite;
+                    case FileOperationJob::SKIP:
+                    case FileOperationJob::SKIP_ERROR:
+                        return CoreFileOps::ConflictResolution::Skip;
+                    case FileOperationJob::RENAME: {
+                        std::string renamedDestination;
+                        if (newDestination && toNativeLocalPath(newDestination, renamedDestination)) {
+                            renameRequest.requested = true;
+                            renameRequest.destination = std::move(renamedDestination);
+                            return CoreFileOps::ConflictResolution::Abort;
+                        }
+                        return CoreFileOps::ConflictResolution::Rename;
+                    }
+                    case FileOperationJob::CANCEL:
+                    default:
+                        cancel();
+                        return CoreFileOps::ConflictResolution::Abort;
+                }
+            };
+
+            const CoreFileOps::Result result = CoreFileOps::run(request, handlers);
+
+            if (renameRequest.requested) {
+                destinationNative = std::move(renameRequest.destination);
+                setFinishedAmount(baseFinishedBytes, baseFinishedFiles);
+                continue;
+            }
+
+            if (result.success) {
+                const std::uint64_t bytesDone = result.finalProgress.bytesDone;
+                const std::uint64_t filesDone =
+                    result.finalProgress.filesDone > 0 ? static_cast<std::uint64_t>(result.finalProgress.filesDone) : 0;
+                setFinishedAmount(baseFinishedBytes + bytesDone, baseFinishedFiles + filesDone);
+                setCurrentFileProgress(0, 0);
+                return true;
+            }
+
+            if (result.cancelled || result.error.sysErrno == ECANCELED) {
+                cancel();
+                setCurrentFileProgress(0, 0);
+                return false;
+            }
+
+            GErrorPtr err = coreResultToError(result, "Local file operation failed");
+            const ErrorAction action = emitError(err, ErrorSeverity::MODERATE);
+            if (action == ErrorAction::RETRY) {
+                setFinishedAmount(baseFinishedBytes, baseFinishedFiles);
+                setCurrentFileProgress(0, 0);
+                continue;
+            }
+            if (action == ErrorAction::ABORT) {
+                cancel();
+            }
+            setCurrentFileProgress(0, 0);
+            return false;
+        }
+
+        return false;
+    };
+#endif
+
     // copy the files
     for (size_t i = 0; i < srcPaths_.size(); ++i) {
         if (isCancelled()) {
@@ -676,6 +897,14 @@ void FileTransferJob::exec() {
         }
         const auto& srcPath = srcPaths_[i];
         const auto& destPath = destPaths_[i];
+
+#if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
+        if (mode_ != Mode::LINK && srcPath.isNative() && destPath.isNative()) {
+            runCoreLocalPath(srcPath, destPath);
+            continue;
+        }
+#endif
+
         auto destDirPath = destPath.parent();
         processPath(srcPath, destDirPath, destPath.baseName().get());
     }

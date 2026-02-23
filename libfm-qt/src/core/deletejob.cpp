@@ -2,7 +2,63 @@
 #include "totalsizejob.h"
 #include "fileinfo_p.h"
 
+#include <cerrno>
+#include <cstdint>
+#include <string>
+
+#ifndef LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
+#define LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT 0
+#endif
+
+#if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
+#include "../../../src/core/file_ops_contract.h"
+#endif
+
 namespace Fm {
+
+namespace {
+
+#if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
+namespace CoreFileOps = PCManFM::FileOpsContract;
+
+bool toNativeLocalPath(const FilePath& path, std::string& out) {
+    if (!path.isNative()) {
+        out.clear();
+        return false;
+    }
+
+    const auto localPath = path.localPath();
+    if (!localPath || localPath.get()[0] == '\0') {
+        out.clear();
+        return false;
+    }
+
+    out.assign(localPath.get());
+    return true;
+}
+
+FilePath toFilePathFromNative(const std::string& nativePath, const FilePath& fallback) {
+    if (!nativePath.empty()) {
+        return FilePath::fromLocalPath(nativePath.c_str());
+    }
+    return fallback;
+}
+
+GErrorPtr coreResultToError(const CoreFileOps::Result& result, const char* fallbackMessage) {
+    const int code =
+        result.error.sysErrno != 0 ? g_io_error_from_errno(result.error.sysErrno) : static_cast<int>(G_IO_ERROR_FAILED);
+    const char* message = fallbackMessage;
+    if (!result.error.message.empty()) {
+        message = result.error.message.c_str();
+    }
+
+    GErrorPtr err;
+    g_set_error(&err, G_IO_ERROR, code, "%s", message);
+    return err;
+}
+#endif
+
+}  // namespace
 
 bool DeleteJob::deleteFile(const FilePath& path, GFileInfoPtr inf) {
     ErrorAction act = ErrorAction::CONTINUE;
@@ -136,10 +192,91 @@ void DeleteJob::exec() {
     setTotalAmount(totalSizeJob.totalSize(), totalSizeJob.fileCount());
     Q_EMIT preparedToRun();
 
+#if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
+    auto runCoreLocalDelete = [this](const FilePath& path) -> bool {
+        std::string sourceNative;
+        if (!toNativeLocalPath(path, sourceNative)) {
+            return false;
+        }
+
+        while (!isCancelled()) {
+            std::uint64_t baseFinishedBytes = 0;
+            std::uint64_t baseFinishedFiles = 0;
+            finishedAmount(baseFinishedBytes, baseFinishedFiles);
+
+            CoreFileOps::Request request;
+            request.operation = CoreFileOps::Operation::Delete;
+            request.sources = {sourceNative};
+            request.symlinkPolicy.followSymlinks = false;
+            request.symlinkPolicy.copyMode = CoreFileOps::SymlinkCopyMode::CopyLinkAsLink;
+            request.metadata.preserveOwnership = true;
+            request.metadata.preservePermissions = true;
+            request.metadata.preserveTimestamps = true;
+            request.cancelGranularity = CoreFileOps::CancelCheckpointGranularity::PerChunk;
+            request.cancellationRequested = [this]() { return isCancelled(); };
+            request.linuxSafety.requireOpenat2Resolve = true;
+            request.linuxSafety.requireLandlock = false;
+            request.linuxSafety.requireSeccomp = false;
+            request.linuxSafety.workerMode = CoreFileOps::WorkerMode::InProcess;
+
+            CoreFileOps::EventHandlers handlers;
+            handlers.onProgress = [this, baseFinishedBytes, baseFinishedFiles,
+                                   path](const CoreFileOps::ProgressSnapshot& progress) {
+                setCurrentFile(toFilePathFromNative(progress.currentPath, path));
+                setCurrentFileProgress(0, 0);
+
+                const std::uint64_t bytesDone = progress.bytesDone;
+                const std::uint64_t filesDone =
+                    progress.filesDone > 0 ? static_cast<std::uint64_t>(progress.filesDone) : 0;
+                setFinishedAmount(baseFinishedBytes + bytesDone, baseFinishedFiles + filesDone);
+            };
+
+            const CoreFileOps::Result result = CoreFileOps::run(request, handlers);
+            if (result.success) {
+                const std::uint64_t bytesDone = result.finalProgress.bytesDone;
+                const std::uint64_t filesDone =
+                    result.finalProgress.filesDone > 0 ? static_cast<std::uint64_t>(result.finalProgress.filesDone) : 0;
+                setFinishedAmount(baseFinishedBytes + bytesDone, baseFinishedFiles + filesDone);
+                setCurrentFileProgress(0, 0);
+                return true;
+            }
+
+            if (result.cancelled || result.error.sysErrno == ECANCELED) {
+                cancel();
+                setCurrentFileProgress(0, 0);
+                return false;
+            }
+
+            GErrorPtr err = coreResultToError(result, "Local delete operation failed");
+            const ErrorAction action = emitError(err, ErrorSeverity::MODERATE);
+            if (action == ErrorAction::RETRY) {
+                setFinishedAmount(baseFinishedBytes, baseFinishedFiles);
+                setCurrentFileProgress(0, 0);
+                continue;
+            }
+            if (action == ErrorAction::ABORT) {
+                cancel();
+            }
+            setCurrentFileProgress(0, 0);
+            return false;
+        }
+
+        return false;
+    };
+#endif
+
     for (auto& path : paths_) {
         if (isCancelled()) {
             break;
         }
+
+#if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
+        if (path.isNative()) {
+            runCoreLocalDelete(path);
+            continue;
+        }
+#endif
+
         deleteFile(path, GFileInfoPtr{nullptr});
     }
 }

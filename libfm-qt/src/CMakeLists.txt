@@ -47,6 +47,16 @@ set(libfm_core_SRCS
     customactions/fileactioncondition.cpp
 )
 
+set(LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT 0)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../src/core/file_ops_contract.cpp" AND DEFINED BLAKE3_LIBRARIES)
+    set(LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT 1)
+    list(APPEND libfm_core_SRCS
+        ../../src/core/file_ops_contract.cpp
+        ../../src/core/fs_ops.cpp
+        ../../src/core/linux_fs_safety.cpp
+    )
+endif()
+
 set(libfm_SRCS
     ${libfm_core_SRCS}
     libfmqt.cpp
@@ -133,6 +143,9 @@ target_link_libraries(${LIBFM_QT_LIBRARY_NAME}
         ${XCB_LIBRARIES}
         ${EXIF_LIBRARIES}
 )
+if(LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT)
+    target_link_libraries(${LIBFM_QT_LIBRARY_NAME} PRIVATE ${BLAKE3_LIBRARIES})
+endif()
 
 # set libtool soname
 set_target_properties(${LIBFM_QT_LIBRARY_NAME} PROPERTIES
@@ -142,6 +155,7 @@ set_target_properties(${LIBFM_QT_LIBRARY_NAME} PROPERTIES
 
 target_include_directories(${LIBFM_QT_LIBRARY_NAME}
     PRIVATE "${Qt6Gui_PRIVATE_INCLUDE_DIRS}"
+        ${BLAKE3_INCLUDE_DIRS}
         core/legacy
         "${CMAKE_CURRENT_BINARY_DIR}"
     PUBLIC
@@ -162,6 +176,7 @@ message(STATUS "fm-qt6 interface includes: ${_fmqt_interface_includes}")
 target_compile_definitions(${LIBFM_QT_LIBRARY_NAME}
     PRIVATE "LIBFM_QT_DATA_DIR=\"${LIBFM_QT_DATA_DIR}\""
             "GETTEXT_PACKAGE=\"\""
+            "LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT=${LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT}"
     PUBLIC "QT_NO_KEYWORDS"
 )
 

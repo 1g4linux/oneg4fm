@@ -67,6 +67,16 @@ pcmanfm_add_test(oneg4fm-ops-tests
         ${BLAKE3_INCLUDE_DIRS}
 )
 
+pcmanfm_add_test(oneg4fm-libfmqt-fileops-bridge-tests
+    SOURCES
+        libfmqt_fileops_bridge_test.cpp
+    LIBS
+        fm-qt6
+    INCLUDES
+        ../libfm-qt/src
+        ${CMAKE_BINARY_DIR}/libfm-qt/src
+)
+
 pcmanfm_add_test(oneg4fm-file-ops-contract-tests
     SOURCES
         file_ops_contract_test.cpp
