@@ -1,0 +1,5 @@
+# Compatibility alias allowlist for legacy identity shims.
+# Format: <legacy-identifier>|<owner>|<removal-deadline>|<reason>
+#
+# ADR 0001 currently mandates a hard cut with no compatibility aliases.
+# Keep this file empty unless policy changes to a temporary alias window.

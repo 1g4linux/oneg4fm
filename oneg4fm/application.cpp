@@ -62,6 +62,24 @@ namespace Oneg4FM {
 static constexpr const char* serviceName = ONEG4FM_DBUS_APP_SERVICE;
 static constexpr const char* ifaceName = ONEG4FM_DBUS_APP_INTERFACE;
 
+MainWindow* findLastMainWindow(const QWidgetList& windows) {
+    for (auto it = windows.rbegin(); it != windows.rend(); ++it) {
+        if (auto* mainWindow = qobject_cast<MainWindow*>(*it)) {
+            return mainWindow;
+        }
+    }
+    return nullptr;
+}
+
+bool hasAnyMainWindow(const QWidgetList& windows) {
+    for (const auto* window : windows) {
+        if (qobject_cast<const MainWindow*>(window)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 //-----------------------------------------------------------------------------
 // ProxyStyle
 //-----------------------------------------------------------------------------
@@ -489,15 +507,8 @@ void Application::launchFiles(const QString& cwd, const QStringList& paths, bool
         MainWindow* window = MainWindow::lastActive();
 
         // if there is no last active window, find the last created MainWindow
-        // Improved: using reverse iterators is cleaner than the manual loop
         if (window == nullptr) {
-            const QWidgetList windows = topLevelWidgets();
-            for (auto it = windows.rbegin(); it != windows.rend(); ++it) {
-                if ((*it)->inherits("Oneg4FM::MainWindow")) {
-                    window = static_cast<MainWindow*>(*it);
-                    break;
-                }
-            }
+            window = findLastMainWindow(topLevelWidgets());
         }
 
         if (window != nullptr && openingLastTabs_) {
@@ -519,16 +530,7 @@ void Application::launchFiles(const QString& cwd, const QStringList& paths, bool
 
         // if none of the last tabs could be opened and there is still no main window,
         // fall back to opening the current directory
-        bool hasWindow = false;
-        const QWidgetList windows = topLevelWidgets();
-        for (const auto* win : windows) {
-            if (win->inherits("Oneg4FM::MainWindow")) {
-                hasWindow = true;
-                break;
-            }
-        }
-
-        if (!hasWindow) {
+        if (!hasAnyMainWindow(topLevelWidgets())) {
             QStringList fallbackPaths;
             fallbackPaths.push_back(QDir::currentPath());
             launchFiles(QDir::currentPath(), fallbackPaths, inNewWindow, false);
@@ -615,13 +617,7 @@ void Application::ShowItems(const QStringList& uriList, const QString& startupId
         window = MainWindow::lastActive();
 
         if (window == nullptr) {
-            const QWidgetList windows = topLevelWidgets();
-            for (auto it = windows.rbegin(); it != windows.rend(); ++it) {
-                if ((*it)->inherits("Oneg4FM::MainWindow")) {
-                    window = static_cast<MainWindow*>(*it);
-                    break;
-                }
-            }
+            window = findLastMainWindow(topLevelWidgets());
         }
     }
 
@@ -687,8 +683,7 @@ void Application::onPropJobFinished() {
 void Application::updateFromSettings() {
     const QWidgetList windows = this->topLevelWidgets();
     for (QWidget* window : windows) {
-        if (window->inherits("Oneg4FM::MainWindow")) {
-            auto* mainWindow = static_cast<MainWindow*>(window);
+        if (auto* mainWindow = qobject_cast<MainWindow*>(window)) {
             mainWindow->updateFromSettings(settings_);
         }
     }
@@ -735,8 +730,7 @@ void Application::onSigtermNotified() {
     // close all main windows cleanly before quitting
     const auto windows = topLevelWidgets();
     for (auto* win : windows) {
-        if (win->inherits("Oneg4FM::MainWindow")) {
-            auto* mainWindow = static_cast<MainWindow*>(win);
+        if (auto* mainWindow = qobject_cast<MainWindow*>(win)) {
             mainWindow->close();
         }
     }

@@ -30,8 +30,11 @@ class FileOpsInventoryTest : public QObject {
     void docsForPhaseFiveThreeExistAndAreNonEmpty();
     void dbusCompatibilityAdrExistsAndSpecifiesPolicy();
     void dbusBuildArtifactsEnforceHardCutServiceIdentity();
+    void compatibilityAliasAllowlistMatchesDbusPolicy();
     void installArtifactsUseOneg4fmIdentity();
+    void installedArtifactsRejectLegacyIdentityTokens();
     void userFacingIdentitySweepUsesExplicitCompatibilityAllowlist();
+    void applicationUsesTypedMainWindowChecks();
     void hackingDocCoversLinuxSecurityModelAndContract();
     void coreContractDocCoversFieldsEventsAndErrors();
     void adapterDocCoversQtAndLibfmQtBridge();
@@ -326,6 +329,55 @@ void FileOpsInventoryTest::dbusBuildArtifactsEnforceHardCutServiceIdentity() {
              "application.cpp must not reference legacy org.pcmanfm identifiers");
 }
 
+void FileOpsInventoryTest::compatibilityAliasAllowlistMatchesDbusPolicy() {
+    const auto [adrContent, adrError] = readTextFile(QStringLiteral("docs/adr/0001-dbus-compat-policy.md"));
+    QVERIFY2(adrError.isEmpty(), qPrintable(adrError));
+
+    const auto [allowlistContent, allowlistError] =
+        readTextFile(QStringLiteral("docs/compatibility-alias-allowlist.txt"));
+    QVERIFY2(allowlistError.isEmpty(), qPrintable(allowlistError));
+
+    QStringList entries;
+    const QStringList lines = allowlistContent.split(QLatin1Char('\n'));
+    for (int i = 0; i < lines.size(); ++i) {
+        const QString line = lines.at(i).trimmed();
+        if (line.isEmpty() || line.startsWith(QLatin1Char('#'))) {
+            continue;
+        }
+        entries.append(line);
+    }
+
+    const bool hardCutPolicy = adrContent.contains(QStringLiteral("hard cut"), Qt::CaseInsensitive) &&
+                               adrContent.contains(QStringLiteral("no compatibility alias"), Qt::CaseInsensitive);
+
+    if (hardCutPolicy) {
+        QVERIFY2(entries.isEmpty(), "compatibility-alias-allowlist.txt must be empty under hard-cut no-alias policy");
+        return;
+    }
+
+    QVERIFY2(!entries.isEmpty(), "Temporary-alias policy requires compatibility-alias-allowlist.txt entries");
+
+    for (int i = 0; i < entries.size(); ++i) {
+        const QStringList parts = entries.at(i).split(QLatin1Char('|'));
+        QVERIFY2(parts.size() == 4,
+                 qPrintable(QStringLiteral("Invalid compatibility alias allowlist entry at line %1").arg(i + 1)));
+
+        const QString legacyIdentifier = parts.at(0).trimmed();
+        const QString owner = parts.at(1).trimmed();
+        const QString removalDeadline = parts.at(2).trimmed();
+        const QString reason = parts.at(3).trimmed();
+
+        QVERIFY2(!legacyIdentifier.isEmpty(),
+                 qPrintable(QStringLiteral("Compatibility alias entry %1 has empty identifier").arg(i + 1)));
+        QVERIFY2(!owner.isEmpty(),
+                 qPrintable(QStringLiteral("Compatibility alias entry %1 has empty owner").arg(i + 1)));
+        QVERIFY2(!removalDeadline.isEmpty(),
+                 qPrintable(QStringLiteral("Compatibility alias entry %1 has empty removal deadline").arg(i + 1)));
+        QVERIFY2(!reason.isEmpty(),
+                 qPrintable(QStringLiteral("Compatibility alias entry %1 has empty reason").arg(i + 1)));
+    }
+}
+
 void FileOpsInventoryTest::installArtifactsUseOneg4fmIdentity() {
     const QString buildRoot = binaryRoot();
     QVERIFY2(!buildRoot.isEmpty(), "ONEG4FM_BINARY_DIR compile definition is missing");
@@ -408,6 +460,76 @@ void FileOpsInventoryTest::installArtifactsUseOneg4fmIdentity() {
     QVERIFY2(foundService, "Missing installed service artifact: share/dbus-1/services/org.oneg4fm.oneg4fm.service");
     QVERIFY2(foundIcon, "Missing installed icon artifact: share/icons/hicolor/scalable/apps/oneg4fm.svg");
     QVERIFY2(foundMimePackage, "Missing installed MIME artifact: share/mime/packages/libfm-qt6-mimetypes.xml");
+}
+
+void FileOpsInventoryTest::installedArtifactsRejectLegacyIdentityTokens() {
+    const QString buildRoot = binaryRoot();
+    QVERIFY2(!buildRoot.isEmpty(), "ONEG4FM_BINARY_DIR compile definition is missing");
+
+    QTemporaryDir installStagingRoot;
+    QVERIFY2(installStagingRoot.isValid(), "Failed to create temporary install staging root");
+
+    QProcess installer;
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert(QStringLiteral("DESTDIR"), installStagingRoot.path());
+    installer.setProcessEnvironment(env);
+    installer.setProgram(QStringLiteral("cmake"));
+    installer.setArguments({QStringLiteral("--install"), buildRoot});
+    installer.start();
+
+    QVERIFY2(installer.waitForFinished(120000), "cmake --install timed out");
+    const QString installStdout = QString::fromUtf8(installer.readAllStandardOutput());
+    const QString installStderr = QString::fromUtf8(installer.readAllStandardError());
+    QVERIFY2(installer.exitStatus() == QProcess::NormalExit,
+             qPrintable(QStringLiteral("cmake --install did not exit normally\nstdout:\n%1\nstderr:\n%2")
+                            .arg(installStdout, installStderr)));
+    QVERIFY2(installer.exitCode() == 0,
+             qPrintable(
+                 QStringLiteral("cmake --install failed\nstdout:\n%1\nstderr:\n%2").arg(installStdout, installStderr)));
+
+    const QRegularExpression legacyIdPattern(QStringLiteral("(pcmanfm|PCManFM|org\\.pcmanfm)"));
+    const QRegularExpression textArtifactPathPattern(
+        QStringLiteral("\\.(desktop|service|xml|conf|ini|json|txt|svg|xpm)$"),
+        QRegularExpression::CaseInsensitiveOption);
+
+    const QDir stagingRoot(installStagingRoot.path());
+    int installedFileCount = 0;
+    int scannedTextArtifactCount = 0;
+    QStringList pathViolations;
+    QStringList contentViolations;
+
+    QDirIterator it(installStagingRoot.path(), QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        const QString absPath = it.next();
+        ++installedFileCount;
+        const QString relPath = stagingRoot.relativeFilePath(absPath).replace(QLatin1Char('\\'), QLatin1Char('/'));
+
+        if (legacyIdPattern.match(relPath).hasMatch()) {
+            pathViolations.append(relPath);
+        }
+
+        if (!textArtifactPathPattern.match(relPath).hasMatch()) {
+            continue;
+        }
+        ++scannedTextArtifactCount;
+
+        QFile artifact(absPath);
+        QVERIFY2(artifact.open(QIODevice::ReadOnly),
+                 qPrintable(QStringLiteral("Failed to read installed artifact: %1").arg(relPath)));
+        const QString content = QString::fromUtf8(artifact.readAll());
+        if (legacyIdPattern.match(content).hasMatch()) {
+            contentViolations.append(relPath);
+        }
+    }
+
+    QVERIFY2(installedFileCount > 0, "Install staging tree is empty");
+    QVERIFY2(scannedTextArtifactCount > 0, "Install staging tree has no text artifacts to audit");
+    QVERIFY2(pathViolations.isEmpty(),
+             qPrintable(QStringLiteral("Installed artifact path contains legacy identifier:\n%1")
+                            .arg(pathViolations.join(QLatin1Char('\n')))));
+    QVERIFY2(contentViolations.isEmpty(),
+             qPrintable(QStringLiteral("Installed artifact content contains legacy identifier:\n%1")
+                            .arg(contentViolations.join(QLatin1Char('\n')))));
 }
 
 void FileOpsInventoryTest::userFacingIdentitySweepUsesExplicitCompatibilityAllowlist() {
@@ -497,6 +619,16 @@ void FileOpsInventoryTest::userFacingIdentitySweepUsesExplicitCompatibilityAllow
         QVERIFY2(!hasLegacyId,
                  qPrintable(QStringLiteral("User-facing file contains a legacy identifier: %1").arg(relPath)));
     }
+}
+
+void FileOpsInventoryTest::applicationUsesTypedMainWindowChecks() {
+    const auto [content, error] = readTextFile(QStringLiteral("oneg4fm/application.cpp"));
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+
+    QVERIFY2(!content.contains(QStringLiteral("inherits(\"Oneg4FM::MainWindow\")"), Qt::CaseSensitive),
+             "application.cpp must use typed MainWindow checks instead of inherits()");
+    QVERIFY2(content.contains(QStringLiteral("qobject_cast<MainWindow*>("), Qt::CaseSensitive),
+             "application.cpp must use qobject_cast<MainWindow*> for typed window checks");
 }
 
 void FileOpsInventoryTest::hackingDocCoversLinuxSecurityModelAndContract() {
