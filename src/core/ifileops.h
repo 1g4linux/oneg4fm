@@ -17,11 +17,14 @@ namespace PCManFM {
 enum class FileOpType { Copy, Move, Delete };
 
 struct FileOpRequest {
-    FileOpType type;
+    FileOpType type = FileOpType::Copy;
     QStringList sources;
+    // Destination directory for copy/move. Must be empty for delete.
     QString destination;
-    bool followSymlinks;
-    bool overwriteExisting;
+    bool followSymlinks = false;
+    // For copy/move conflicts: true = overwrite, false = skip existing destination.
+    // Must be false for delete.
+    bool overwriteExisting = false;
     bool preserveOwnership = false;
 };
 

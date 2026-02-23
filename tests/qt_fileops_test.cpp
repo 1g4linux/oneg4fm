@@ -19,10 +19,14 @@ class QtFileOpsTest : public QObject {
 
    private slots:
     void copyFile();
+    void copyConflictRespectsOverwriteExistingFlag();
     void moveFile();
     void deleteFile();
     void deleteProgressAggregatesAcrossSources();
     void deleteDirectoryProgressUsesRecursiveCounts();
+    void deleteRejectsDestinationField();
+    void deleteRejectsOverwriteExistingField();
+    void copyRejectsFollowSymlinks();
 };
 
 static QString writeTempFile(const QTemporaryDir& dir, const QString& name, const QByteArray& data) {
@@ -33,6 +37,14 @@ static QString writeTempFile(const QTemporaryDir& dir, const QString& name, cons
         f.close();
     }
     return path;
+}
+
+static QByteArray readFile(const QString& path) {
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) {
+        return QByteArray();
+    }
+    return f.readAll();
 }
 
 void QtFileOpsTest::copyFile() {
@@ -61,6 +73,39 @@ void QtFileOpsTest::copyFile() {
     const QString copied = dstDir + QLatin1String("/src.txt");
     QVERIFY(QFileInfo::exists(copied));
     QCOMPARE(QFile(copied).size(), QFile(src).size());
+}
+
+void QtFileOpsTest::copyConflictRespectsOverwriteExistingFlag() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString src = writeTempFile(dir, QStringLiteral("src.txt"), "new-data");
+    const QString dstDir = dir.path() + QLatin1String("/dst");
+    QVERIFY(QDir().mkpath(dstDir));
+    const QString dstPath = writeTempFile(dir, QStringLiteral("dst/src.txt"), "old-data");
+
+    QtFileOps ops;
+    QSignalSpy finishedSpy(&ops, &QtFileOps::finished);
+
+    FileOpRequest req;
+    req.type = FileOpType::Copy;
+    req.sources = QStringList{src};
+    req.destination = dstDir;
+    req.followSymlinks = false;
+    req.overwriteExisting = false;
+
+    ops.start(req);
+    QTRY_VERIFY_WITH_TIMEOUT(finishedSpy.count() > 0, 2000);
+    QList<QVariant> args = finishedSpy.takeFirst();
+    QVERIFY(args.at(0).toBool());
+    QCOMPARE(readFile(dstPath), QByteArray("old-data"));
+
+    req.overwriteExisting = true;
+    ops.start(req);
+    QTRY_VERIFY_WITH_TIMEOUT(finishedSpy.count() > 0, 2000);
+    args = finishedSpy.takeFirst();
+    QVERIFY(args.at(0).toBool());
+    QCOMPARE(readFile(dstPath), QByteArray("new-data"));
 }
 
 void QtFileOpsTest::moveFile() {
@@ -209,6 +254,83 @@ void QtFileOpsTest::deleteDirectoryProgressUsesRecursiveCounts() {
     const FileOpProgress& last = updates.constLast();
     QVERIFY(last.filesTotal >= 4);
     QCOMPARE(last.filesDone, last.filesTotal);
+}
+
+void QtFileOpsTest::deleteRejectsDestinationField() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString src = writeTempFile(dir, QStringLiteral("delete.txt"), "delete-data");
+    QVERIFY(QFileInfo::exists(src));
+
+    QtFileOps ops;
+    QSignalSpy finishedSpy(&ops, &QtFileOps::finished);
+
+    FileOpRequest req;
+    req.type = FileOpType::Delete;
+    req.sources = QStringList{src};
+    req.destination = dir.path() + QLatin1String("/ignored");
+    req.followSymlinks = false;
+    req.overwriteExisting = false;
+
+    ops.start(req);
+    QTRY_VERIFY_WITH_TIMEOUT(finishedSpy.count() > 0, 2000);
+    const QList<QVariant> args = finishedSpy.takeFirst();
+    QVERIFY(!args.at(0).toBool());
+    QVERIFY(args.at(1).toString().contains(QStringLiteral("destination"), Qt::CaseInsensitive));
+    QVERIFY(QFileInfo::exists(src));
+}
+
+void QtFileOpsTest::deleteRejectsOverwriteExistingField() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString src = writeTempFile(dir, QStringLiteral("delete.txt"), "delete-data");
+    QVERIFY(QFileInfo::exists(src));
+
+    QtFileOps ops;
+    QSignalSpy finishedSpy(&ops, &QtFileOps::finished);
+
+    FileOpRequest req;
+    req.type = FileOpType::Delete;
+    req.sources = QStringList{src};
+    req.destination.clear();
+    req.followSymlinks = false;
+    req.overwriteExisting = true;
+
+    ops.start(req);
+    QTRY_VERIFY_WITH_TIMEOUT(finishedSpy.count() > 0, 2000);
+    const QList<QVariant> args = finishedSpy.takeFirst();
+    QVERIFY(!args.at(0).toBool());
+    QVERIFY(args.at(1).toString().contains(QStringLiteral("overwriteExisting"), Qt::CaseInsensitive));
+    QVERIFY(QFileInfo::exists(src));
+}
+
+void QtFileOpsTest::copyRejectsFollowSymlinks() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString src = writeTempFile(dir, QStringLiteral("src.txt"), "copy-data");
+    const QString dstDir = dir.path() + QLatin1String("/dst");
+    QVERIFY(QDir().mkpath(dstDir));
+    const QString dstPath = dstDir + QLatin1String("/src.txt");
+
+    QtFileOps ops;
+    QSignalSpy finishedSpy(&ops, &QtFileOps::finished);
+
+    FileOpRequest req;
+    req.type = FileOpType::Copy;
+    req.sources = QStringList{src};
+    req.destination = dstDir;
+    req.followSymlinks = true;
+    req.overwriteExisting = false;
+
+    ops.start(req);
+    QTRY_VERIFY_WITH_TIMEOUT(finishedSpy.count() > 0, 2000);
+    const QList<QVariant> args = finishedSpy.takeFirst();
+    QVERIFY(!args.at(0).toBool());
+    QVERIFY(args.at(1).toString().contains(QStringLiteral("followSymlinks"), Qt::CaseInsensitive));
+    QVERIFY(!QFileInfo::exists(dstPath));
 }
 
 QTEST_MAIN(QtFileOpsTest)

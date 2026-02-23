@@ -36,17 +36,20 @@ FileOpProgress toQtProgress(const FileOpsContract::ProgressSnapshot& core) {
     return qt;
 }
 
-FileOpsContract::Operation toContractOperation(FileOpType type) {
+bool toContractOperation(FileOpType type, FileOpsContract::Operation& out) {
     switch (type) {
         case FileOpType::Copy:
-            return FileOpsContract::Operation::Copy;
+            out = FileOpsContract::Operation::Copy;
+            return true;
         case FileOpType::Move:
-            return FileOpsContract::Operation::Move;
+            out = FileOpsContract::Operation::Move;
+            return true;
         case FileOpType::Delete:
-            return FileOpsContract::Operation::Delete;
+            out = FileOpsContract::Operation::Delete;
+            return true;
     }
 
-    return FileOpsContract::Operation::Delete;
+    return false;
 }
 
 }  // namespace
@@ -62,8 +65,9 @@ class QtFileOps::Worker : public QObject {
         cancelled_.store(false);
 
         FileOpsContract::Request contractReq;
-        if (!buildContractRequest(req, contractReq)) {
-            Q_EMIT finished(false, QStringLiteral("Invalid file operation request"));
+        QString requestError;
+        if (!buildContractRequest(req, contractReq, requestError)) {
+            Q_EMIT finished(false, requestError);
             return;
         }
 
@@ -100,34 +104,60 @@ class QtFileOps::Worker : public QObject {
     void finished(bool success, const QString& errorMessage);
 
    private:
-    bool buildContractRequest(const FileOpRequest& req, FileOpsContract::Request& out) {
+    bool buildContractRequest(const FileOpRequest& req, FileOpsContract::Request& out, QString& requestError) {
         out = {};
-        out.operation = toContractOperation(req.type);
+        requestError.clear();
+
+        if (!toContractOperation(req.type, out.operation)) {
+            Q_ASSERT_X(false, "QtFileOps::Worker::buildContractRequest", "Unknown file operation type");
+            requestError = QStringLiteral("Unsupported file operation type");
+            return false;
+        }
 
         out.sources.reserve(static_cast<std::size_t>(req.sources.size()));
         for (const QString& source : req.sources) {
             if (source.isEmpty()) {
+                requestError = QStringLiteral("Source path must not be empty");
                 return false;
             }
             out.sources.push_back(toNativePath(source));
         }
 
         if (out.sources.empty()) {
+            requestError = QStringLiteral("At least one source path is required");
             return false;
         }
 
         if (req.type != FileOpType::Delete) {
             if (req.destination.isEmpty()) {
+                requestError = QStringLiteral("Destination path is required");
                 return false;
             }
             out.destination.targetDir = toNativePath(req.destination);
             out.destination.mappingMode = FileOpsContract::DestinationMappingMode::SourceBasename;
         }
+        else if (!req.destination.isEmpty()) {
+            requestError = QStringLiteral("Delete operations do not accept a destination path");
+            return false;
+        }
 
-        // Preserve legacy adapter behavior for now; contract-level flag reconciliation is tracked separately.
-        out.conflictPolicy = FileOpsContract::ConflictPolicy::Overwrite;
+        if (req.type == FileOpType::Delete) {
+            if (req.overwriteExisting) {
+                requestError = QStringLiteral("Delete operations do not use overwriteExisting");
+                return false;
+            }
+        }
+        else {
+            out.conflictPolicy = req.overwriteExisting ? FileOpsContract::ConflictPolicy::Overwrite
+                                                       : FileOpsContract::ConflictPolicy::Skip;
+        }
 
-        out.symlinkPolicy.followSymlinks = req.followSymlinks;
+        if (req.followSymlinks) {
+            requestError = QStringLiteral("followSymlinks=true is not supported");
+            return false;
+        }
+
+        out.symlinkPolicy.followSymlinks = false;
         out.symlinkPolicy.copyMode = FileOpsContract::SymlinkCopyMode::CopyLinkAsLink;
 
         out.metadata.preserveOwnership = req.preserveOwnership;
