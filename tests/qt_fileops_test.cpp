@@ -11,6 +11,8 @@
 
 #include <QFile>
 #include <QFileInfo>
+#include <fcntl.h>
+#include <unistd.h>
 
 using namespace PCManFM;
 
@@ -27,6 +29,7 @@ class QtFileOpsTest : public QObject {
     void deleteRejectsDestinationField();
     void deleteRejectsOverwriteExistingField();
     void copyRejectsFollowSymlinks();
+    void cancelRequestsStopCopyThroughCoreContract();
 };
 
 static QString writeTempFile(const QTemporaryDir& dir, const QString& name, const QByteArray& data) {
@@ -45,6 +48,18 @@ static QByteArray readFile(const QString& path) {
         return QByteArray();
     }
     return f.readAll();
+}
+
+static bool createSparseFile(const QString& path, qint64 sizeBytes) {
+    const QByteArray native = QFile::encodeName(path);
+    int fd = ::open(native.constData(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (fd < 0) {
+        return false;
+    }
+
+    const bool ok = (::ftruncate(fd, static_cast<off_t>(sizeBytes)) == 0);
+    ::close(fd);
+    return ok;
 }
 
 void QtFileOpsTest::copyFile() {
@@ -330,6 +345,46 @@ void QtFileOpsTest::copyRejectsFollowSymlinks() {
     const QList<QVariant> args = finishedSpy.takeFirst();
     QVERIFY(!args.at(0).toBool());
     QVERIFY(args.at(1).toString().contains(QStringLiteral("followSymlinks"), Qt::CaseInsensitive));
+    QVERIFY(!QFileInfo::exists(dstPath));
+}
+
+void QtFileOpsTest::cancelRequestsStopCopyThroughCoreContract() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString src = dir.path() + QLatin1String("/large-sparse.bin");
+    QVERIFY(createSparseFile(src, qint64(2) * 1024 * 1024 * 1024));
+
+    const QString dstDir = dir.path() + QLatin1String("/dst");
+    QVERIFY(QDir().mkpath(dstDir));
+    const QString dstPath = dstDir + QLatin1String("/large-sparse.bin");
+
+    QtFileOps ops;
+    QSignalSpy finishedSpy(&ops, &QtFileOps::finished);
+
+    bool cancelRequested = false;
+    connect(&ops, &QtFileOps::progress, &ops, [&ops, &cancelRequested](const FileOpProgress& info) {
+        if (cancelRequested || info.bytesDone == 0) {
+            return;
+        }
+        cancelRequested = true;
+        ops.cancel();
+    });
+
+    FileOpRequest req;
+    req.type = FileOpType::Copy;
+    req.sources = QStringList{src};
+    req.destination = dstDir;
+    req.followSymlinks = false;
+    req.overwriteExisting = true;
+
+    ops.start(req);
+
+    QTRY_VERIFY_WITH_TIMEOUT(finishedSpy.count() > 0, 15000);
+    const QList<QVariant> args = finishedSpy.takeFirst();
+    QVERIFY(cancelRequested);
+    QVERIFY(!args.at(0).toBool());
+    QVERIFY(args.at(1).toString().contains(QStringLiteral("cancel"), Qt::CaseInsensitive));
     QVERIFY(!QFileInfo::exists(dstPath));
 }
 

@@ -52,6 +52,7 @@ class FileOpsContractTest : public QObject {
    private slots:
     void copyReportsMonotonicProgressAndStableTotals();
     void cancelReturnsEcanceled();
+    void skipConflictPolicyHandlesLateDestinationConflict();
     void promptConflictCanSkipWithStructuredEvent();
     void promptConflictOverwriteReplacesDestinationForSymlinkSource();
     void unsupportedOperationRejected();
@@ -141,6 +142,55 @@ void FileOpsContractTest::cancelReturnsEcanceled() {
 
     const QString dstPath = dstDir + QLatin1String("/big.bin");
     QVERIFY(!QFileInfo::exists(dstPath));
+}
+
+void FileOpsContractTest::skipConflictPolicyHandlesLateDestinationConflict() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcDir = dir.path() + QLatin1String("/src");
+    const QString dstDir = dir.path() + QLatin1String("/dst");
+    QVERIFY(QDir().mkpath(srcDir));
+    QVERIFY(QDir().mkpath(dstDir));
+
+    const QByteArray largePayload(8 * 1024 * 1024, 'a');
+    const QString first = writeTempFile(srcDir + QLatin1String("/first.bin"), largePayload);
+    const QString second = writeTempFile(srcDir + QLatin1String("/second.txt"), QByteArray("source-second"));
+    const QString secondDest = dstDir + QLatin1String("/second.txt");
+
+    Request req;
+    req.operation = Operation::Copy;
+    req.sources = {toNative(first), toNative(second)};
+    req.destination.targetDir = toNative(dstDir);
+    req.destination.mappingMode = DestinationMappingMode::SourceBasename;
+    req.conflictPolicy = ConflictPolicy::Skip;
+
+    bool injectedLateConflict = false;
+    EventHandlers handlers;
+    handlers.onProgress = [&](const ProgressSnapshot& update) {
+        if (injectedLateConflict) {
+            return;
+        }
+        if (update.currentPath != toNative(first) || update.bytesDone == 0) {
+            return;
+        }
+
+        QFile injected(secondDest);
+        QVERIFY(injected.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        QCOMPARE(injected.write("late-existing"), qint64(13));
+        injected.close();
+        injectedLateConflict = true;
+    };
+
+    const Result result = run(req, handlers);
+    QVERIFY(result.success);
+    QVERIFY(!result.cancelled);
+    QVERIFY(injectedLateConflict);
+
+    QCOMPARE(readFile(dstDir + QLatin1String("/first.bin")), largePayload);
+    QCOMPARE(readFile(secondDest), QByteArray("late-existing"));
+    QCOMPARE(result.finalProgress.filesTotal, 2);
+    QCOMPARE(result.finalProgress.filesDone, 2);
 }
 
 void FileOpsContractTest::promptConflictCanSkipWithStructuredEvent() {

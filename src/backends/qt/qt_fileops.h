@@ -6,11 +6,10 @@
 #ifndef QT_FILEOPS_H
 #define QT_FILEOPS_H
 
-#include <QAtomicInteger>
-#include <QDir>
-#include <QFile>
-#include <QMutex>
 #include <QThread>
+
+#include <atomic>
+#include <memory>
 
 #include "../../core/ifileops.h"
 
@@ -35,6 +34,7 @@ class QtFileOps : public IFileOps {
 
    private:
     class Worker;
+    std::shared_ptr<std::atomic<bool>> cancelRequested_;
     Worker* worker_;
     QThread* workerThread_;
 };

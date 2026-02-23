@@ -7,6 +7,7 @@
 
 #include "../../core/file_ops_contract.h"
 
+#include <QFile>
 #include <QObject>
 #include <QThread>
 
@@ -58,12 +59,11 @@ class QtFileOps::Worker : public QObject {
     Q_OBJECT
 
    public:
-    explicit Worker(QObject* parent = nullptr) : QObject(parent), cancelled_(false) {}
+    explicit Worker(const std::shared_ptr<std::atomic<bool>>& cancelRequested, QObject* parent = nullptr)
+        : QObject(parent), cancelRequested_(cancelRequested) {}
 
    public Q_SLOTS:
     void processRequest(const FileOpRequest& req) {
-        cancelled_.store(false);
-
         FileOpsContract::Request contractReq;
         QString requestError;
         if (!buildContractRequest(req, contractReq, requestError)) {
@@ -71,7 +71,7 @@ class QtFileOps::Worker : public QObject {
             return;
         }
 
-        contractReq.cancellationRequested = [this]() { return cancelled_.load(); };
+        contractReq.cancellationRequested = [flag = cancelRequested_]() { return flag && flag->load(); };
 
         const FileOpsContract::EventHandlers handlers{
             [this](const FileOpsContract::ProgressSnapshot& info) { Q_EMIT progress(toQtProgress(info)); },
@@ -97,7 +97,11 @@ class QtFileOps::Worker : public QObject {
         Q_EMIT finished(false, QStringLiteral("Operation failed"));
     }
 
-    void cancel() { cancelled_.store(true); }
+    void cancel() {
+        if (cancelRequested_) {
+            cancelRequested_->store(true);
+        }
+    }
 
    Q_SIGNALS:
     void progress(const FileOpProgress& info);
@@ -174,10 +178,14 @@ class QtFileOps::Worker : public QObject {
         return true;
     }
 
-    std::atomic<bool> cancelled_;
+    std::shared_ptr<std::atomic<bool>> cancelRequested_;
 };
 
-QtFileOps::QtFileOps(QObject* parent) : IFileOps(parent), worker_(new Worker), workerThread_(new QThread) {
+QtFileOps::QtFileOps(QObject* parent)
+    : IFileOps(parent),
+      cancelRequested_(std::make_shared<std::atomic<bool>>(false)),
+      worker_(new Worker(cancelRequested_)),
+      workerThread_(new QThread) {
     worker_->moveToThread(workerThread_);
 
     connect(this, &QtFileOps::startRequest, worker_, &Worker::processRequest);
@@ -201,10 +209,12 @@ QtFileOps::~QtFileOps() {
 }
 
 void QtFileOps::start(const FileOpRequest& req) {
+    cancelRequested_->store(false);
     Q_EMIT startRequest(req);
 }
 
 void QtFileOps::cancel() {
+    cancelRequested_->store(true);
     Q_EMIT cancelRequest();
 }
 
