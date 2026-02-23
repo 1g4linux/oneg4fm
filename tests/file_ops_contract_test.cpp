@@ -51,7 +51,10 @@ class FileOpsContractTest : public QObject {
 
    private slots:
     void copyReportsMonotonicProgressAndStableTotals();
+    void moveReportsMonotonicProgressAndStableTotals();
+    void deleteReportsMonotonicProgressAndStableTotals();
     void cancelReturnsEcanceled();
+    void moveCancelAfterProgressReturnsEcanceledWithFinalSnapshot();
     void skipConflictPolicyHandlesLateDestinationConflict();
     void renameConflictPolicyCreatesUniqueDestination();
     void promptConflictCanSkipWithStructuredEvent();
@@ -110,6 +113,96 @@ void FileOpsContractTest::copyReportsMonotonicProgressAndStableTotals() {
     QCOMPARE(result.finalProgress.bytesDone, result.finalProgress.bytesTotal);
 }
 
+void FileOpsContractTest::moveReportsMonotonicProgressAndStableTotals() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcPath = writeTempFile(dir.path() + QLatin1String("/source.bin"), QByteArray("payload-data"));
+    const QString dstDir = dir.path() + QLatin1String("/dst");
+    QVERIFY(QDir().mkpath(dstDir));
+
+    Request req;
+    req.operation = Operation::Move;
+    req.sources = {toNative(srcPath)};
+    req.destination.targetDir = toNative(dstDir);
+    req.destination.mappingMode = DestinationMappingMode::SourceBasename;
+    req.conflictPolicy = ConflictPolicy::Overwrite;
+
+    QVector<ProgressSnapshot> updates;
+    EventHandlers handlers;
+    handlers.onProgress = [&updates](const ProgressSnapshot& info) { updates.push_back(info); };
+
+    const Result result = run(req, handlers);
+    QVERIFY(result.success);
+    QVERIFY(!result.cancelled);
+    QVERIFY(result.error.code == EngineErrorCode::None);
+
+    const QString movedPath = dstDir + QLatin1String("/source.bin");
+    QVERIFY(!QFileInfo::exists(srcPath));
+    QVERIFY(QFileInfo::exists(movedPath));
+    QCOMPARE(readFile(movedPath), QByteArray("payload-data"));
+
+    QVERIFY(!updates.isEmpty());
+    int prevFilesDone = -1;
+    std::uint64_t prevBytesDone = 0;
+    for (const ProgressSnapshot& update : updates) {
+        QCOMPARE(update.filesTotal, 1);
+        QCOMPARE(update.bytesTotal, std::uint64_t(12));
+        QVERIFY(update.filesDone >= prevFilesDone);
+        QVERIFY(update.bytesDone >= prevBytesDone);
+        prevFilesDone = update.filesDone;
+        prevBytesDone = update.bytesDone;
+    }
+
+    QCOMPARE(result.finalProgress.filesTotal, 1);
+    QCOMPARE(result.finalProgress.filesDone, 1);
+    QCOMPARE(result.finalProgress.bytesTotal, std::uint64_t(12));
+    QCOMPARE(result.finalProgress.bytesDone, std::uint64_t(12));
+}
+
+void FileOpsContractTest::deleteReportsMonotonicProgressAndStableTotals() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcRoot = dir.path() + QLatin1String("/to-delete");
+    QVERIFY(QDir().mkpath(srcRoot + QLatin1String("/nested")));
+    const QString rootFile = writeTempFile(srcRoot + QLatin1String("/root.txt"), QByteArray("root"));
+    const QString nestedFile = writeTempFile(srcRoot + QLatin1String("/nested/child.txt"), QByteArray("child-data"));
+    QVERIFY(QFileInfo::exists(rootFile));
+    QVERIFY(QFileInfo::exists(nestedFile));
+
+    Request req;
+    req.operation = Operation::Delete;
+    req.sources = {toNative(srcRoot)};
+    req.conflictPolicy = ConflictPolicy::Overwrite;
+
+    QVector<ProgressSnapshot> updates;
+    EventHandlers handlers;
+    handlers.onProgress = [&updates](const ProgressSnapshot& info) { updates.push_back(info); };
+
+    const Result result = run(req, handlers);
+    QVERIFY(result.success);
+    QVERIFY(!result.cancelled);
+    QVERIFY(result.error.code == EngineErrorCode::None);
+    QVERIFY(!QFileInfo::exists(srcRoot));
+
+    QVERIFY(!updates.isEmpty());
+    QVERIFY(result.finalProgress.filesTotal >= 4);
+    int prevFilesDone = -1;
+    std::uint64_t prevBytesDone = 0;
+    for (const ProgressSnapshot& update : updates) {
+        QCOMPARE(update.filesTotal, result.finalProgress.filesTotal);
+        QCOMPARE(update.bytesTotal, result.finalProgress.bytesTotal);
+        QVERIFY(update.filesDone >= prevFilesDone);
+        QVERIFY(update.bytesDone >= prevBytesDone);
+        prevFilesDone = update.filesDone;
+        prevBytesDone = update.bytesDone;
+    }
+
+    QCOMPARE(result.finalProgress.filesDone, result.finalProgress.filesTotal);
+    QCOMPARE(result.finalProgress.bytesDone, result.finalProgress.bytesTotal);
+}
+
 void FileOpsContractTest::cancelReturnsEcanceled() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -143,9 +236,59 @@ void FileOpsContractTest::cancelReturnsEcanceled() {
     QVERIFY(result.cancelled);
     QCOMPARE(result.error.code, EngineErrorCode::Cancelled);
     QCOMPARE(result.error.sysErrno, ECANCELED);
+    QCOMPARE(result.finalProgress.filesTotal, 1);
+    QCOMPARE(result.finalProgress.bytesTotal, std::uint64_t(payload.size()));
+    QVERIFY(result.finalProgress.filesDone <= 1);
+    QVERIFY(result.finalProgress.bytesDone > 0);
+    QVERIFY(result.finalProgress.bytesDone < result.finalProgress.bytesTotal);
+    QVERIFY(!result.finalProgress.currentPath.empty());
 
     const QString dstPath = dstDir + QLatin1String("/big.bin");
     QVERIFY(!QFileInfo::exists(dstPath));
+}
+
+void FileOpsContractTest::moveCancelAfterProgressReturnsEcanceledWithFinalSnapshot() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcPath = writeTempFile(dir.path() + QLatin1String("/move-source.txt"), QByteArray("move-me"));
+    const QString dstDir = dir.path() + QLatin1String("/dst");
+    QVERIFY(QDir().mkpath(dstDir));
+    const QString dstPath = dstDir + QLatin1String("/move-source.txt");
+
+    std::atomic<bool> cancelRequested{false};
+
+    Request req;
+    req.operation = Operation::Move;
+    req.sources = {toNative(srcPath)};
+    req.destination.targetDir = toNative(dstDir);
+    req.destination.mappingMode = DestinationMappingMode::SourceBasename;
+    req.conflictPolicy = ConflictPolicy::Overwrite;
+    req.cancellationRequested = [&cancelRequested]() { return cancelRequested.load(); };
+
+    bool sawProgress = false;
+    EventHandlers handlers;
+    handlers.onProgress = [&cancelRequested, &sawProgress](const ProgressSnapshot& update) {
+        sawProgress = true;
+        if (update.filesDone > 0) {
+            cancelRequested.store(true);
+        }
+    };
+
+    const Result result = run(req, handlers);
+    QVERIFY(!result.success);
+    QVERIFY(result.cancelled);
+    QCOMPARE(result.error.code, EngineErrorCode::Cancelled);
+    QCOMPARE(result.error.sysErrno, ECANCELED);
+    QVERIFY(sawProgress);
+    QCOMPARE(result.finalProgress.filesTotal, 1);
+    QCOMPARE(result.finalProgress.filesDone, 1);
+    QCOMPARE(result.finalProgress.bytesTotal, std::uint64_t(7));
+    QCOMPARE(result.finalProgress.bytesDone, std::uint64_t(0));
+    QVERIFY(!result.finalProgress.currentPath.empty());
+
+    QVERIFY(QFileInfo::exists(dstPath));
+    QVERIFY(!QFileInfo::exists(srcPath));
 }
 
 void FileOpsContractTest::skipConflictPolicyHandlesLateDestinationConflict() {

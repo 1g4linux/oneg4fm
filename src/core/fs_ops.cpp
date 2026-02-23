@@ -1057,6 +1057,12 @@ bool move_path(const std::string& source,
             return false;
         }
 
+        if (!should_continue(callback, progress)) {
+            err.code = ECANCELED;
+            err.message = "Cancelled";
+            return false;
+        }
+
         unsigned int renameFlags = 0;
         if (!overwriteExisting) {
 #ifdef RENAME_NOREPLACE
@@ -1071,7 +1077,11 @@ bool move_path(const std::string& source,
         if (LinuxFsSafety::rename_under(srcParentFd.fd, srcName, destParentFd.fd, destName, renameFlags, err)) {
             progress.filesDone += 1;
             progress.currentPath = source;
-            should_continue(callback, progress);
+            if (!should_continue(callback, progress)) {
+                err.code = ECANCELED;
+                err.message = "Cancelled";
+                return false;
+            }
             return true;
         }
 
