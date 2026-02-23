@@ -361,7 +361,12 @@ FileOperation* FileOperation::copyFiles(Fm::FilePathList srcFiles, Fm::FilePath 
 
 // static
 FileOperation* FileOperation::copyFiles(FilePathList srcFiles, FilePathList destFiles, QWidget* parent) {
-    qDebug("copy: %s -> %s", srcFiles[0].toString().get(), destFiles[0].toString().get());
+    if (!srcFiles.empty() && !destFiles.empty()) {
+        qDebug("copy: %s -> %s", srcFiles[0].toString().get(), destFiles[0].toString().get());
+    }
+    else {
+        qDebug("copy: %zu source(s) -> %zu destination(s)", srcFiles.size(), destFiles.size());
+    }
     FileOperation* op = new FileOperation(FileOperation::Copy, std::move(srcFiles), parent);
     op->setDestFiles(std::move(destFiles));
     op->run();

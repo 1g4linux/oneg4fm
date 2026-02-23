@@ -438,15 +438,16 @@ bool FileTransferJob::handleError(GErrorPtr& err,
 
     // show error message
     if (!isCancelled() && err) {
+        const bool is_no_space = (err.domain() == G_IO_ERROR && err.code() == G_IO_ERROR_NO_SPACE);
+        const bool can_cleanup_partial = is_no_space && ((flags & G_FILE_COPY_OVERWRITE) == 0);
         ErrorAction act = emitError(err, ErrorSeverity::MODERATE);
         err.reset();
         if (act == ErrorAction::RETRY) {
             // the user wants retry the operation again
             retry = true;
         }
-        const bool is_no_space = (err.domain() == G_IO_ERROR && err.code() == G_IO_ERROR_NO_SPACE);
         /* FIXME: ask to leave partial content? */
-        if (is_no_space) {
+        if (can_cleanup_partial) {
             // run out of disk space. delete the partial content we copied.
             g_file_delete(destPath.gfile().get(), cancellable().get(), nullptr);
         }
@@ -726,7 +727,6 @@ bool FileTransferJob::createShortcut(const FilePath& srcPath, const GFileInfoPtr
                     ret = true;
                 }
             } while (!isCancelled() && retry);
-            ret = true;
         }
     }
     return ret;

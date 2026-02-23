@@ -11,7 +11,10 @@
 
 #include "../libfm-qt/src/core/deletejob.h"
 #include "../libfm-qt/src/core/fileops_bridge_policy.h"
+#define private public
 #include "../libfm-qt/src/core/filetransferjob.h"
+#undef private
+#include "../libfm-qt/src/fileoperation.h"
 
 #include <cstdint>
 
@@ -49,6 +52,10 @@ class LibfmQtFileOpsBridgeTest : public QObject {
     void deleteNativeDirectoryTreeTracksCompletion();
     void coreRoutingEligibilityAcceptsNativeLocalPath();
     void coreRoutingEligibilityRejectsUriSchemes();
+    void noSpaceErrorCleansPartialDestinationWithoutOverwrite();
+    void noSpaceErrorPreservesDestinationWithOverwrite();
+    void createShortcutFailureIsReportedAsFailure();
+    void copyFilesWithExplicitDestPathsAcceptsEmptyLists();
 };
 
 void LibfmQtFileOpsBridgeTest::copyConflictSkipCountsAsCompletedWork() {
@@ -144,6 +151,82 @@ void LibfmQtFileOpsBridgeTest::coreRoutingEligibilityRejectsUriSchemes() {
     const Fm::FilePath remoteUri = Fm::FilePath::fromUri("sftp://example.invalid/path");
     QVERIFY(!remoteUri.isNative());
     QVERIFY(!Fm::FileOpsBridgePolicy::isCoreLocalPathEligible(remoteUri));
+}
+
+void LibfmQtFileOpsBridgeTest::noSpaceErrorCleansPartialDestinationWithoutOverwrite() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcFile = writeFile(dir.path() + QLatin1String("/source.txt"), QByteArray("source-data"));
+    const QString dstFile = writeFile(dir.path() + QLatin1String("/partial.txt"), QByteArray("partial-data"));
+    QVERIFY(QFileInfo::exists(dstFile));
+
+    Fm::FileTransferJob job(Fm::FilePathList{}, Fm::FileTransferJob::Mode::COPY);
+    Fm::FilePath srcPath = toLocalFilePath(srcFile);
+    Fm::FilePath destPath = toLocalFilePath(dstFile);
+    Fm::GFileInfoPtr srcInfo{g_file_info_new(), false};
+    g_file_info_set_display_name(srcInfo.get(), "source.txt");
+
+    Fm::GErrorPtr err{G_IO_ERROR, G_IO_ERROR_NO_SPACE, "No space left on device"};
+    int flags = 0;
+
+    const bool retry = job.handleError(err, srcPath, srcInfo, destPath, flags);
+    QVERIFY(!retry);
+    QVERIFY(!err);
+    QVERIFY(!QFileInfo::exists(dstFile));
+}
+
+void LibfmQtFileOpsBridgeTest::noSpaceErrorPreservesDestinationWithOverwrite() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcFile = writeFile(dir.path() + QLatin1String("/source.txt"), QByteArray("source-data"));
+    const QString dstFile = writeFile(dir.path() + QLatin1String("/existing.txt"), QByteArray("existing-data"));
+    QVERIFY(QFileInfo::exists(dstFile));
+
+    Fm::FileTransferJob job(Fm::FilePathList{}, Fm::FileTransferJob::Mode::COPY);
+    Fm::FilePath srcPath = toLocalFilePath(srcFile);
+    Fm::FilePath destPath = toLocalFilePath(dstFile);
+    Fm::GFileInfoPtr srcInfo{g_file_info_new(), false};
+    g_file_info_set_display_name(srcInfo.get(), "source.txt");
+
+    Fm::GErrorPtr err{G_IO_ERROR, G_IO_ERROR_NO_SPACE, "No space left on device"};
+    int flags = G_FILE_COPY_OVERWRITE;
+
+    const bool retry = job.handleError(err, srcPath, srcInfo, destPath, flags);
+    QVERIFY(!retry);
+    QVERIFY(!err);
+    QVERIFY(QFileInfo::exists(dstFile));
+    QCOMPARE(readFile(dstFile), QByteArray("existing-data"));
+}
+
+void LibfmQtFileOpsBridgeTest::createShortcutFailureIsReportedAsFailure() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString missingParent = dir.path() + QLatin1String("/missing");
+    const QString shortcutPath = missingParent + QLatin1String("/remote.desktop");
+    QVERIFY(!QFileInfo::exists(missingParent));
+
+    Fm::FileTransferJob job(Fm::FilePathList{}, Fm::FileTransferJob::Mode::LINK);
+    Fm::FilePath srcPath = Fm::FilePath::fromUri("sftp://example.invalid/path/to/file");
+    Fm::FilePath destPath = toLocalFilePath(shortcutPath);
+    Fm::GFileInfoPtr srcInfo{g_file_info_new(), false};
+    g_file_info_set_display_name(srcInfo.get(), "Remote File");
+    GIcon* icon = g_themed_icon_new("text-x-generic");
+    g_file_info_set_icon(srcInfo.get(), icon);
+    g_object_unref(icon);
+
+    QVERIFY(!job.createShortcut(srcPath, srcInfo, destPath));
+    QVERIFY(!QFileInfo::exists(shortcutPath));
+}
+
+void LibfmQtFileOpsBridgeTest::copyFilesWithExplicitDestPathsAcceptsEmptyLists() {
+    Fm::FilePathList srcFiles;
+    Fm::FilePathList destFiles;
+    Fm::FileOperation::copyFiles(std::move(srcFiles), std::move(destFiles), nullptr);
+    QTest::qWait(10);
+    QVERIFY(true);
 }
 
 QTEST_MAIN(LibfmQtFileOpsBridgeTest)
