@@ -173,6 +173,17 @@ bool open_dir_path_secure(const std::string& path, bool createMissing, Fd& out, 
     return true;
 }
 
+bool open_operation_parent_dir(const std::string& path, bool createMissing, const char* role, Fd& out, Error& err) {
+    if (open_dir_path_secure(path, createMissing, out, err)) {
+        return true;
+    }
+
+    if (err.code == ENOTDIR) {
+        err.message = std::string(role) + " path is not a directory: " + path;
+    }
+    return false;
+}
+
 std::string join_child_path(const std::string& parent, const char* child) {
     if (parent.empty()) {
         return std::string(child);
@@ -1339,12 +1350,12 @@ bool copy_path(const std::string& source,
     }
 
     Fd srcParentFd;
-    if (!open_dir_path_secure(srcParent, /*createMissing=*/false, srcParentFd, err)) {
+    if (!open_operation_parent_dir(srcParent, /*createMissing=*/false, "Source parent", srcParentFd, err)) {
         return false;
     }
 
     Fd destParentFd;
-    if (!open_dir_path_secure(destParent, /*createMissing=*/true, destParentFd, err)) {
+    if (!open_operation_parent_dir(destParent, /*createMissing=*/true, "Destination parent", destParentFd, err)) {
         return false;
     }
 
@@ -1397,12 +1408,12 @@ bool move_path(const std::string& source,
         }
 
         Fd srcParentFd;
-        if (!open_dir_path_secure(srcParent, /*createMissing=*/false, srcParentFd, err)) {
+        if (!open_operation_parent_dir(srcParent, /*createMissing=*/false, "Source parent", srcParentFd, err)) {
             return false;
         }
 
         Fd destParentFd;
-        if (!open_dir_path_secure(destParent, /*createMissing=*/false, destParentFd, err)) {
+        if (!open_operation_parent_dir(destParent, /*createMissing=*/false, "Destination parent", destParentFd, err)) {
             return false;
         }
 

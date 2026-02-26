@@ -99,6 +99,7 @@ class FsOpsTest : public QObject {
    private slots:
     void readWriteRoundTrip();
     void copyFile();
+    void copyFileReportsDestinationParentNotDirectory();
     void copyPathNoOverwriteRejectsExistingDestination();
     void copyDirectoryRecursive();
     void moveFileRenamePath();
@@ -169,6 +170,35 @@ void FsOpsTest::copyFile() {
     QVERIFY(!err.isSet());
     QVERIFY(QFileInfo(dstPath).exists());
     QCOMPARE(readQtFile(dstPath), payload);
+}
+
+void FsOpsTest::copyFileReportsDestinationParentNotDirectory() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcPath = makePath(dir, QStringLiteral("src.bin"));
+    const QString nonDirectoryPath = makePath(dir, QStringLiteral("not-a-dir"));
+    const QString dstPath = nonDirectoryPath + QLatin1String("/child.bin");
+
+    const QByteArray payload("copy-me");
+    Error err;
+    QVERIFY(write_file_atomic(srcPath.toLocal8Bit().toStdString(),
+                              reinterpret_cast<const std::uint8_t*>(payload.constData()),
+                              static_cast<std::size_t>(payload.size()), err));
+
+    QFile nonDirFile(nonDirectoryPath);
+    QVERIFY(nonDirFile.open(QIODevice::WriteOnly));
+    QVERIFY(nonDirFile.write("x", 1) == 1);
+    nonDirFile.close();
+
+    ProgressInfo progress;
+    progress.filesTotal = 1;
+    auto progressCb = [](const ProgressInfo&) { return true; };
+
+    QVERIFY(!copy_path(srcPath.toLocal8Bit().toStdString(), dstPath.toLocal8Bit().toStdString(), progress, progressCb,
+                       err));
+    QCOMPARE(err.code, ENOTDIR);
+    QVERIFY(QString::fromStdString(err.message).contains(QStringLiteral("Destination parent path is not a directory")));
 }
 
 void FsOpsTest::copyPathNoOverwriteRejectsExistingDestination() {
