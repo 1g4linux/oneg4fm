@@ -98,6 +98,7 @@ class FileOpsContractTest : public QObject {
 
    private slots:
     void copyReportsMonotonicProgressAndStableTotals();
+    void copyWorksWhenPathsUseSymlinkedDirectoryAlias();
     void moveReportsMonotonicProgressAndStableTotals();
     void deleteReportsMonotonicProgressAndStableTotals();
     void cancelReturnsEcanceled();
@@ -168,6 +169,36 @@ void FileOpsContractTest::copyReportsMonotonicProgressAndStableTotals() {
     QCOMPARE(result.finalProgress.filesTotal, 2);
     QCOMPARE(result.finalProgress.filesDone, 2);
     QCOMPARE(result.finalProgress.bytesDone, result.finalProgress.bytesTotal);
+}
+
+void FileOpsContractTest::copyWorksWhenPathsUseSymlinkedDirectoryAlias() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString realRoot = dir.path() + QLatin1String("/real");
+    const QString realSrcDir = realRoot + QLatin1String("/src");
+    const QString realDstDir = realRoot + QLatin1String("/dst");
+    QVERIFY(QDir().mkpath(realSrcDir));
+    QVERIFY(QDir().mkpath(realDstDir));
+
+    const QString aliasRoot = dir.path() + QLatin1String("/alias");
+    QVERIFY(::symlink(realRoot.toLocal8Bit().constData(), aliasRoot.toLocal8Bit().constData()) == 0);
+
+    const QString aliasedSource = writeTempFile(aliasRoot + QLatin1String("/src/item.txt"), QByteArray("aliased"));
+    QCOMPARE(readFile(aliasedSource), QByteArray("aliased"));
+
+    Request req;
+    req.operation = Operation::Copy;
+    req.sources = {toNative(aliasedSource)};
+    req.destination.targetDir = toNative(aliasRoot + QLatin1String("/dst"));
+    req.destination.mappingMode = DestinationMappingMode::SourceBasename;
+    req.conflictPolicy = ConflictPolicy::Overwrite;
+
+    const Result result = run(req);
+    QVERIFY(result.success);
+    QVERIFY(!result.cancelled);
+    QCOMPARE(result.error.code, EngineErrorCode::None);
+    QCOMPARE(readFile(realDstDir + QLatin1String("/item.txt")), QByteArray("aliased"));
 }
 
 void FileOpsContractTest::moveReportsMonotonicProgressAndStableTotals() {

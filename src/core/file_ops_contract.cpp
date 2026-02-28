@@ -16,6 +16,7 @@
 #include <chrono>
 #include <cstddef>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <dirent.h>
@@ -161,6 +162,55 @@ bool split_parent_and_name(const std::string& path, std::string& parent, std::st
     if (name.empty() || is_dot_or_dotdot(name)) {
         return false;
     }
+    return true;
+}
+
+bool canonicalize_path_with_missing_tail(const std::string& path, std::string& out, Error& err) {
+    char* resolved = ::realpath(path.c_str(), nullptr);
+    if (resolved != nullptr) {
+        out.assign(resolved);
+        ::free(resolved);
+        return true;
+    }
+
+    const int errnum = errno;
+    if (errnum != ENOENT) {
+        set_errno_error(err, EngineErrorCode::OperationFailed, OperationStep::BuildPlan, errnum, "realpath");
+        return false;
+    }
+
+    std::string parent;
+    std::string leaf;
+    if (!split_parent_and_name(path, parent, leaf)) {
+        set_error(err, EngineErrorCode::InvalidRequest, OperationStep::BuildPlan, EINVAL,
+                  "Path canonicalization failed: invalid path");
+        return false;
+    }
+
+    std::string canonical_parent;
+    if (!canonicalize_path_with_missing_tail(parent, canonical_parent, err)) {
+        return false;
+    }
+
+    out = join_path(canonical_parent, leaf);
+    return true;
+}
+
+bool canonicalize_path_parent_for_local_execution(const std::string& path, std::string& out, Error& err) {
+    std::string parent;
+    std::string leaf;
+    if (!split_parent_and_name(path, parent, leaf)) {
+        set_error(err, EngineErrorCode::InvalidRequest, OperationStep::BuildPlan, EINVAL,
+                  "Path canonicalization failed: invalid path");
+        return false;
+    }
+
+    std::string canonical_parent;
+    if (!canonicalize_path_with_missing_tail(parent, canonical_parent, err)) {
+        return false;
+    }
+
+    out = join_path(canonical_parent, leaf);
     return true;
 }
 
@@ -674,6 +724,26 @@ bool apply_worker_sandbox(const Request& request, Error& err) {
     if (!apply_landlock(request, request.linuxSafety.requireLandlock, err)) {
         return false;
     }
+    return true;
+}
+
+bool canonicalize_local_plan_paths(const Request& request, std::vector<SourcePlan>& plans, Error& err) {
+    for (SourcePlan& plan : plans) {
+        std::string canonical_source;
+        if (!canonicalize_path_parent_for_local_execution(plan.sourcePath, canonical_source, err)) {
+            return false;
+        }
+        plan.sourcePath = std::move(canonical_source);
+
+        if (is_copy_like(request.operation)) {
+            std::string canonical_destination;
+            if (!canonicalize_path_parent_for_local_execution(plan.destinationPath, canonical_destination, err)) {
+                return false;
+            }
+            plan.destinationPath = std::move(canonical_destination);
+        }
+    }
+
     return true;
 }
 
@@ -1335,6 +1405,9 @@ Result run_in_process(const Request& request, const EventHandlers& handlers) {
     std::vector<SourcePlan> plans;
     ProgressSnapshot totals;
     if (!build_plan(request, plans, totals, result.error)) {
+        return result;
+    }
+    if (!canonicalize_local_plan_paths(request, plans, result.error)) {
         return result;
     }
 

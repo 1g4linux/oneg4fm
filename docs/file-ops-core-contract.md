@@ -52,6 +52,13 @@ The `routing.*` fields are the members of `RoutingHints`.
 Routing validation currently enforces single-backend execution per request.
 Mixed backend requests are rejected with `EngineErrorCode::UnsupportedPolicy`.
 
+For `LocalHardened` native-path execution, planned source and destination
+paths are normalized by canonicalizing only their parent directories
+(`realpath()` with missing-tail preservation) while keeping each leaf name
+unchanged. This preserves symlink-leaf handling (`CopyLinkAsLink`) and lets
+operations continue when callers provide paths through a symlinked directory
+alias.
+
 When routing resolves to `LocalHardened`, `linuxSafety.requireOpenat2Resolve`
 is enforced. When routing resolves to `Gio`, local Linux hardening probes are
 not required for execution.
