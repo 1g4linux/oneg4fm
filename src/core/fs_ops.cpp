@@ -322,10 +322,7 @@ class CopyJournal {
             return true;
         }
 
-        int flags = O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC;
-#ifdef O_NOFOLLOW
-        flags |= O_NOFOLLOW;
-#endif
+        int flags = O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW;
         for (unsigned int attempt = 0; attempt < 256; ++attempt) {
             const std::string candidate = spill_file_name(attempt);
             Fd newSpillFd;
@@ -488,10 +485,7 @@ bool blake3_file_impl(const std::string& path, std::string& hexHash, Error& err)
         return false;
     }
 
-    int flags = O_RDONLY | O_CLOEXEC;
-#ifdef O_NOFOLLOW
-    flags |= O_NOFOLLOW;
-#endif
+    int flags = O_RDONLY | O_CLOEXEC | O_NOFOLLOW;
     Fd fd(::open(path.c_str(), flags));
     if (!fd.valid()) {
         set_error(err, "open");
@@ -595,10 +589,7 @@ bool open_source_entry_for_copy(int srcDir,
                                 StatInfo& outInfo,
                                 SourceEntryType& outType,
                                 Error& err) {
-    int flags = O_RDONLY | O_CLOEXEC;
-#ifdef O_NOFOLLOW
-    flags |= O_NOFOLLOW;
-#endif
+    int flags = O_RDONLY | O_CLOEXEC | O_NOFOLLOW;
 
     Fd fd;
     if (open_under_fd(srcDir, srcName, flags, 0, kResolveNoSymlinks, fd, err)) {
@@ -628,10 +619,7 @@ bool open_source_entry_for_copy(int srcDir,
     }
     err = {};
 
-    int linkFlags = O_PATH | O_CLOEXEC;
-#ifdef O_NOFOLLOW
-    linkFlags |= O_NOFOLLOW;
-#endif
+    int linkFlags = O_PATH | O_CLOEXEC | O_NOFOLLOW;
     Fd linkFd;
     if (!open_under_fd(srcDir, srcName, linkFlags, 0, kResolveNoMagiclinks, linkFd, err)) {
         return false;
@@ -712,10 +700,7 @@ std::string build_staging_file_name(unsigned int attempt) {
 }
 
 bool create_staging_file_under(int dstDir, mode_t mode, Fd& outFd, std::string& outName, Error& err) {
-    int flags = O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC;
-#ifdef O_NOFOLLOW
-    flags |= O_NOFOLLOW;
-#endif
+    int flags = O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW;
 
     for (unsigned int attempt = 0; attempt < 256; ++attempt) {
         const std::string candidate = build_staging_file_name(attempt);
@@ -743,7 +728,6 @@ bool rename_staging_into_destination(int dstDir,
                                      bool overwriteExisting,
                                      bool& destinationCreated,
                                      Error& err) {
-#ifdef RENAME_NOREPLACE
     if (LinuxFsSafety::rename_under(dstDir, stagingName, dstDir, dstName, static_cast<unsigned int>(RENAME_NOREPLACE),
                                     err)) {
         destinationCreated = true;
@@ -752,25 +736,16 @@ bool rename_staging_into_destination(int dstDir,
     if (err.code != EEXIST) {
         return false;
     }
-#else
-    err.code = ENOSYS;
-    err.message = "renameat2 RENAME_NOREPLACE is required but unavailable on this kernel";
-    return false;
-#endif
 
     if (!overwriteExisting) {
         return false;
     }
     err = {};
 
-    int probeFlags = O_PATH | O_CLOEXEC;
-#ifdef O_NOFOLLOW
-    probeFlags |= O_NOFOLLOW;
-#endif
+    int probeFlags = O_PATH | O_CLOEXEC | O_NOFOLLOW;
 
     Fd probeFd;
     if (!open_under_fd(dstDir, dstName, probeFlags, 0, kResolveNoSymlinks, probeFd, err)) {
-#ifdef RENAME_NOREPLACE
         if (err.code == ENOENT) {
             err = {};
             if (LinuxFsSafety::rename_under(dstDir, stagingName, dstDir, dstName,
@@ -779,7 +754,6 @@ bool rename_staging_into_destination(int dstDir,
                 return true;
             }
         }
-#endif
         return false;
     }
 
@@ -1425,13 +1399,7 @@ bool move_path(const std::string& source,
 
         unsigned int renameFlags = 0;
         if (!overwriteExisting) {
-#ifdef RENAME_NOREPLACE
             renameFlags = static_cast<unsigned int>(RENAME_NOREPLACE);
-#else
-            err.code = ENOSYS;
-            err.message = "renameat2 RENAME_NOREPLACE is required but unavailable on this kernel";
-            return false;
-#endif
         }
 
         if (LinuxFsSafety::rename_under(srcParentFd.fd, srcName, destParentFd.fd, destName, renameFlags, err)) {

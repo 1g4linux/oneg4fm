@@ -200,11 +200,7 @@ bool duplicate_fd(int fd, Fd& out, Error& err) {
 }
 
 int open_dir_flags() {
-    int flags = O_RDONLY | O_CLOEXEC | O_DIRECTORY;
-#ifdef O_NOFOLLOW
-    flags |= O_NOFOLLOW;
-#endif
-    return flags;
+    return O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW;
 }
 
 bool open_dir_nofollow_at(int parentFd, const std::string& name, Fd& out, Error& err) {
@@ -470,10 +466,7 @@ bool extract_regular_file(struct archive* ar,
         return false;
     }
 
-    int flags = O_WRONLY | O_CREAT | O_CLOEXEC;
-#ifdef O_NOFOLLOW
-    flags |= O_NOFOLLOW;
-#endif
+    int flags = O_WRONLY | O_CREAT | O_CLOEXEC | O_NOFOLLOW;
     if (opts.overwriteExisting) {
         flags |= O_TRUNC;
     }

@@ -494,11 +494,7 @@ bool duplicate_fd(int fd, Fd& out, Error& err) {
 }
 
 int open_dir_flags() {
-    int flags = O_RDONLY | O_CLOEXEC | O_DIRECTORY;
-#ifdef O_NOFOLLOW
-    flags |= O_NOFOLLOW;
-#endif
-    return flags;
+    return O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW;
 }
 
 bool open_dir_nofollow_at(int parentFd, const std::string& name, Fd& out, Error& err) {
@@ -601,10 +597,7 @@ bool write_file_from_archive(struct archive* ar,
                              ProgressInfo& progress,
                              const ProgressCallback& cb,
                              Error& err) {
-    int flags = O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC;
-#ifdef O_NOFOLLOW
-    flags |= O_NOFOLLOW;
-#endif
+    int flags = O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW;
     Fd fd(::openat(parentFd, name.c_str(), flags, mode & 0777));
     if (!fd.valid()) {
         set_error(err, "openat");

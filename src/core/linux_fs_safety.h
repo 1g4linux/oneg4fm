@@ -14,8 +14,9 @@
 #include <vector>
 
 #include <linux/openat2.h>
-#include <linux/stat.h>
 #include <sys/types.h>
+
+struct statx;
 
 namespace Oneg4FM::LinuxFsSafety {
 

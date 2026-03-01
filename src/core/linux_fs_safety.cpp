@@ -248,10 +248,7 @@ bool is_tmpfile_not_supported(int errnum) {
 }
 
 bool create_temp_file_named_under(int parent_fd, mode_t mode, Fd& out_fd, std::string& out_name, FsOps::Error& err) {
-    int flags = O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC;
-#ifdef O_NOFOLLOW
-    flags |= O_NOFOLLOW;
-#endif
+    int flags = O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW;
 
     for (unsigned int attempt = 0; attempt < 256; ++attempt) {
         const std::string candidate = build_temp_name(".oneg4fm.tmp.", attempt);
@@ -352,11 +349,7 @@ void Fd::reset(int fd) noexcept {
 }
 
 int open_dir_flags() {
-    int flags = O_RDONLY | O_CLOEXEC | O_DIRECTORY;
-#ifdef O_NOFOLLOW
-    flags |= O_NOFOLLOW;
-#endif
-    return flags;
+    return O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW;
 }
 
 bool duplicate_fd(int fd, Fd& out, FsOps::Error& err) {
