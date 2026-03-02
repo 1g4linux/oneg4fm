@@ -191,11 +191,9 @@ void MainWindow::updateSelectedActions() {
     bool hasAccessible = false;
     bool hasDeletable = false;
     int renamable = 0;
-    size_t fileCount = 0;
 
     if (TabPage* page = currentPage()) {
         const auto files = page->selectedFiles();
-        fileCount = files.size();
 
         for (const auto& file : files) {
             if (file->isAccessible()) {
@@ -213,7 +211,8 @@ void MainWindow::updateSelectedActions() {
             }
         }
         ui.actionFileProperties->setEnabled(!files.empty());
-        ui.actionCopyFullPath->setEnabled(fileCount == 1);
+        ui.actionCopyFullPath->setEnabled(
+            MainWindowSelectionCommands::canExecute(MainWindowSelectionCommands::Id::CopyFullPath, *this));
     }
 
     ui.actionCopy->setEnabled(hasAccessible);
@@ -221,6 +220,11 @@ void MainWindow::updateSelectedActions() {
     ui.actionDelete->setEnabled(hasDeletable);
     ui.actionRename->setEnabled(renamable > 0);
     ui.actionBulkRename->setEnabled(renamable > 1);
+    const bool canModifySelection =
+        MainWindowSelectionCommands::canExecute(MainWindowSelectionCommands::Id::SelectAll, *this);
+    ui.actionSelectAll->setEnabled(canModifySelection);
+    ui.actionDeselectAll->setEnabled(canModifySelection);
+    ui.actionInvertSelection->setEnabled(canModifySelection);
 }
 
 void MainWindow::updateUIForCurrentPage(bool setFocus) {

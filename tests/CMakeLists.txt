@@ -53,6 +53,18 @@ oneg4fm_add_test(oneg4fm-mainwindow-navigation-commands-tests
         ../oneg4fm/mainwindow_navigation_commands.cpp
 )
 
+oneg4fm_add_test(oneg4fm-mainwindow-selection-commands-tests
+    SOURCES
+        mainwindow_selection_commands_test.cpp
+        ../oneg4fm/mainwindow_selection_commands.cpp
+)
+
+oneg4fm_add_test(oneg4fm-mainwindow-view-commands-tests
+    SOURCES
+        mainwindow_view_commands_test.cpp
+        ../oneg4fm/mainwindow_view_commands.cpp
+)
+
 oneg4fm_add_test(oneg4fm-core-utils-tests
     SOURCES
         test_core_utils.cpp

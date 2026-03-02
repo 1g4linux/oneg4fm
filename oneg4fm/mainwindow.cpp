@@ -191,6 +191,14 @@ MainWindow::~MainWindow() {
 //-----------------------------------------------------------------------------
 
 void MainWindow::on_actionNewTab_triggered() {
+    MainWindowCommands::execute(MainWindowCommands::Id::NewTab, *this);
+}
+
+void MainWindow::on_actionNewWin_triggered() {
+    MainWindowCommands::execute(MainWindowCommands::Id::NewWindow, *this);
+}
+
+void MainWindow::openNewTab() {
     Panel::FilePath path;
     if (TabPage* page = currentPage()) {
         path = page->path();
@@ -202,7 +210,7 @@ void MainWindow::on_actionNewTab_triggered() {
     addTab(path);
 }
 
-void MainWindow::on_actionNewWin_triggered() {
+void MainWindow::openNewWindow() {
     Panel::FilePath path;
     if (TabPage* page = currentPage()) {
         path = page->path();

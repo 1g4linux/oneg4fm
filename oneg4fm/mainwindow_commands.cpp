@@ -25,6 +25,20 @@ class CloseTabCommand final : public Command {
     void execute(Context& context) const override { context.closeActiveTab(); }
 };
 
+class NewTabCommand final : public Command {
+   public:
+    bool canExecute(const Context& /*context*/) const override { return true; }
+
+    void execute(Context& context) const override { context.openNewTab(); }
+};
+
+class NewWindowCommand final : public Command {
+   public:
+    bool canExecute(const Context& /*context*/) const override { return true; }
+
+    void execute(Context& context) const override { context.openNewWindow(); }
+};
+
 class CloseWindowCommand final : public Command {
    public:
     bool canExecute(const Context& /*context*/) const override { return true; }
@@ -54,6 +68,8 @@ class AboutCommand final : public Command {
 };
 
 const Command& commandForId(Id id) {
+    static const NewTabCommand newTab;
+    static const NewWindowCommand newWindow;
     static const CloseTabCommand closeTab;
     static const CloseWindowCommand closeWindow;
     static const PreferencesCommand preferences;
@@ -61,6 +77,10 @@ const Command& commandForId(Id id) {
     static const AboutCommand about;
 
     switch (id) {
+        case Id::NewTab:
+            return newTab;
+        case Id::NewWindow:
+            return newWindow;
         case Id::CloseTab:
             return closeTab;
         case Id::CloseWindow:

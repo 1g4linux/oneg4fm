@@ -9,6 +9,8 @@
 namespace Oneg4FM::MainWindowCommands {
 
 enum class Id {
+    NewTab,
+    NewWindow,
     CloseTab,
     CloseWindow,
     Preferences,
@@ -20,6 +22,8 @@ class Context {
    public:
     virtual ~Context() = default;
 
+    virtual void openNewTab() = 0;
+    virtual void openNewWindow() = 0;
     virtual bool hasActiveTab() const = 0;
     virtual void closeActiveTab() = 0;
     virtual void closeWindow() = 0;

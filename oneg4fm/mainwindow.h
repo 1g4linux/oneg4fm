@@ -39,6 +39,8 @@
 #include "launcher.h"
 #include "mainwindow_commands.h"
 #include "mainwindow_navigation_commands.h"
+#include "mainwindow_selection_commands.h"
+#include "mainwindow_view_commands.h"
 #include "tabbar.h"
 #include "tabpage.h"
 #include "ui_main-win.h"
@@ -70,7 +72,9 @@ class Settings;
 
 class MainWindow : public QMainWindow,
                    public MainWindowCommands::Context,
-                   public MainWindowNavigationCommands::Context {
+                   public MainWindowNavigationCommands::Context,
+                   public MainWindowSelectionCommands::Context,
+                   public MainWindowViewCommands::Context {
     Q_OBJECT
    public:
     MainWindow(Panel::FilePath path = Panel::FilePath());
@@ -86,6 +90,10 @@ class MainWindow : public QMainWindow,
         return reinterpret_cast<TabPage*>(viewFrame->getStackedWidget()->currentWidget());
     }
     TabPage* currentPage() { return currentPage(activeViewFrame_); }
+    TabPage* currentPage(ViewFrame* viewFrame) const {
+        return reinterpret_cast<TabPage*>(viewFrame->getStackedWidget()->currentWidget());
+    }
+    TabPage* currentPage() const { return currentPage(activeViewFrame_); }
 
     void updateFromSettings(Settings& settings);
 
@@ -233,6 +241,8 @@ class MainWindow : public QMainWindow,
     virtual bool eventFilter(QObject* watched, QEvent* event) override;
 
    private:
+    void openNewTab() override;
+    void openNewWindow() override;
     bool hasActiveTab() const override;
     void closeActiveTab() override;
     void closeWindow() override;
@@ -252,6 +262,27 @@ class MainWindow : public QMainWindow,
     void openDesktopRoot() override;
     void findFilesFromSelection() override;
     void openTerminalAtCurrent() override;
+
+    bool hasSingleSelectedPath() const override;
+    void selectAllFiles() override;
+    void deselectAllFiles() override;
+    void invertFileSelection() override;
+    void copySelectedPathToClipboard() override;
+
+    void setIconMode() override;
+    void setCompactMode() override;
+    void setDetailedMode() override;
+    void setThumbnailMode() override;
+    void sortAscending() override;
+    void sortDescending() override;
+    void sortByFileName() override;
+    void sortByMTime() override;
+    void sortByCrTime() override;
+    void sortByDTime() override;
+    void sortByOwner() override;
+    void sortByGroup() override;
+    void sortByFileSize() override;
+    void sortByFileType() override;
 
     template <typename Func>
     void forEachTabPageLocal(Func func);

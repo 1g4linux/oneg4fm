@@ -367,24 +367,41 @@ void MainWindow::on_actionBulkRename_triggered() {
 }
 
 void MainWindow::on_actionSelectAll_triggered() {
+    MainWindowSelectionCommands::execute(MainWindowSelectionCommands::Id::SelectAll, *this);
+}
+
+void MainWindow::on_actionDeselectAll_triggered() {
+    MainWindowSelectionCommands::execute(MainWindowSelectionCommands::Id::DeselectAll, *this);
+}
+
+void MainWindow::on_actionInvertSelection_triggered() {
+    MainWindowSelectionCommands::execute(MainWindowSelectionCommands::Id::InvertSelection, *this);
+}
+
+bool MainWindow::hasSingleSelectedPath() const {
+    TabPage* page = currentPage();
+    return page && page->selectedFilePaths().size() == 1;
+}
+
+void MainWindow::selectAllFiles() {
     if (TabPage* page = currentPage()) {
         page->selectAll();
     }
 }
 
-void MainWindow::on_actionDeselectAll_triggered() {
+void MainWindow::deselectAllFiles() {
     if (TabPage* page = currentPage()) {
         page->deselectAll();
     }
 }
 
-void MainWindow::on_actionInvertSelection_triggered() {
+void MainWindow::invertFileSelection() {
     if (TabPage* page = currentPage()) {
         page->invertSelection();
     }
 }
 
-void MainWindow::on_actionCopyFullPath_triggered() {
+void MainWindow::copySelectedPathToClipboard() {
     TabPage* page = currentPage();
     if (!page) {
         return;
@@ -396,6 +413,10 @@ void MainWindow::on_actionCopyFullPath_triggered() {
     }
 
     QApplication::clipboard()->setText(QString::fromUtf8(paths.front().toString().get()));
+}
+
+void MainWindow::on_actionCopyFullPath_triggered() {
+    MainWindowSelectionCommands::execute(MainWindowSelectionCommands::Id::CopyFullPath, *this);
 }
 
 void MainWindow::on_actionCleanPerFolderConfig_triggered() {

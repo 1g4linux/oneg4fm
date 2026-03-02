@@ -74,27 +74,43 @@ void MainWindow::forEachTabPageGlobal(Func func) {
 //-----------------------------------------------------------------------------
 
 void MainWindow::on_actionIconView_triggered() {
+    MainWindowViewCommands::execute(MainWindowViewCommands::Id::IconView, *this);
+}
+
+void MainWindow::on_actionCompactView_triggered() {
+    MainWindowViewCommands::execute(MainWindowViewCommands::Id::CompactView, *this);
+}
+
+void MainWindow::on_actionDetailedList_triggered() {
+    MainWindowViewCommands::execute(MainWindowViewCommands::Id::DetailedView, *this);
+}
+
+void MainWindow::on_actionThumbnailView_triggered() {
+    MainWindowViewCommands::execute(MainWindowViewCommands::Id::ThumbnailView, *this);
+}
+
+void MainWindow::setIconMode() {
     if (auto* page = currentPage()) {
         page->setViewMode(Panel::FolderView::IconMode);
         setTabIcon(page);
     }
 }
 
-void MainWindow::on_actionCompactView_triggered() {
+void MainWindow::setCompactMode() {
     if (auto* page = currentPage()) {
         page->setViewMode(Panel::FolderView::CompactMode);
         setTabIcon(page);
     }
 }
 
-void MainWindow::on_actionDetailedList_triggered() {
+void MainWindow::setDetailedMode() {
     if (auto* page = currentPage()) {
         page->setViewMode(Panel::FolderView::DetailedListMode);
         setTabIcon(page);
     }
 }
 
-void MainWindow::on_actionThumbnailView_triggered() {
+void MainWindow::setThumbnailMode() {
     if (auto* page = currentPage()) {
         page->setViewMode(Panel::FolderView::ThumbnailMode);
         setTabIcon(page);
@@ -181,60 +197,100 @@ void MainWindow::on_actionGoToCustomizedViewSource_triggered() {
 //-----------------------------------------------------------------------------
 
 void MainWindow::on_actionByFileName_triggered(bool /*checked*/) {
+    MainWindowViewCommands::execute(MainWindowViewCommands::Id::SortByFileName, *this);
+}
+
+void MainWindow::on_actionByMTime_triggered(bool /*checked*/) {
+    MainWindowViewCommands::execute(MainWindowViewCommands::Id::SortByMTime, *this);
+}
+
+void MainWindow::on_actionByCrTime_triggered(bool /*checked*/) {
+    MainWindowViewCommands::execute(MainWindowViewCommands::Id::SortByCrTime, *this);
+}
+
+void MainWindow::on_actionByDTime_triggered(bool /*checked*/) {
+    MainWindowViewCommands::execute(MainWindowViewCommands::Id::SortByDTime, *this);
+}
+
+void MainWindow::on_actionByOwner_triggered(bool /*checked*/) {
+    MainWindowViewCommands::execute(MainWindowViewCommands::Id::SortByOwner, *this);
+}
+
+void MainWindow::on_actionByGroup_triggered(bool /*checked*/) {
+    MainWindowViewCommands::execute(MainWindowViewCommands::Id::SortByGroup, *this);
+}
+
+void MainWindow::on_actionByFileSize_triggered(bool /*checked*/) {
+    MainWindowViewCommands::execute(MainWindowViewCommands::Id::SortByFileSize, *this);
+}
+
+void MainWindow::on_actionByFileType_triggered(bool /*checked*/) {
+    MainWindowViewCommands::execute(MainWindowViewCommands::Id::SortByFileType, *this);
+}
+
+void MainWindow::sortByFileName() {
     if (auto* page = currentPage()) {
         page->sort(Panel::FolderModel::ColumnFileName, page->sortOrder());
     }
 }
 
-void MainWindow::on_actionByMTime_triggered(bool /*checked*/) {
+void MainWindow::sortByMTime() {
     if (auto* page = currentPage()) {
         page->sort(Panel::FolderModel::ColumnFileMTime, page->sortOrder());
     }
 }
 
-void MainWindow::on_actionByCrTime_triggered(bool /*checked*/) {
+void MainWindow::sortByCrTime() {
     if (auto* page = currentPage()) {
         page->sort(Panel::FolderModel::ColumnFileCrTime, page->sortOrder());
     }
 }
 
-void MainWindow::on_actionByDTime_triggered(bool /*checked*/) {
+void MainWindow::sortByDTime() {
     if (auto* page = currentPage()) {
         page->sort(Panel::FolderModel::ColumnFileDTime, page->sortOrder());
     }
 }
 
-void MainWindow::on_actionByOwner_triggered(bool /*checked*/) {
+void MainWindow::sortByOwner() {
     if (auto* page = currentPage()) {
         page->sort(Panel::FolderModel::ColumnFileOwner, page->sortOrder());
     }
 }
 
-void MainWindow::on_actionByGroup_triggered(bool /*checked*/) {
+void MainWindow::sortByGroup() {
     if (auto* page = currentPage()) {
         page->sort(Panel::FolderModel::ColumnFileGroup, page->sortOrder());
     }
 }
 
-void MainWindow::on_actionByFileSize_triggered(bool /*checked*/) {
+void MainWindow::sortByFileSize() {
     if (auto* page = currentPage()) {
         page->sort(Panel::FolderModel::ColumnFileSize, page->sortOrder());
     }
 }
 
-void MainWindow::on_actionByFileType_triggered(bool /*checked*/) {
+void MainWindow::sortByFileType() {
     if (auto* page = currentPage()) {
         page->sort(Panel::FolderModel::ColumnFileType, page->sortOrder());
     }
 }
 
 void MainWindow::on_actionAscending_triggered(bool /*checked*/) {
+    MainWindowViewCommands::execute(MainWindowViewCommands::Id::SortAscending, *this);
+}
+
+void MainWindow::on_actionDescending_triggered(bool /*checked*/) {
+    MainWindowViewCommands::execute(MainWindowViewCommands::Id::SortDescending, *this);
+}
+
+void MainWindow::sortAscending() {
     if (auto* page = currentPage()) {
         page->sort(page->sortColumn(), Qt::AscendingOrder);
     }
 }
 
-void MainWindow::on_actionDescending_triggered(bool /*checked*/) {
+void MainWindow::sortDescending() {
     if (auto* page = currentPage()) {
         page->sort(page->sortColumn(), Qt::DescendingOrder);
     }
