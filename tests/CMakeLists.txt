@@ -47,6 +47,12 @@ oneg4fm_add_test(oneg4fm-mainwindow-commands-tests
         ../oneg4fm/mainwindow_commands.cpp
 )
 
+oneg4fm_add_test(oneg4fm-mainwindow-navigation-commands-tests
+    SOURCES
+        mainwindow_navigation_commands_test.cpp
+        ../oneg4fm/mainwindow_navigation_commands.cpp
+)
+
 oneg4fm_add_test(oneg4fm-core-utils-tests
     SOURCES
         test_core_utils.cpp

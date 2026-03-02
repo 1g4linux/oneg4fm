@@ -43,6 +43,55 @@ void MainWindow::chdir(Panel::FilePath path, ViewFrame* viewFrame) {
 }
 
 void MainWindow::on_actionGoUp_triggered() {
+    MainWindowNavigationCommands::execute(MainWindowNavigationCommands::Id::GoUp, *this);
+}
+
+void MainWindow::on_actionGoBack_triggered() {
+    MainWindowNavigationCommands::execute(MainWindowNavigationCommands::Id::GoBack, *this);
+}
+
+void MainWindow::on_actionGoForward_triggered() {
+    MainWindowNavigationCommands::execute(MainWindowNavigationCommands::Id::GoForward, *this);
+}
+
+void MainWindow::on_actionHome_triggered() {
+    MainWindowNavigationCommands::execute(MainWindowNavigationCommands::Id::Home, *this);
+}
+
+void MainWindow::on_actionReload_triggered() {
+    MainWindowNavigationCommands::execute(MainWindowNavigationCommands::Id::Reload, *this);
+}
+
+void MainWindow::on_actionApplications_triggered() {
+    MainWindowNavigationCommands::execute(MainWindowNavigationCommands::Id::Applications, *this);
+}
+
+void MainWindow::on_actionTrash_triggered() {
+    MainWindowNavigationCommands::execute(MainWindowNavigationCommands::Id::Trash, *this);
+}
+
+void MainWindow::on_actionDesktop_triggered() {
+    MainWindowNavigationCommands::execute(MainWindowNavigationCommands::Id::Desktop, *this);
+}
+
+void MainWindow::on_actionFindFiles_triggered() {
+    MainWindowNavigationCommands::execute(MainWindowNavigationCommands::Id::FindFiles, *this);
+}
+
+void MainWindow::on_actionOpenTerminal_triggered() {
+    MainWindowNavigationCommands::execute(MainWindowNavigationCommands::Id::OpenTerminal, *this);
+}
+
+bool MainWindow::hasCurrentPage() const {
+    return activeViewFrame_ && activeViewFrame_->getStackedWidget() &&
+           activeViewFrame_->getStackedWidget()->currentWidget() != nullptr;
+}
+
+bool MainWindow::hasDesktopPath() const {
+    return !QStandardPaths::writableLocation(QStandardPaths::DesktopLocation).isEmpty();
+}
+
+void MainWindow::navigateUp() {
     QTimer::singleShot(0, this, [this] {
         if (TabPage* page = currentPage()) {
             page->up();
@@ -52,7 +101,7 @@ void MainWindow::on_actionGoUp_triggered() {
     });
 }
 
-void MainWindow::on_actionGoBack_triggered() {
+void MainWindow::navigateBack() {
     QTimer::singleShot(0, this, [this] {
         if (TabPage* page = currentPage()) {
             page->backward();
@@ -62,7 +111,7 @@ void MainWindow::on_actionGoBack_triggered() {
     });
 }
 
-void MainWindow::on_actionGoForward_triggered() {
+void MainWindow::navigateForward() {
     QTimer::singleShot(0, this, [this] {
         if (TabPage* page = currentPage()) {
             page->forward();
@@ -72,11 +121,11 @@ void MainWindow::on_actionGoForward_triggered() {
     });
 }
 
-void MainWindow::on_actionHome_triggered() {
+void MainWindow::navigateHome() {
     chdir(Panel::FilePath::homeDir());
 }
 
-void MainWindow::on_actionReload_triggered() {
+void MainWindow::reloadCurrent() {
     TabPage* page = currentPage();
     if (!page) {
         return;
@@ -90,22 +139,22 @@ void MainWindow::on_actionReload_triggered() {
     }
 }
 
-void MainWindow::on_actionApplications_triggered() {
+void MainWindow::openApplicationsRoot() {
     chdir(Panel::FilePath::fromUri("menu://applications/"));
 }
 
-void MainWindow::on_actionTrash_triggered() {
+void MainWindow::openTrashRoot() {
     chdir(Panel::FilePath::fromUri("trash:///"));
 }
 
-void MainWindow::on_actionDesktop_triggered() {
+void MainWindow::openDesktopRoot() {
     const QString desktop = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
     if (!desktop.isEmpty()) {
         chdir(Panel::FilePath::fromLocalPath(desktop.toLocal8Bit().constData()));
     }
 }
 
-void MainWindow::on_actionFindFiles_triggered() {
+void MainWindow::findFilesFromSelection() {
     auto* app = static_cast<Application*>(qApp);
 
     TabPage* page = currentPage();
@@ -138,7 +187,7 @@ void MainWindow::on_actionFindFiles_triggered() {
     app->findFiles(paths);
 }
 
-void MainWindow::on_actionOpenTerminal_triggered() {
+void MainWindow::openTerminalAtCurrent() {
     if (TabPage* page = currentPage()) {
         static_cast<Application*>(qApp)->openFolderInTerminal(page->path());
     }

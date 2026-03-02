@@ -38,6 +38,7 @@
 
 #include "launcher.h"
 #include "mainwindow_commands.h"
+#include "mainwindow_navigation_commands.h"
 #include "tabbar.h"
 #include "tabpage.h"
 #include "ui_main-win.h"
@@ -67,7 +68,9 @@ class ViewFrame : public QFrame {
 
 class Settings;
 
-class MainWindow : public QMainWindow, public MainWindowCommands::Context {
+class MainWindow : public QMainWindow,
+                   public MainWindowCommands::Context,
+                   public MainWindowNavigationCommands::Context {
     Q_OBJECT
    public:
     MainWindow(Panel::FilePath path = Panel::FilePath());
@@ -236,6 +239,19 @@ class MainWindow : public QMainWindow, public MainWindowCommands::Context {
     void openPreferences() override;
     void editBookmarks() override;
     void showAboutDialog() override;
+
+    bool hasCurrentPage() const override;
+    bool hasDesktopPath() const override;
+    void navigateUp() override;
+    void navigateBack() override;
+    void navigateForward() override;
+    void navigateHome() override;
+    void reloadCurrent() override;
+    void openApplicationsRoot() override;
+    void openTrashRoot() override;
+    void openDesktopRoot() override;
+    void findFilesFromSelection() override;
+    void openTerminalAtCurrent() override;
 
     template <typename Func>
     void forEachTabPageLocal(Func func);
