@@ -38,6 +38,7 @@
 
 #include "launcher.h"
 #include "mainwindow_commands.h"
+#include "mainwindow_fileops_commands.h"
 #include "mainwindow_navigation_commands.h"
 #include "mainwindow_selection_commands.h"
 #include "mainwindow_view_commands.h"
@@ -72,6 +73,7 @@ class Settings;
 
 class MainWindow : public QMainWindow,
                    public MainWindowCommands::Context,
+                   public MainWindowFileOpsCommands::Context,
                    public MainWindowNavigationCommands::Context,
                    public MainWindowSelectionCommands::Context,
                    public MainWindowViewCommands::Context {
@@ -264,6 +266,19 @@ class MainWindow : public QMainWindow,
     void openTerminalAtCurrent() override;
 
     bool hasSingleSelectedPath() const override;
+    bool hasSelectedFiles() const override;
+    bool hasAccessibleSelection() const override;
+    bool hasDeletableSelection() const override;
+    bool canPasteIntoCurrentFolder() const override;
+    int renamableSelectionCount() const override;
+    void showFileProperties() override;
+    void showFolderProperties() override;
+    void copySelectionToClipboard() override;
+    void cutSelectionToClipboard() override;
+    void pasteClipboardIntoCurrentFolder() override;
+    void deleteSelection() override;
+    void renameSelection() override;
+    void bulkRenameSelection() override;
     void selectAllFiles() override;
     void deselectAllFiles() override;
     void invertFileSelection() override;

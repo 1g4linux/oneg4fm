@@ -188,38 +188,20 @@ void MainWindow::updateViewMenuForCurrentPage() {
 
 // Update the enabled state of File and Edit actions for selected files
 void MainWindow::updateSelectedActions() {
-    bool hasAccessible = false;
-    bool hasDeletable = false;
-    int renamable = 0;
+    ui.actionFileProperties->setEnabled(
+        MainWindowFileOpsCommands::canExecute(MainWindowFileOpsCommands::Id::FileProperties, *this));
+    ui.actionFolderProperties->setEnabled(
+        MainWindowFileOpsCommands::canExecute(MainWindowFileOpsCommands::Id::FolderProperties, *this));
+    ui.actionCopy->setEnabled(MainWindowFileOpsCommands::canExecute(MainWindowFileOpsCommands::Id::Copy, *this));
+    ui.actionCut->setEnabled(MainWindowFileOpsCommands::canExecute(MainWindowFileOpsCommands::Id::Cut, *this));
+    ui.actionDelete->setEnabled(MainWindowFileOpsCommands::canExecute(MainWindowFileOpsCommands::Id::Delete, *this));
+    ui.actionRename->setEnabled(MainWindowFileOpsCommands::canExecute(MainWindowFileOpsCommands::Id::Rename, *this));
+    ui.actionBulkRename->setEnabled(
+        MainWindowFileOpsCommands::canExecute(MainWindowFileOpsCommands::Id::BulkRename, *this));
+    ui.actionPaste->setEnabled(MainWindowFileOpsCommands::canExecute(MainWindowFileOpsCommands::Id::Paste, *this));
+    ui.actionCopyFullPath->setEnabled(
+        MainWindowSelectionCommands::canExecute(MainWindowSelectionCommands::Id::CopyFullPath, *this));
 
-    if (TabPage* page = currentPage()) {
-        const auto files = page->selectedFiles();
-
-        for (const auto& file : files) {
-            if (file->isAccessible()) {
-                hasAccessible = true;
-            }
-            if (file->isDeletable()) {
-                hasDeletable = true;
-            }
-            if (file->canSetName()) {
-                ++renamable;
-            }
-            // Optimization: break early if all flags are satisfied
-            if (hasAccessible && hasDeletable && renamable > 1) {
-                break;
-            }
-        }
-        ui.actionFileProperties->setEnabled(!files.empty());
-        ui.actionCopyFullPath->setEnabled(
-            MainWindowSelectionCommands::canExecute(MainWindowSelectionCommands::Id::CopyFullPath, *this));
-    }
-
-    ui.actionCopy->setEnabled(hasAccessible);
-    ui.actionCut->setEnabled(hasDeletable);
-    ui.actionDelete->setEnabled(hasDeletable);
-    ui.actionRename->setEnabled(renamable > 0);
-    ui.actionBulkRename->setEnabled(renamable > 1);
     const bool canModifySelection =
         MainWindowSelectionCommands::canExecute(MainWindowSelectionCommands::Id::SelectAll, *this);
     ui.actionSelectAll->setEnabled(canModifySelection);

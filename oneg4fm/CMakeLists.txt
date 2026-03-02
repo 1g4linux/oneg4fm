@@ -12,6 +12,7 @@ set(oneg4fm_SRCS
     oneg4fm.cpp
     mainwindow.cpp
     mainwindow_commands.cpp
+    mainwindow_fileops_commands.cpp
     mainwindow_navigation_commands.cpp
     mainwindow_selection_commands.cpp
     mainwindow_view_commands.cpp

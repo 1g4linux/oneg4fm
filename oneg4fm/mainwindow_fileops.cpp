@@ -127,6 +127,10 @@ bool renameFileWithBackend(const std::shared_ptr<const Panel::FileInfo>& file, Q
 }  // namespace
 
 void MainWindow::on_actionFileProperties_triggered() {
+    MainWindowFileOpsCommands::execute(MainWindowFileOpsCommands::Id::FileProperties, *this);
+}
+
+void MainWindow::showFileProperties() {
     TabPage* page = currentPage();
     if (!page) {
         return;
@@ -156,6 +160,10 @@ void MainWindow::on_actionFileProperties_triggered() {
 }
 
 void MainWindow::on_actionFolderProperties_triggered() {
+    MainWindowFileOpsCommands::execute(MainWindowFileOpsCommands::Id::FolderProperties, *this);
+}
+
+void MainWindow::showFolderProperties() {
     TabPage* page = currentPage();
     if (!page) {
         return;
@@ -182,6 +190,10 @@ void MainWindow::on_actionFolderProperties_triggered() {
 }
 
 void MainWindow::on_actionCopy_triggered() {
+    MainWindowFileOpsCommands::execute(MainWindowFileOpsCommands::Id::Copy, *this);
+}
+
+void MainWindow::copySelectionToClipboard() {
     TabPage* page = currentPage();
     if (!page) {
         return;
@@ -196,6 +208,10 @@ void MainWindow::on_actionCopy_triggered() {
 }
 
 void MainWindow::on_actionCut_triggered() {
+    MainWindowFileOpsCommands::execute(MainWindowFileOpsCommands::Id::Cut, *this);
+}
+
+void MainWindow::cutSelectionToClipboard() {
     TabPage* page = currentPage();
     if (!page) {
         return;
@@ -210,6 +226,10 @@ void MainWindow::on_actionCut_triggered() {
 }
 
 void MainWindow::on_actionPaste_triggered() {
+    MainWindowFileOpsCommands::execute(MainWindowFileOpsCommands::Id::Paste, *this);
+}
+
+void MainWindow::pasteClipboardIntoCurrentFolder() {
     TabPage* page = currentPage();
     if (!page) {
         return;
@@ -219,6 +239,10 @@ void MainWindow::on_actionPaste_triggered() {
 }
 
 void MainWindow::on_actionDelete_triggered() {
+    MainWindowFileOpsCommands::execute(MainWindowFileOpsCommands::Id::Delete, *this);
+}
+
+void MainWindow::deleteSelection() {
     TabPage* page = currentPage();
     if (!page) {
         return;
@@ -313,6 +337,10 @@ void MainWindow::on_actionDelete_triggered() {
 }
 
 void MainWindow::on_actionRename_triggered() {
+    MainWindowFileOpsCommands::execute(MainWindowFileOpsCommands::Id::Rename, *this);
+}
+
+void MainWindow::renameSelection() {
     TabPage* page = currentPage();
     if (!page) {
         return;
@@ -353,6 +381,10 @@ void MainWindow::on_actionRename_triggered() {
 }
 
 void MainWindow::on_actionBulkRename_triggered() {
+    MainWindowFileOpsCommands::execute(MainWindowFileOpsCommands::Id::BulkRename, *this);
+}
+
+void MainWindow::bulkRenameSelection() {
     TabPage* page = currentPage();
     if (!page) {
         return;
@@ -381,6 +413,67 @@ void MainWindow::on_actionInvertSelection_triggered() {
 bool MainWindow::hasSingleSelectedPath() const {
     TabPage* page = currentPage();
     return page && page->selectedFilePaths().size() == 1;
+}
+
+bool MainWindow::hasSelectedFiles() const {
+    TabPage* page = currentPage();
+    return page && !page->selectedFiles().empty();
+}
+
+bool MainWindow::hasAccessibleSelection() const {
+    TabPage* page = currentPage();
+    if (!page) {
+        return false;
+    }
+
+    const auto files = page->selectedFiles();
+    for (const auto& file : files) {
+        if (file && file->isAccessible()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool MainWindow::hasDeletableSelection() const {
+    TabPage* page = currentPage();
+    if (!page) {
+        return false;
+    }
+
+    const auto files = page->selectedFiles();
+    for (const auto& file : files) {
+        if (file && file->isDeletable()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool MainWindow::canPasteIntoCurrentFolder() const {
+    TabPage* page = currentPage();
+    if (!page || !page->folder()) {
+        return false;
+    }
+
+    const auto info = page->folder()->info();
+    return info && info->isWritable();
+}
+
+int MainWindow::renamableSelectionCount() const {
+    TabPage* page = currentPage();
+    if (!page) {
+        return 0;
+    }
+
+    int renamable = 0;
+    const auto files = page->selectedFiles();
+    for (const auto& file : files) {
+        if (file && file->canSetName()) {
+            ++renamable;
+        }
+    }
+    return renamable;
 }
 
 void MainWindow::selectAllFiles() {
