@@ -11,8 +11,8 @@
 // New backend headers
 #include "../src/backends/qt/qt_fileinfo.h"
 #include "../src/core/backend_registry.h"
+#include "../src/core/file_ops_contract.h"
 #include "../src/ui/filepropertiesdialog.h"
-#include "../src/core/fs_ops.h"
 
 // LibFM-Qt headers
 #include "panel/panel.h"
@@ -81,22 +81,41 @@ bool renameFileWithBackend(const std::shared_ptr<const Panel::FileInfo>& file, Q
     if (ok && !newName.isEmpty() && newName != currentName) {
         const QString newPath = fileInfo.absolutePath() + QLatin1Char('/') + newName;
 
-        FsOps::ProgressInfo progress{};
-        progress.filesTotal = 1;
-        auto cb = [](const FsOps::ProgressInfo&) { return true; };
-        FsOps::Error err;
-
         const std::string srcNative = QFile::encodeName(currentPath).toStdString();
         const std::string dstNative = QFile::encodeName(newPath).toStdString();
-        const bool preserveOwnership = shouldPreserveOwnershipForOps();
+        const std::string dstParentNative = QFile::encodeName(fileInfo.absolutePath()).toStdString();
 
-        if (FsOps::move_path(srcNative, dstNative, progress, cb, err, /*forceCopyFallbackForTests=*/false,
-                             preserveOwnership)) {
+        FileOpsContract::Request request;
+        request.operation = FileOpsContract::Operation::Move;
+        request.sources = {srcNative};
+        request.destination.targetDir = dstParentNative;
+        request.destination.mappingMode = FileOpsContract::DestinationMappingMode::ExplicitPerSource;
+        request.destination.explicitTargets = {dstNative};
+        request.conflictPolicy = FileOpsContract::ConflictPolicy::Overwrite;
+        request.symlinkPolicy.followSymlinks = false;
+        request.symlinkPolicy.copyMode = FileOpsContract::SymlinkCopyMode::CopyLinkAsLink;
+        request.metadata.preserveOwnership = shouldPreserveOwnershipForOps();
+        request.metadata.preservePermissions = true;
+        request.metadata.preserveTimestamps = true;
+        request.atomicity.requireAtomicReplace = false;
+        request.atomicity.bestEffortAtomicMove = true;
+        request.cancelGranularity = FileOpsContract::CancelCheckpointGranularity::PerChunk;
+        request.linuxSafety.requireOpenat2Resolve = true;
+        request.linuxSafety.requireLandlock = false;
+        request.linuxSafety.requireSeccomp = false;
+        request.linuxSafety.workerMode = FileOpsContract::WorkerMode::InProcess;
+        request.routing.defaultBackend = FileOpsContract::Backend::Auto;
+        request.routing.sourceKinds = {FileOpsContract::EndpointKind::NativePath};
+        request.routing.destinationKind = FileOpsContract::EndpointKind::NativePath;
+        request.routing.destinationBackend = FileOpsContract::Backend::Auto;
+
+        const FileOpsContract::Result result = FileOpsContract::run(request);
+        if (result.success) {
             return true;
         }
 
-        const QString errorMsg =
-            err.isSet() ? QString::fromLocal8Bit(err.message.c_str()) : QStringLiteral("Unknown error");
+        const QString errorMsg = result.error.message.empty() ? QStringLiteral("Unknown error")
+                                                              : QString::fromLocal8Bit(result.error.message.c_str());
         QMessageBox::critical(parent, QApplication::translate("MainWindow", "Error"),
                               QApplication::translate("MainWindow", "Failed to rename file: %1").arg(errorMsg));
         return false;
