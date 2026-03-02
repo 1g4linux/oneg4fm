@@ -316,27 +316,54 @@ void MainWindow::on_actionCreateLauncher_triggered() {
 }
 
 void MainWindow::on_actionCloseWindow_triggered() {
-    close();
+    MainWindowCommands::execute(MainWindowCommands::Id::CloseWindow, *this);
 }
 
 void MainWindow::on_actionCloseTab_triggered() {
-    if (activeViewFrame_) {
-        int currentIndex = activeViewFrame_->getStackedWidget()->currentIndex();
-        if (currentIndex != -1) {
-            closeTab(currentIndex, activeViewFrame_);
-        }
-    }
+    MainWindowCommands::execute(MainWindowCommands::Id::CloseTab, *this);
 }
 
 void MainWindow::on_actionPreferences_triggered() {
-    static_cast<Application*>(qApp)->preferences(QString());
+    MainWindowCommands::execute(MainWindowCommands::Id::Preferences, *this);
 }
 
 void MainWindow::on_actionEditBookmarks_triggered() {
-    static_cast<Application*>(qApp)->editBookmarks();
+    MainWindowCommands::execute(MainWindowCommands::Id::EditBookmarks, *this);
 }
 
 void MainWindow::on_actionAbout_triggered() {
+    MainWindowCommands::execute(MainWindowCommands::Id::About, *this);
+}
+
+bool MainWindow::hasActiveTab() const {
+    return activeViewFrame_ && activeViewFrame_->getStackedWidget() &&
+           activeViewFrame_->getStackedWidget()->currentIndex() >= 0;
+}
+
+void MainWindow::closeActiveTab() {
+    if (!activeViewFrame_ || !activeViewFrame_->getStackedWidget()) {
+        return;
+    }
+
+    const int currentIndex = activeViewFrame_->getStackedWidget()->currentIndex();
+    if (currentIndex >= 0) {
+        closeTab(currentIndex, activeViewFrame_);
+    }
+}
+
+void MainWindow::closeWindow() {
+    close();
+}
+
+void MainWindow::openPreferences() {
+    static_cast<Application*>(qApp)->preferences(QString());
+}
+
+void MainWindow::editBookmarks() {
+    static_cast<Application*>(qApp)->editBookmarks();
+}
+
+void MainWindow::showAboutDialog() {
     QMessageBox::about(this, tr("About oneg4fm"),
                        tr("oneg4fm is a file manager.\n\n"
                           "Copyright (C) 2013-2024 oneg4fm Team\n"));

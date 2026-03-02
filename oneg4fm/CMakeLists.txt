@@ -11,6 +11,7 @@ set(oneg4fm_SRCS
     application_window_orchestration.cpp
     oneg4fm.cpp
     mainwindow.cpp
+    mainwindow_commands.cpp
     mainwindow_viewframe.cpp
     mainwindow_tabs.cpp
     mainwindow_fileops.cpp

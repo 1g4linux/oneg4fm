@@ -41,6 +41,12 @@ oneg4fm_add_test(oneg4fm-application-startup-plan-tests
         ../oneg4fm/application_startup_plan.cpp
 )
 
+oneg4fm_add_test(oneg4fm-mainwindow-commands-tests
+    SOURCES
+        mainwindow_commands_test.cpp
+        ../oneg4fm/mainwindow_commands.cpp
+)
+
 oneg4fm_add_test(oneg4fm-core-utils-tests
     SOURCES
         test_core_utils.cpp

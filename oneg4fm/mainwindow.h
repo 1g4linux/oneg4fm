@@ -37,6 +37,7 @@
 #include <QTabWidget>
 
 #include "launcher.h"
+#include "mainwindow_commands.h"
 #include "tabbar.h"
 #include "tabpage.h"
 #include "ui_main-win.h"
@@ -66,7 +67,7 @@ class ViewFrame : public QFrame {
 
 class Settings;
 
-class MainWindow : public QMainWindow {
+class MainWindow : public QMainWindow, public MainWindowCommands::Context {
     Q_OBJECT
    public:
     MainWindow(Panel::FilePath path = Panel::FilePath());
@@ -229,6 +230,13 @@ class MainWindow : public QMainWindow {
     virtual bool eventFilter(QObject* watched, QEvent* event) override;
 
    private:
+    bool hasActiveTab() const override;
+    void closeActiveTab() override;
+    void closeWindow() override;
+    void openPreferences() override;
+    void editBookmarks() override;
+    void showAboutDialog() override;
+
     template <typename Func>
     void forEachTabPageLocal(Func func);
 
