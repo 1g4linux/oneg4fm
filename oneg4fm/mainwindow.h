@@ -37,6 +37,7 @@
 #include <QTabWidget>
 
 #include "launcher.h"
+#include "mainwindow_bookmark_commands.h"
 #include "mainwindow_commands.h"
 #include "mainwindow_fileops_commands.h"
 #include "mainwindow_navigation_commands.h"
@@ -73,6 +74,7 @@ class ViewFrame : public QFrame {
 class Settings;
 
 class MainWindow : public QMainWindow,
+                   public MainWindowBookmarkCommands::Context,
                    public MainWindowCommands::Context,
                    public MainWindowFileOpsCommands::Context,
                    public MainWindowNavigationCommands::Context,
@@ -250,6 +252,11 @@ class MainWindow : public QMainWindow,
     void openPreferences() override;
     void editBookmarks() override;
     void showAboutDialog() override;
+
+    void openBookmarkInCurrentTab(const QString& bookmarkPath) override;
+    void openBookmarkInNewTab(const QString& bookmarkPath) override;
+    void openBookmarkInNewWindow(const QString& bookmarkPath) override;
+    void openBookmarkInLastActiveWindow(const QString& bookmarkPath) override;
 
     bool hasCurrentPage() const override;
     bool hasDesktopPath() const override;

@@ -47,6 +47,12 @@ oneg4fm_add_test(oneg4fm-mainwindow-commands-tests
         ../oneg4fm/mainwindow_commands.cpp
 )
 
+oneg4fm_add_test(oneg4fm-mainwindow-bookmark-commands-tests
+    SOURCES
+        mainwindow_bookmark_commands_test.cpp
+        ../oneg4fm/mainwindow_bookmark_commands.cpp
+)
+
 oneg4fm_add_test(oneg4fm-mainwindow-fileops-commands-tests
     SOURCES
         mainwindow_fileops_commands_test.cpp

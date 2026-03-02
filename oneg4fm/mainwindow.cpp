@@ -92,6 +92,12 @@ MainWindow::MainWindow(Panel::FilePath path)
 
     Settings& settings = appSettings();
 
+    bookmarks_ = Panel::Bookmarks::globalInstance();
+    if (bookmarks_) {
+        connect(bookmarks_.get(), &Panel::Bookmarks::changed, this, &MainWindow::onBookmarksChanged);
+    }
+    loadBookmarksMenu();
+
     // Initialize side pane
     if (ui.sidePane) {
         ui.sidePane->setVisible(settings.isSidePaneVisible());
