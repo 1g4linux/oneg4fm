@@ -65,6 +65,12 @@ oneg4fm_add_test(oneg4fm-mainwindow-selection-commands-tests
         ../oneg4fm/mainwindow_selection_commands.cpp
 )
 
+oneg4fm_add_test(oneg4fm-mainwindow-tab-commands-tests
+    SOURCES
+        mainwindow_tab_commands_test.cpp
+        ../oneg4fm/mainwindow_tab_commands.cpp
+)
+
 oneg4fm_add_test(oneg4fm-mainwindow-view-commands-tests
     SOURCES
         mainwindow_view_commands_test.cpp

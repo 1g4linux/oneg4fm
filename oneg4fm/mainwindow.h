@@ -41,6 +41,7 @@
 #include "mainwindow_fileops_commands.h"
 #include "mainwindow_navigation_commands.h"
 #include "mainwindow_selection_commands.h"
+#include "mainwindow_tab_commands.h"
 #include "mainwindow_view_commands.h"
 #include "tabbar.h"
 #include "tabpage.h"
@@ -76,6 +77,7 @@ class MainWindow : public QMainWindow,
                    public MainWindowFileOpsCommands::Context,
                    public MainWindowNavigationCommands::Context,
                    public MainWindowSelectionCommands::Context,
+                   public MainWindowTabCommands::Context,
                    public MainWindowViewCommands::Context {
     Q_OBJECT
    public:
@@ -215,10 +217,7 @@ class MainWindow : public QMainWindow,
     void onTabBarClicked(int index);
     void closeLeftTabs();
     void closeRightTabs();
-    void closeOtherTabs() {
-        closeLeftTabs();
-        closeRightTabs();
-    }
+    void closeOtherTabs();
     void focusPathEntry();
     void toggleMenuBar(bool checked);
     void on_actionMenu_triggered();
@@ -283,6 +282,12 @@ class MainWindow : public QMainWindow,
     void deselectAllFiles() override;
     void invertFileSelection() override;
     void copySelectedPathToClipboard() override;
+
+    int currentTabIndex() const override;
+    int tabCount() const override;
+    void setCurrentTabIndex(int index) override;
+    void closeTabAt(int index) override;
+    void focusCurrentTabView() override;
 
     void setIconMode() override;
     void setCompactMode() override;

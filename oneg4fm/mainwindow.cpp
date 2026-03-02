@@ -348,6 +348,51 @@ bool MainWindow::hasActiveTab() const {
            activeViewFrame_->getStackedWidget()->currentIndex() >= 0;
 }
 
+int MainWindow::currentTabIndex() const {
+    if (!activeViewFrame_ || !activeViewFrame_->getTabBar()) {
+        return -1;
+    }
+    return activeViewFrame_->getTabBar()->currentIndex();
+}
+
+int MainWindow::tabCount() const {
+    if (!activeViewFrame_ || !activeViewFrame_->getTabBar()) {
+        return 0;
+    }
+    return activeViewFrame_->getTabBar()->count();
+}
+
+void MainWindow::setCurrentTabIndex(int index) {
+    if (!activeViewFrame_ || !activeViewFrame_->getTabBar()) {
+        return;
+    }
+
+    auto* tabBar = activeViewFrame_->getTabBar();
+    if (index < 0 || index >= tabBar->count()) {
+        return;
+    }
+    tabBar->setCurrentIndex(index);
+}
+
+void MainWindow::closeTabAt(int index) {
+    if (!activeViewFrame_ || !activeViewFrame_->getStackedWidget()) {
+        return;
+    }
+
+    if (index < 0 || index >= activeViewFrame_->getStackedWidget()->count()) {
+        return;
+    }
+    closeTab(index, activeViewFrame_);
+}
+
+void MainWindow::focusCurrentTabView() {
+    if (TabPage* page = currentPage()) {
+        if (page->folderView() && page->folderView()->childView()) {
+            page->folderView()->childView()->setFocus();
+        }
+    }
+}
+
 void MainWindow::closeActiveTab() {
     if (!activeViewFrame_ || !activeViewFrame_->getStackedWidget()) {
         return;
@@ -508,13 +553,7 @@ void MainWindow::onFolderUnmounted() {
 
 void MainWindow::onTabBarClicked(int index) {
     Q_UNUSED(index);
-    if (activeViewFrame_) {
-        if (TabPage* page = currentPage()) {
-            if (page->folderView() && page->folderView()->childView()) {
-                page->folderView()->childView()->setFocus();
-            }
-        }
-    }
+    MainWindowTabCommands::execute(MainWindowTabCommands::Id::FocusCurrentTabView, *this);
 }
 
 void MainWindow::tabContextMenu(const QPoint& pos) {
@@ -539,25 +578,11 @@ void MainWindow::on_actionHiddenShortcuts_triggered() {
 }
 
 void MainWindow::onShortcutPrevTab() {
-    if (activeViewFrame_) {
-        auto* tab = activeViewFrame_->getTabBar();
-        int idx = tab->currentIndex();
-        if (idx > 0)
-            tab->setCurrentIndex(idx - 1);
-        else
-            tab->setCurrentIndex(tab->count() - 1);  // Wrap
-    }
+    MainWindowTabCommands::execute(MainWindowTabCommands::Id::PreviousTab, *this);
 }
 
 void MainWindow::onShortcutNextTab() {
-    if (activeViewFrame_) {
-        auto* tab = activeViewFrame_->getTabBar();
-        int idx = tab->currentIndex();
-        if (idx < tab->count() - 1)
-            tab->setCurrentIndex(idx + 1);
-        else
-            tab->setCurrentIndex(0);  // Wrap
-    }
+    MainWindowTabCommands::execute(MainWindowTabCommands::Id::NextTab, *this);
 }
 
 void MainWindow::onShortcutJumpToTab() {
@@ -612,29 +637,15 @@ void MainWindow::onBackForwardContextMenu(QPoint pos) {
 }
 
 void MainWindow::closeLeftTabs() {
-    if (!activeViewFrame_)
-        return;
-
-    int currentIndex = activeViewFrame_->getStackedWidget()->currentIndex();
-
-    // Close from left-most neighbor (index 0) up to current-1.
-    // Close in reverse order to maintain indices
-    for (int i = currentIndex - 1; i >= 0; --i) {
-        closeTab(i, activeViewFrame_);
-    }
+    MainWindowTabCommands::execute(MainWindowTabCommands::Id::CloseLeftTabs, *this);
 }
 
 void MainWindow::closeRightTabs() {
-    if (!activeViewFrame_)
-        return;
+    MainWindowTabCommands::execute(MainWindowTabCommands::Id::CloseRightTabs, *this);
+}
 
-    int currentIndex = activeViewFrame_->getStackedWidget()->currentIndex();
-    int count = activeViewFrame_->getStackedWidget()->count();
-
-    // Close from the last tab down to current+1.
-    for (int i = count - 1; i > currentIndex; --i) {
-        closeTab(i, activeViewFrame_);
-    }
+void MainWindow::closeOtherTabs() {
+    MainWindowTabCommands::execute(MainWindowTabCommands::Id::CloseOtherTabs, *this);
 }
 
 void MainWindow::onSettingHiddenPlace(const QString& str, bool hide) {
