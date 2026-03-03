@@ -178,7 +178,9 @@ bool isTextFile(const std::shared_ptr<const Panel::FileInfo>& file) {
     }
     QMimeDatabase db;
     auto mime = db.mimeTypeForName(file->mimeType()->name());
-    return mime.inherits(QStringLiteral("text/plain"));
+    const QString mimeName = mime.name();
+    return mime.inherits(QStringLiteral("text/plain")) || mimeName == QStringLiteral("application/x-shellscript") ||
+           mimeName == QStringLiteral("text/x-shellscript");
 }
 
 }  // namespace
