@@ -61,6 +61,7 @@ class LibfmQtFileOpsBridgeTest : public QObject {
     void copyFilesWithExplicitDestPathsAcceptsEmptyLists();
     void nativeCopyMoveDeleteRoutingUsesExplicitClassification();
     void trashAndUntrashJobsRouteViaCoreContract();
+    void adapterJobsUseMechanicalOpResultProgressCancelMapping();
     void requestAssemblyIncludesOpIdAndSourceSnapshot();
     void requestAssemblyRejectsPathCountOverLimit();
 };
@@ -340,7 +341,7 @@ void LibfmQtFileOpsBridgeTest::trashAndUntrashJobsRouteViaCoreContract() {
     QVERIFY(trashBytes.contains("CoreFileOps::TrashRequest request"));
     QVERIFY(trashBytes.contains("FileOpsRequestAssembly::buildTrashRequest"));
     QVERIFY(trashBytes.contains("FileOpsRequestAssembly::validateRequestPathCount"));
-    QVERIFY(trashBytes.contains("CoreFileOps::run(request)"));
+    QVERIFY(trashBytes.contains("CoreFileOps::runOp(request, handlers)"));
 
     const QString untrashPath = QFINDTESTDATA("../libfm-qt/src/core/untrashjob.cpp");
     QVERIFY2(!untrashPath.isEmpty(), "Unable to locate libfm-qt/src/core/untrashjob.cpp");
@@ -354,6 +355,54 @@ void LibfmQtFileOpsBridgeTest::trashAndUntrashJobsRouteViaCoreContract() {
     QVERIFY(untrashBytes.contains("streamHandlers.onPrompt"));
     QVERIFY(untrashBytes.contains("streamHandlers.onConflict"));
     QVERIFY(untrashBytes.contains("CoreFileOps::run(CoreFileOps::toRequest(request), handlers, streamHandlers)"));
+}
+
+void LibfmQtFileOpsBridgeTest::adapterJobsUseMechanicalOpResultProgressCancelMapping() {
+    const QString transferPath = QFINDTESTDATA("../libfm-qt/src/core/filetransferjob.cpp");
+    QVERIFY2(!transferPath.isEmpty(), "Unable to locate libfm-qt/src/core/filetransferjob.cpp");
+    QFile transferSource(transferPath);
+    QVERIFY(transferSource.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QByteArray transferBytes = transferSource.readAll();
+    QVERIFY(transferBytes.contains("CoreFileOps::OpResult"));
+    QVERIFY(transferBytes.contains("CoreFileOps::toOpResult("));
+    QVERIFY(transferBytes.contains("CoreFileOps::OpStatus::Cancelled"));
+
+    const QString deletePath = QFINDTESTDATA("../libfm-qt/src/core/deletejob.cpp");
+    QVERIFY2(!deletePath.isEmpty(), "Unable to locate libfm-qt/src/core/deletejob.cpp");
+    QFile deleteSource(deletePath);
+    QVERIFY(deleteSource.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QByteArray deleteBytes = deleteSource.readAll();
+    QVERIFY(deleteBytes.contains("CoreFileOps::OpResult"));
+    QVERIFY(deleteBytes.contains("CoreFileOps::runOp("));
+    QVERIFY(deleteBytes.contains("CoreFileOps::OpStatus::Cancelled"));
+
+    const QString trashPath = QFINDTESTDATA("../libfm-qt/src/core/trashjob.cpp");
+    QVERIFY2(!trashPath.isEmpty(), "Unable to locate libfm-qt/src/core/trashjob.cpp");
+    QFile trashSource(trashPath);
+    QVERIFY(trashSource.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QByteArray trashBytes = trashSource.readAll();
+    QVERIFY(trashBytes.contains("CoreFileOps::EventHandlers handlers"));
+    QVERIFY(trashBytes.contains("handlers.onProgress"));
+    QVERIFY(trashBytes.contains("CoreFileOps::OpResult"));
+    QVERIFY(trashBytes.contains("CoreFileOps::runOp("));
+    QVERIFY(trashBytes.contains("CoreFileOps::OpStatus::Cancelled"));
+
+    const QString untrashPath = QFINDTESTDATA("../libfm-qt/src/core/untrashjob.cpp");
+    QVERIFY2(!untrashPath.isEmpty(), "Unable to locate libfm-qt/src/core/untrashjob.cpp");
+    QFile untrashSource(untrashPath);
+    QVERIFY(untrashSource.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QByteArray untrashBytes = untrashSource.readAll();
+    QVERIFY(untrashBytes.contains("CoreFileOps::OpResult"));
+    QVERIFY(untrashBytes.contains("CoreFileOps::toOpResult("));
+    QVERIFY(untrashBytes.contains("CoreFileOps::OpStatus::Cancelled"));
+
+    const QString assemblyPath = QFINDTESTDATA("../libfm-qt/src/core/fileops_request_assembly.cpp");
+    QVERIFY2(!assemblyPath.isEmpty(), "Unable to locate libfm-qt/src/core/fileops_request_assembly.cpp");
+    QFile assemblySource(assemblyPath);
+    QVERIFY(assemblySource.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QByteArray assemblyBytes = assemblySource.readAll();
+    QVERIFY(assemblyBytes.contains("cancelHandle.cancel();"));
+    QVERIFY(assemblyBytes.contains("return cancelHandle.isCancelled();"));
 }
 
 void LibfmQtFileOpsBridgeTest::requestAssemblyIncludesOpIdAndSourceSnapshot() {

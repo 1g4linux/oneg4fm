@@ -116,8 +116,12 @@ Rules:
   - `ConflictEvent` consumes that response and maps
     overwrite/skip/rename (+ `*All`) directly to core conflict resolutions
 - Progress from core is translated into legacy finished/current progress values.
+- Completion/cancel mapping is `OpResult`-based (`OpStatus::{Success,Cancelled,Failed}`
+  plus `OpCounters`) rather than adapter-local result heuristics.
 - Non-conflict errors are surfaced once through legacy error signals; adapter
   does not run retry loops.
+- Error messages preserve structured core diagnostics by appending
+  `engine_code`, `step`, and `errno` from `OpResult::diagnostics`.
 
 ### `DeleteJob` Bridge
 
@@ -126,7 +130,7 @@ Rules:
 - Adapter builds `FileOpsContract::DeleteRequest` via
   `FileOpsRequestAssembly::buildDeleteRequest`.
 - Progress and totals are aggregated from core snapshots into legacy
-  `finishedAmount`/`totalAmount`.
+  `finishedAmount`/`totalAmount`, and completion uses `runOp(...)` status/counters.
 - Adapter does not pre-scan with `TotalSizeJob`.
 - Unsupported routing class is reported as a critical error and operation abort.
 
@@ -136,9 +140,13 @@ Rules:
   (`Operation::Trash`, `Operation::Untrash`) with backend `Gio` via
   `FileOpsContract::TrashRequest` / `FileOpsContract::UntrashRequest`,
   assembled by `FileOpsRequestAssembly`.
+- Trash now subscribes to core `onProgress` and maps normalized progress/totals
+  through `OpResult` counters (`runOp(request, handlers)`).
 - Untrash prompt/conflict UI wiring uses core event-stream callbacks
   (`PromptEvent` + `ConflictEvent`) and maps responses mechanically to
   core conflict resolutions.
+- Untrash completion/cancellation maps through `OpResult` (`toOpResult(...)`
+  over event-stream `run(...)` result).
 - Adapter does not probe mount/filesystem metadata or run retry loops for
   core-routed trash/untrash paths.
 
@@ -154,3 +162,5 @@ Both adapters are semantic pass-through layers:
   - no adapter retry loop is applied
   - no adapter conflict policy heuristics are added beyond mapping UI choices
   - no filesystem probing is used for routing decisions
+  - cancellation bridging is centralized in request assembly and maps UI cancel
+    state to `CancelHandle.cancel()` / `CancelHandle.isCancelled()`

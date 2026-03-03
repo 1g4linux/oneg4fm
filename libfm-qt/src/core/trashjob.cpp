@@ -4,6 +4,7 @@
 #include "fileops_request_assembly.h"
 
 #include <cerrno>
+#include <cstdint>
 #include <string>
 
 #ifndef LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
@@ -21,16 +22,21 @@ namespace {
 #if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
 namespace CoreFileOps = Oneg4FM::FileOpsContract;
 
-GErrorPtr coreResultToError(const CoreFileOps::Result& result, const char* fallbackMessage) {
-    const int code =
-        result.error.sysErrno != 0 ? g_io_error_from_errno(result.error.sysErrno) : static_cast<int>(G_IO_ERROR_FAILED);
+GErrorPtr coreResultToError(const CoreFileOps::OpResult& result, const char* fallbackMessage) {
+    const int code = result.diagnostics.sysErrno != 0 ? g_io_error_from_errno(result.diagnostics.sysErrno)
+                                                      : static_cast<int>(G_IO_ERROR_FAILED);
     const char* message = fallbackMessage;
-    if (!result.error.message.empty()) {
-        message = result.error.message.c_str();
+    if (!result.diagnostics.message.empty()) {
+        message = result.diagnostics.message.c_str();
     }
 
+    const std::string detail = std::string(message) +
+                               " [engine_code=" + std::to_string(static_cast<int>(result.diagnostics.code)) +
+                               ", step=" + std::to_string(static_cast<int>(result.diagnostics.step)) +
+                               ", errno=" + std::to_string(result.diagnostics.sysErrno) + "]";
+
     GErrorPtr err;
-    g_set_error(&err, G_IO_ERROR, code, "%s", message);
+    g_set_error(&err, G_IO_ERROR, code, "%s", detail.c_str());
     return err;
 }
 
@@ -48,6 +54,12 @@ void TrashJob::exec() {
     Q_EMIT preparedToRun();
 
 #if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
+    std::uint64_t aggregateTotalBytes = 0;
+    std::uint64_t aggregateTotalFiles = 0;
+    std::uint64_t aggregateFinishedBytes = 0;
+    std::uint64_t aggregateFinishedFiles = 0;
+    setTotalAmount(aggregateTotalBytes, aggregateTotalFiles);
+
     GErrorPtr countErr;
     if (!FileOpsRequestAssembly::validateRequestPathCount(paths_.size(), "trash", countErr)) {
         emitError(countErr, ErrorSeverity::CRITICAL);
@@ -68,6 +80,22 @@ void TrashJob::exec() {
         //       if there is a Fm::Folder object created for it, block the update for the folder temporarily.
 
 #if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
+        CoreFileOps::EventHandlers handlers;
+        handlers.onProgress = [this, &aggregateTotalBytes, &aggregateTotalFiles, &aggregateFinishedBytes,
+                               &aggregateFinishedFiles, path](const CoreFileOps::ProgressSnapshot& progress) {
+            setCurrentFile(FileOpsRequestAssembly::toFilePathFromCorePath(progress.currentPath, path));
+            setCurrentFileProgress(0, 0);
+
+            const std::uint64_t bytesDone = progress.bytesDone;
+            const std::uint64_t filesDone = progress.filesDone > 0 ? static_cast<std::uint64_t>(progress.filesDone) : 0;
+            const std::uint64_t bytesTotal = progress.bytesTotal;
+            const std::uint64_t filesTotal =
+                progress.filesTotal > 0 ? static_cast<std::uint64_t>(progress.filesTotal) : 0;
+
+            setTotalAmount(aggregateTotalBytes + bytesTotal, aggregateTotalFiles + filesTotal);
+            setFinishedAmount(aggregateFinishedBytes + bytesDone, aggregateFinishedFiles + filesDone);
+        };
+
         CoreFileOps::TrashRequest request;
         GErrorPtr assembleErr;
         if (!FileOpsRequestAssembly::buildTrashRequest(
@@ -77,24 +105,46 @@ void TrashJob::exec() {
                 cancel();
                 return;
             }
-            addFinishedAmount(1, 1);
+            aggregateTotalFiles += 1;
+            aggregateFinishedFiles += 1;
+            setTotalAmount(aggregateTotalBytes, aggregateTotalFiles);
+            setFinishedAmount(aggregateFinishedBytes, aggregateFinishedFiles);
             continue;
         }
 
-        const CoreFileOps::Result result = CoreFileOps::run(request);
-        if (result.success) {
-            addFinishedAmount(1, 1);
+        const CoreFileOps::OpResult result = CoreFileOps::runOp(request, handlers);
+        std::uint64_t bytesDone = result.counters.bytesDone;
+        std::uint64_t filesDone =
+            result.counters.filesDone > 0 ? static_cast<std::uint64_t>(result.counters.filesDone) : 0;
+        std::uint64_t bytesTotal = result.counters.bytesTotal;
+        std::uint64_t filesTotal =
+            result.counters.filesTotal > 0 ? static_cast<std::uint64_t>(result.counters.filesTotal) : 0;
+        if (bytesTotal == 0 && filesTotal == 0) {
+            filesTotal = 1;
+            if (result.status != CoreFileOps::OpStatus::Cancelled) {
+                filesDone = 1;
+            }
+        }
+
+        aggregateTotalBytes += bytesTotal;
+        aggregateTotalFiles += filesTotal;
+        aggregateFinishedBytes += bytesDone;
+        aggregateFinishedFiles += filesDone;
+        setTotalAmount(aggregateTotalBytes, aggregateTotalFiles);
+        setFinishedAmount(aggregateFinishedBytes, aggregateFinishedFiles);
+        setCurrentFileProgress(0, 0);
+
+        if (result.status == CoreFileOps::OpStatus::Success) {
             continue;
         }
 
-        if (result.cancelled || result.error.sysErrno == ECANCELED) {
+        if (result.status == CoreFileOps::OpStatus::Cancelled || result.diagnostics.sysErrno == ECANCELED) {
             cancel();
             return;
         }
 
-        if (result.error.sysErrno == ENOTSUP) {
+        if (result.diagnostics.sysErrno == ENOTSUP) {
             unsupportedFiles_.push_back(path);
-            addFinishedAmount(1, 1);
             continue;
         }
 
@@ -104,7 +154,6 @@ void TrashJob::exec() {
             cancel();
             return;
         }
-        addFinishedAmount(1, 1);
 #else
         GErrorPtr err;
         g_set_error(&err, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,

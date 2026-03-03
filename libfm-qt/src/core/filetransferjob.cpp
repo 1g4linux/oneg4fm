@@ -23,16 +23,21 @@ namespace {
 #if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
 namespace CoreFileOps = Oneg4FM::FileOpsContract;
 
-GErrorPtr coreResultToError(const CoreFileOps::Result& result, const char* fallbackMessage) {
-    const int code =
-        result.error.sysErrno != 0 ? g_io_error_from_errno(result.error.sysErrno) : static_cast<int>(G_IO_ERROR_FAILED);
+GErrorPtr coreResultToError(const CoreFileOps::OpResult& result, const char* fallbackMessage) {
+    const int code = result.diagnostics.sysErrno != 0 ? g_io_error_from_errno(result.diagnostics.sysErrno)
+                                                      : static_cast<int>(G_IO_ERROR_FAILED);
     const char* message = fallbackMessage;
-    if (!result.error.message.empty()) {
-        message = result.error.message.c_str();
+    if (!result.diagnostics.message.empty()) {
+        message = result.diagnostics.message.c_str();
     }
 
+    const std::string detail = std::string(message) +
+                               " [engine_code=" + std::to_string(static_cast<int>(result.diagnostics.code)) +
+                               ", step=" + std::to_string(static_cast<int>(result.diagnostics.step)) +
+                               ", errno=" + std::to_string(result.diagnostics.sysErrno) + "]";
+
     GErrorPtr err;
-    g_set_error(&err, G_IO_ERROR, code, "%s", message);
+    g_set_error(&err, G_IO_ERROR, code, "%s", detail.c_str());
     return err;
 }
 
@@ -856,13 +861,15 @@ void FileTransferJob::exec() {
             }
         };
 
-        const CoreFileOps::Result result = CoreFileOps::run(CoreFileOps::toRequest(request), handlers, streamHandlers);
-        const std::uint64_t bytesDone = result.finalProgress.bytesDone;
+        const CoreFileOps::Result rawResult =
+            CoreFileOps::run(CoreFileOps::toRequest(request), handlers, streamHandlers);
+        const CoreFileOps::OpResult result = CoreFileOps::toOpResult(rawResult, request.common);
+        const std::uint64_t bytesDone = result.counters.bytesDone;
         const std::uint64_t filesDone =
-            result.finalProgress.filesDone > 0 ? static_cast<std::uint64_t>(result.finalProgress.filesDone) : 0;
-        const std::uint64_t bytesTotal = result.finalProgress.bytesTotal;
+            result.counters.filesDone > 0 ? static_cast<std::uint64_t>(result.counters.filesDone) : 0;
+        const std::uint64_t bytesTotal = result.counters.bytesTotal;
         const std::uint64_t filesTotal =
-            result.finalProgress.filesTotal > 0 ? static_cast<std::uint64_t>(result.finalProgress.filesTotal) : 0;
+            result.counters.filesTotal > 0 ? static_cast<std::uint64_t>(result.counters.filesTotal) : 0;
 
         aggregateTotalBytes += bytesTotal;
         aggregateTotalFiles += filesTotal;
@@ -872,11 +879,11 @@ void FileTransferJob::exec() {
         setFinishedAmount(aggregateFinishedBytes, aggregateFinishedFiles);
         setCurrentFileProgress(0, 0);
 
-        if (result.success) {
+        if (result.status == CoreFileOps::OpStatus::Success) {
             return true;
         }
 
-        if (result.cancelled || result.error.sysErrno == ECANCELED) {
+        if (result.status == CoreFileOps::OpStatus::Cancelled || result.diagnostics.sysErrno == ECANCELED) {
             cancel();
             return false;
         }
