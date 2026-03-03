@@ -55,15 +55,15 @@
     "redundant_planners": [
       {
         "file": "libfm-qt/src/core/filetransferjob.cpp",
-        "symbol": "TotalSizeJob totalSizeJob{srcPaths_, totalSizeFlags};",
-        "state": "legacy-fallback-only",
-        "notes": "Planner remains only under !LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT fallback."
+        "symbol": "void FileTransferJob::exec() {",
+        "state": "adapter-removed",
+        "notes": "Adapter no longer runs TotalSizeJob pre-scan; totals come from core progress or known request counts."
       },
       {
         "file": "libfm-qt/src/core/deletejob.cpp",
-        "symbol": "TotalSizeJob totalSizeJob{paths_, TotalSizeJob::Flags::PREPARE_DELETE};",
-        "state": "legacy-fallback-only",
-        "notes": "Planner remains only under !LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT fallback."
+        "symbol": "void DeleteJob::exec() {",
+        "state": "adapter-removed",
+        "notes": "Adapter no longer runs TotalSizeJob pre-scan; delete totals are mapped from core events or known item counts."
       },
       {
         "file": "src/core/file_ops_contract.cpp",

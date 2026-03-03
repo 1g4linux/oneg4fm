@@ -844,19 +844,17 @@ void FileOpsInventoryTest::libfmQtCoreRoutedAdaptersAvoidPlannerRetryProbeLogic(
     QVERIFY2(transferError.isEmpty(), qPrintable(transferError));
     const int transferExecPos = transferContent.indexOf(QStringLiteral("void FileTransferJob::exec()"));
     QVERIFY2(transferExecPos >= 0, "filetransferjob.cpp must define FileTransferJob::exec()");
+    QVERIFY2(!transferContent.contains(QStringLiteral("#include \"totalsizejob.h\""), Qt::CaseSensitive),
+             "FileTransferJob must not include TotalSizeJob pre-scan helpers");
+    const int transferPlannerPos = transferContent.indexOf(QStringLiteral("TotalSizeJob"), transferExecPos);
+    QVERIFY2(transferPlannerPos < 0, "FileTransferJob must not run adapter pre-scan planner logic in exec()");
 
-    const int transferPlannerPos = transferContent.indexOf(
-        QStringLiteral("TotalSizeJob totalSizeJob{srcPaths_, totalSizeFlags};"), transferExecPos);
-    QVERIFY2(transferPlannerPos >= 0, "FileTransferJob planner symbol must exist for non-core fallback builds");
-    const int transferPlannerGuardPos =
-        transferContent.lastIndexOf(QStringLiteral("#if !LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT"), transferPlannerPos);
-    const int transferPlannerElsePos = transferContent.indexOf(QStringLiteral("#else"), transferPlannerGuardPos);
-    QVERIFY2(transferPlannerGuardPos >= 0 && transferPlannerElsePos > transferPlannerPos,
-             "FileTransferJob planner must be guarded behind !LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT");
-
+    const int transferCoreRunnerPos =
+        transferContent.indexOf(QStringLiteral("auto runCoreRoutedPath ="), transferExecPos);
+    QVERIFY2(transferCoreRunnerPos >= 0, "FileTransferJob core-routed runner must be present");
     const int transferCoreIfPos =
-        transferContent.indexOf(QStringLiteral("#if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT"), transferExecPos);
-    const int transferCoreEndPos = transferContent.indexOf(QStringLiteral("#endif"), transferCoreIfPos);
+        transferContent.lastIndexOf(QStringLiteral("#if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT"), transferCoreRunnerPos);
+    const int transferCoreEndPos = transferContent.indexOf(QStringLiteral("#endif"), transferCoreRunnerPos);
     QVERIFY2(transferCoreIfPos >= 0 && transferCoreEndPos > transferCoreIfPos,
              "FileTransferJob core-routed section must be present");
     const QString transferCoreBlock = transferContent.mid(transferCoreIfPos, transferCoreEndPos - transferCoreIfPos);
@@ -873,19 +871,16 @@ void FileOpsInventoryTest::libfmQtCoreRoutedAdaptersAvoidPlannerRetryProbeLogic(
     QVERIFY2(deleteError.isEmpty(), qPrintable(deleteError));
     const int deleteExecPos = deleteContent.indexOf(QStringLiteral("void DeleteJob::exec()"));
     QVERIFY2(deleteExecPos >= 0, "deletejob.cpp must define DeleteJob::exec()");
+    QVERIFY2(!deleteContent.contains(QStringLiteral("#include \"totalsizejob.h\""), Qt::CaseSensitive),
+             "DeleteJob must not include TotalSizeJob pre-scan helpers");
+    const int deletePlannerPos = deleteContent.indexOf(QStringLiteral("TotalSizeJob"), deleteExecPos);
+    QVERIFY2(deletePlannerPos < 0, "DeleteJob must not run adapter pre-scan planner logic in exec()");
 
-    const int deletePlannerPos = deleteContent.indexOf(
-        QStringLiteral("TotalSizeJob totalSizeJob{paths_, TotalSizeJob::Flags::PREPARE_DELETE};"), deleteExecPos);
-    QVERIFY2(deletePlannerPos >= 0, "DeleteJob planner symbol must exist for non-core fallback builds");
-    const int deletePlannerGuardPos =
-        deleteContent.lastIndexOf(QStringLiteral("#if !LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT"), deletePlannerPos);
-    const int deletePlannerElsePos = deleteContent.indexOf(QStringLiteral("#else"), deletePlannerGuardPos);
-    QVERIFY2(deletePlannerGuardPos >= 0 && deletePlannerElsePos > deletePlannerPos,
-             "DeleteJob planner must be guarded behind !LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT");
-
+    const int deleteCoreRunnerPos = deleteContent.indexOf(QStringLiteral("auto runCoreRoutedDelete ="), deleteExecPos);
+    QVERIFY2(deleteCoreRunnerPos >= 0, "DeleteJob core-routed runner must be present");
     const int deleteCoreIfPos =
-        deleteContent.indexOf(QStringLiteral("#if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT"), deleteExecPos);
-    const int deleteCoreEndPos = deleteContent.indexOf(QStringLiteral("#endif"), deleteCoreIfPos);
+        deleteContent.lastIndexOf(QStringLiteral("#if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT"), deleteCoreRunnerPos);
+    const int deleteCoreEndPos = deleteContent.indexOf(QStringLiteral("#endif"), deleteCoreRunnerPos);
     QVERIFY2(deleteCoreIfPos >= 0 && deleteCoreEndPos > deleteCoreIfPos,
              "DeleteJob core-routed section must be present");
     const QString deleteCoreBlock = deleteContent.mid(deleteCoreIfPos, deleteCoreEndPos - deleteCoreIfPos);

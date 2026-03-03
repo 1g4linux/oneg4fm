@@ -111,7 +111,7 @@ Rules:
 - Adapter builds `FileOpsContract::DeleteRequest`.
 - Progress and totals are aggregated from core snapshots into legacy
   `finishedAmount`/`totalAmount`.
-- Adapter does not pre-scan with `TotalSizeJob` on core-routed paths.
+- Adapter does not pre-scan with `TotalSizeJob`.
 - Unsupported routing class is reported as a critical error and operation abort.
 
 ### `TrashJob` and `UntrashJob` Bridge
@@ -131,7 +131,7 @@ Both adapters are semantic pass-through layers:
 - Core decides traversal, conflict policy effects, progress monotonicity,
   cancellation semantics, and cleanup behavior.
 - Adapters only transform types and bridge UI/job events.
-- For core-routed `libfm-qt` jobs (copy/move/delete/trash/untrash):
+- For `libfm-qt` file-op jobs (copy/move/delete/trash/untrash):
   - no adapter-side planner/pre-scan (`TotalSizeJob`) runs
   - no adapter retry loop is applied
   - no adapter conflict policy heuristics are added beyond mapping UI choices

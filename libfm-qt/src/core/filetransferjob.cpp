@@ -1,6 +1,5 @@
 #include "filetransferjob.h"
 #include "fileops_bridge_policy.h"
-#include "totalsizejob.h"
 #include "fileinfo_p.h"
 
 #include <algorithm>
@@ -808,25 +807,14 @@ bool FileTransferJob::createShortcut(const FilePath& srcPath, const GFileInfoPtr
 }
 
 void FileTransferJob::exec() {
-#if !LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
-    // calculate the total size of files to copy
-    auto totalSizeFlags = (mode_ == Mode::COPY ? TotalSizeJob::DEFAULT : TotalSizeJob::PREPARE_MOVE);
-    TotalSizeJob totalSizeJob{srcPaths_, totalSizeFlags};
-    connect(&totalSizeJob, &TotalSizeJob::error, this, &FileTransferJob::error);
-    connect(this, &FileTransferJob::cancelled, &totalSizeJob, &TotalSizeJob::cancel);
-    totalSizeJob.run();
-    if (isCancelled()) {
-        return;
-    }
-
-    // ready to start
-    setTotalAmount(totalSizeJob.totalSize(), totalSizeJob.fileCount());
-#else
+#if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
     std::uint64_t aggregateTotalBytes = 0;
     std::uint64_t aggregateTotalFiles = 0;
     std::uint64_t aggregateFinishedBytes = 0;
     std::uint64_t aggregateFinishedFiles = 0;
     setTotalAmount(aggregateTotalBytes, aggregateTotalFiles);
+#else
+    setTotalAmount(0, srcPaths_.size());
 #endif
     Q_EMIT preparedToRun();
 

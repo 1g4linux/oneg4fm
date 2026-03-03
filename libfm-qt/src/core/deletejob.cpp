@@ -1,6 +1,5 @@
 #include "deletejob.h"
 #include "fileops_bridge_policy.h"
-#include "totalsizejob.h"
 #include "fileinfo_p.h"
 
 #include <cerrno>
@@ -245,24 +244,14 @@ DeleteJob::DeleteJob(FilePathList&& paths) : paths_{paths} {
 DeleteJob::~DeleteJob() {}
 
 void DeleteJob::exec() {
-#if !LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
-    /* prepare the job, count total work needed with FmDeepCountJob */
-    TotalSizeJob totalSizeJob{paths_, TotalSizeJob::Flags::PREPARE_DELETE};
-    connect(&totalSizeJob, &TotalSizeJob::error, this, &DeleteJob::error);
-    connect(this, &DeleteJob::cancelled, &totalSizeJob, &TotalSizeJob::cancel);
-    totalSizeJob.run();
-
-    if (isCancelled()) {
-        return;
-    }
-
-    setTotalAmount(totalSizeJob.totalSize(), totalSizeJob.fileCount());
-#else
+#if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
     std::uint64_t aggregateTotalBytes = 0;
     std::uint64_t aggregateTotalFiles = 0;
     std::uint64_t aggregateFinishedBytes = 0;
     std::uint64_t aggregateFinishedFiles = 0;
     setTotalAmount(aggregateTotalBytes, aggregateTotalFiles);
+#else
+    setTotalAmount(0, paths_.size());
 #endif
     Q_EMIT preparedToRun();
 
