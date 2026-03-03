@@ -1,0 +1,973 @@
+{
+  "schema_id": "oneg4fm.settings",
+  "description": "Canonical settings schema for oneg4fm profile and per-directory configuration surfaces.",
+  "owner": "oneg4fm/settings.*",
+  "surfaces": [
+    {
+      "id": "profile.settings.conf",
+      "file": "settings.conf",
+      "format": "ini",
+      "scope": "per-profile",
+      "keys": [
+        {
+          "key": "System/FallbackIconThemeName",
+          "type": "string",
+          "constraints": {
+            "min_length": 0
+          },
+          "default": "Papirus-Dark",
+          "stability": "stable",
+          "description": "Fallback icon theme when the active icon theme cannot provide icons.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "System/Terminal",
+          "type": "string",
+          "constraints": {
+            "min_length": 1
+          },
+          "default": "xterm",
+          "stability": "stable",
+          "description": "Preferred terminal executable name.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "System/Archiver",
+          "type": "string",
+          "constraints": {
+            "min_length": 1
+          },
+          "default": "file-roller",
+          "stability": "stable",
+          "description": "Preferred archive manager executable name.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "System/SIUnit",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Use SI units for byte formatting.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "System/OnlyUserTemplates",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Restrict new-file templates to user templates.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "System/TemplateTypeOnce",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Use template type action once without persistent preference.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "System/TemplateRunApp",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Run an application when creating from templates.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Behavior/SingleWindowMode",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Reuse a single main window for open requests.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Behavior/BookmarkOpenMethod",
+          "type": "enum",
+          "constraints": {
+            "allowed": [
+              "current_tab",
+              "new_tab",
+              "new_window",
+              "last_window"
+            ]
+          },
+          "default": "current_tab",
+          "stability": "stable",
+          "description": "Default destination policy when opening bookmarks.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Behavior/PreservePermissions",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Preserve source permissions during file copy operations.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Behavior/UseTrash",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "internal",
+          "description": "Trash-on-delete preference persisted for compatibility; local-trash support is disabled in this build.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Behavior/SingleClick",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Open files/folders with single-click activation.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Behavior/AutoSelectionDelay",
+          "type": "int",
+          "constraints": {
+            "min": 0
+          },
+          "default": 600,
+          "stability": "stable",
+          "description": "Delay in milliseconds before auto-selection in single-click mode.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Behavior/CtrlRightClick",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Treat Ctrl+RightClick as context-menu selection behavior.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Behavior/ConfirmDelete",
+          "type": "bool",
+          "constraints": {},
+          "default": true,
+          "stability": "stable",
+          "description": "Prompt before irreversible delete operations.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Behavior/NoUsbTrash",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Avoid trash operations on removable USB devices.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Behavior/ConfirmTrash",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Prompt before moving files to trash.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Behavior/QuickExec",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Launch executable files without extra confirmation dialogs.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Behavior/SelectNewFiles",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Auto-select newly created files.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Behavior/OpenWithDefaultFileManager",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Use system default file manager integration for open actions.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Behavior/AllSticky",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Pin all tabs or windows as sticky according to UI policy.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Thumbnail/ShowThumbnails",
+          "type": "bool",
+          "constraints": {},
+          "default": true,
+          "stability": "stable",
+          "description": "Enable thumbnail generation in file views.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Thumbnail/MaxThumbnailFileSize",
+          "type": "int",
+          "constraints": {
+            "min": -1
+          },
+          "default": 4096,
+          "stability": "stable",
+          "description": "Maximum file size (KiB) for internal thumbnail generation.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Thumbnail/MaxExternalThumbnailFileSize",
+          "type": "int",
+          "constraints": {
+            "min": -1
+          },
+          "default": -1,
+          "stability": "stable",
+          "description": "Maximum file size (KiB) for external thumbnail providers; -1 keeps backend default.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Thumbnail/ThumbnailLocalFilesOnly",
+          "type": "bool",
+          "constraints": {},
+          "default": true,
+          "stability": "stable",
+          "description": "Restrict thumbnail generation to local files.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "FolderView/Mode",
+          "type": "enum",
+          "constraints": {
+            "allowed": [
+              "icon",
+              "compact",
+              "detailed",
+              "thumbnail"
+            ]
+          },
+          "default": "detailed",
+          "stability": "stable",
+          "description": "Default folder view mode.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "FolderView/ShowHidden",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Show hidden files in folder views.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "FolderView/SortOrder",
+          "type": "enum",
+          "constraints": {
+            "allowed": [
+              "ascending",
+              "descending"
+            ]
+          },
+          "default": "ascending",
+          "stability": "stable",
+          "description": "Default sort order for folder views.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "FolderView/SortColumn",
+          "type": "enum",
+          "constraints": {
+            "allowed": [
+              "name",
+              "type",
+              "size",
+              "mtime",
+              "crtime",
+              "dtime",
+              "owner",
+              "group"
+            ]
+          },
+          "default": "name",
+          "stability": "stable",
+          "description": "Default sort column for folder views.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "FolderView/SortFolderFirst",
+          "type": "bool",
+          "constraints": {},
+          "default": true,
+          "stability": "stable",
+          "description": "Show directories before files when sorting.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "FolderView/SortCaseSensitive",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Use case-sensitive sort comparisons.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "FolderView/ShowFilter",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Show filter bar in folder views.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "FolderView/BackupAsHidden",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Treat backup files as hidden.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "FolderView/ShowFullNames",
+          "type": "bool",
+          "constraints": {},
+          "default": true,
+          "stability": "stable",
+          "description": "Prefer full display names when available.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "FolderView/ShadowHidden",
+          "type": "bool",
+          "constraints": {},
+          "default": true,
+          "stability": "stable",
+          "description": "Render hidden files with reduced emphasis.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "FolderView/NoItemTooltip",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Disable item tooltip popups.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "FolderView/ScrollPerPixel",
+          "type": "bool",
+          "constraints": {},
+          "default": true,
+          "stability": "stable",
+          "description": "Use per-pixel scrolling in views.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "FolderView/BigIconSize",
+          "type": "int",
+          "constraints": {
+            "normalized_to": [
+              96,
+              72,
+              64,
+              48,
+              32
+            ]
+          },
+          "default": 48,
+          "stability": "stable",
+          "description": "Preferred big icon size; runtime normalizes to nearest supported value.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "FolderView/SmallIconSize",
+          "type": "int",
+          "constraints": {
+            "normalized_to": [
+              48,
+              32,
+              24,
+              22,
+              16
+            ]
+          },
+          "default": 24,
+          "stability": "stable",
+          "description": "Preferred small icon size; runtime normalizes to nearest supported value.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "FolderView/SidePaneIconSize",
+          "type": "int",
+          "constraints": {
+            "normalized_to": [
+              48,
+              32,
+              24,
+              22,
+              16
+            ]
+          },
+          "default": 24,
+          "stability": "stable",
+          "description": "Icon size for side pane entries; runtime normalizes to nearest supported value.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "FolderView/ThumbnailIconSize",
+          "type": "int",
+          "constraints": {
+            "normalized_to": [
+              256,
+              224,
+              192,
+              160,
+              128,
+              96,
+              64
+            ]
+          },
+          "default": 128,
+          "stability": "stable",
+          "description": "Thumbnail tile size; runtime normalizes to nearest supported value.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "FolderView/FolderViewCellMargins",
+          "type": "string",
+          "constraints": {
+            "format": "QSize serialized",
+            "bounds": "0..48 for width and height"
+          },
+          "default": "@Size(3 3)",
+          "stability": "stable",
+          "description": "Cell margins for folder view delegates.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "FolderView/CustomColumnWidths",
+          "type": "list",
+          "constraints": {
+            "element_type": "int"
+          },
+          "default": [],
+          "stability": "stable",
+          "description": "Per-column width overrides for detailed list mode.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "FolderView/HiddenColumns",
+          "type": "list",
+          "constraints": {
+            "element_type": "int"
+          },
+          "default": [],
+          "stability": "stable",
+          "description": "Detailed-list columns hidden by user preference.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Places/HiddenPlaces",
+          "type": "list",
+          "constraints": {
+            "element_type": "string",
+            "uri_like": true
+          },
+          "default": [
+            "computer:///",
+            "network:///",
+            "trash:///"
+          ],
+          "stability": "stable",
+          "description": "Places URIs hidden in the side pane; unsupported virtual locations are always included.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Window/FixedWidth",
+          "type": "int",
+          "constraints": {
+            "min": 1
+          },
+          "default": 640,
+          "stability": "stable",
+          "description": "Fixed window width when remember-window-size is disabled.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Window/FixedHeight",
+          "type": "int",
+          "constraints": {
+            "min": 1
+          },
+          "default": 480,
+          "stability": "stable",
+          "description": "Fixed window height when remember-window-size is disabled.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Window/LastWindowWidth",
+          "type": "int",
+          "constraints": {
+            "min": 1
+          },
+          "default": 640,
+          "stability": "stable",
+          "description": "Most recently persisted main-window width.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Window/LastWindowHeight",
+          "type": "int",
+          "constraints": {
+            "min": 1
+          },
+          "default": 480,
+          "stability": "stable",
+          "description": "Most recently persisted main-window height.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Window/LastWindowX",
+          "type": "int",
+          "constraints": {},
+          "default": -1,
+          "stability": "stable",
+          "description": "Most recently persisted main-window X position; -1 means unset.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Window/LastWindowY",
+          "type": "int",
+          "constraints": {},
+          "default": -1,
+          "stability": "stable",
+          "description": "Most recently persisted main-window Y position; -1 means unset.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Window/LastWindowMaximized",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Most recently persisted main-window maximized state.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Window/RememberWindowSize",
+          "type": "bool",
+          "constraints": {},
+          "default": true,
+          "stability": "stable",
+          "description": "Use last persisted geometry instead of fixed dimensions.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Window/AlwaysShowTabs",
+          "type": "bool",
+          "constraints": {},
+          "default": true,
+          "stability": "stable",
+          "description": "Show the tab bar even when only one tab exists.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Window/ShowTabClose",
+          "type": "bool",
+          "constraints": {},
+          "default": true,
+          "stability": "stable",
+          "description": "Show close buttons on tabs.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Window/SwitchToNewTab",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Switch focus to newly opened tabs.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Window/ReopenLastTabs",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Restore tab paths from previous session on startup.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Window/TabPaths",
+          "type": "list",
+          "constraints": {
+            "element_type": "path"
+          },
+          "default": [],
+          "stability": "stable",
+          "description": "Session tab paths persisted for reopen-last-tabs.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Window/SplitViewTabsNum",
+          "type": "int",
+          "constraints": {
+            "min": 0
+          },
+          "default": 0,
+          "stability": "stable",
+          "description": "Number of tabs assigned to the first split-view frame during restore.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Window/SplitterPos",
+          "type": "int",
+          "constraints": {
+            "min": 0
+          },
+          "default": 150,
+          "stability": "stable",
+          "description": "Main window splitter position.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Window/SidePaneVisible",
+          "type": "bool",
+          "constraints": {},
+          "default": true,
+          "stability": "stable",
+          "description": "Whether the side pane is visible.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Window/SidePaneMode",
+          "type": "enum",
+          "constraints": {
+            "allowed": [
+              "places",
+              "dirtree",
+              "none"
+            ]
+          },
+          "default": "places",
+          "stability": "stable",
+          "description": "Selected side pane mode.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Window/ShowMenuBar",
+          "type": "bool",
+          "constraints": {},
+          "default": true,
+          "stability": "stable",
+          "description": "Whether the menubar is visible.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Window/SplitView",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Enable split-view layout.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Window/PathBarButtons",
+          "type": "bool",
+          "constraints": {},
+          "default": true,
+          "stability": "stable",
+          "description": "Render path bar as breadcrumb buttons instead of editable text.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Search/searchNameCaseInsensitive",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Case-insensitive matching for filename search terms.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Search/searchContentCaseInsensitive",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Case-insensitive matching for content search terms.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Search/searchNameRegexp",
+          "type": "bool",
+          "constraints": {},
+          "default": true,
+          "stability": "stable",
+          "description": "Interpret filename search input as a regular expression.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Search/searchContentRegexp",
+          "type": "bool",
+          "constraints": {},
+          "default": true,
+          "stability": "stable",
+          "description": "Interpret content search input as a regular expression.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Search/searchRecursive",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Search recursively through subdirectories.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Search/searchhHidden",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Include hidden files in search scope.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Search/MaxSearchHistory",
+          "type": "int",
+          "constraints": {
+            "min": 0,
+            "max": 50
+          },
+          "default": 0,
+          "stability": "stable",
+          "description": "Maximum number of stored search history entries.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Search/NamePatterns",
+          "type": "list",
+          "constraints": {
+            "element_type": "string"
+          },
+          "default": [],
+          "stability": "stable",
+          "description": "Recent filename patterns for search history.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Search/ContentPatterns",
+          "type": "list",
+          "constraints": {
+            "element_type": "string"
+          },
+          "default": [],
+          "stability": "stable",
+          "description": "Recent content patterns for search history.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        }
+      ]
+    },
+    {
+      "id": "directory.dir-settings.conf",
+      "file": "dir-settings.conf",
+      "format": "libfm-folder-config",
+      "scope": "per-directory",
+      "keys": [
+        {
+          "key": "SortOrder",
+          "type": "enum",
+          "constraints": {
+            "allowed": [
+              "ascending",
+              "descending"
+            ]
+          },
+          "default": "ascending",
+          "stability": "stable",
+          "description": "Directory-local sort order override.",
+          "scope": "per-directory",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "SortColumn",
+          "type": "enum",
+          "constraints": {
+            "allowed": [
+              "name",
+              "type",
+              "size",
+              "mtime",
+              "crtime",
+              "dtime",
+              "owner",
+              "group"
+            ]
+          },
+          "default": "name",
+          "stability": "stable",
+          "description": "Directory-local sort column override.",
+          "scope": "per-directory",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "ViewMode",
+          "type": "enum",
+          "constraints": {
+            "allowed": [
+              "icon",
+              "compact",
+              "detailed",
+              "thumbnail"
+            ]
+          },
+          "default": "detailed",
+          "stability": "stable",
+          "description": "Directory-local view mode override.",
+          "scope": "per-directory",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "ShowHidden",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Directory-local hidden-files visibility override.",
+          "scope": "per-directory",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "SortFolderFirst",
+          "type": "bool",
+          "constraints": {},
+          "default": true,
+          "stability": "stable",
+          "description": "Directory-local folder-first sort override.",
+          "scope": "per-directory",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "SortCaseSensitive",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Directory-local case-sensitive sort override.",
+          "scope": "per-directory",
+          "secrecy": "ok-to-log"
+        },
+        {
+          "key": "Recursive",
+          "type": "bool",
+          "constraints": {},
+          "default": false,
+          "stability": "stable",
+          "description": "Directory-local recursive settings inheritance flag.",
+          "scope": "per-directory",
+          "secrecy": "ok-to-log"
+        }
+      ]
+    }
+  ]
+}

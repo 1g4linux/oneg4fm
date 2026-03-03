@@ -266,6 +266,17 @@ oneg4fm_add_test(oneg4fm-settings-functionality-tests
         ${PCMANFM_SETTINGS_INCLUDES}
 )
 
+oneg4fm_add_test(oneg4fm-settings-schema-tests
+    SOURCES
+        settings_schema_test.cpp
+        ${PCMANFM_SETTINGS_SOURCES}
+    LIBS
+        ${PCMANFM_SETTINGS_LIBS}
+    INCLUDES
+        ${PCMANFM_SETTINGS_INCLUDES}
+)
+target_compile_definitions(oneg4fm-settings-schema-tests PRIVATE "PCMANFM_SOURCE_DIR=\"${CMAKE_SOURCE_DIR}\"")
+
 set(PCMANFM_XDGDIR_SOURCES
     ../oneg4fm/xdgdir.cpp
     ../src/ui/fsqt.cpp
