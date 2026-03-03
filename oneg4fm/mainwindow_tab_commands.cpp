@@ -126,12 +126,20 @@ bool canExecute(Id id, const Context& context) {
     return commandForId(id).canExecute(context);
 }
 
+bool canExecute(Id id, const Context& defaultContext, const Context* scopedContext) {
+    return canExecute(id, scopedContext ? *scopedContext : defaultContext);
+}
+
 void execute(Id id, Context& context) {
     const Command& command = commandForId(id);
     if (!command.canExecute(context)) {
         return;
     }
     command.execute(context);
+}
+
+void execute(Id id, Context& defaultContext, Context* scopedContext) {
+    execute(id, scopedContext ? *scopedContext : defaultContext);
 }
 
 }  // namespace Oneg4FM::MainWindowTabCommands

@@ -29,7 +29,9 @@ class Context {
 };
 
 bool canExecute(Id id, const Context& context);
+bool canExecute(Id id, const Context& defaultContext, const Context* scopedContext);
 void execute(Id id, Context& context);
+void execute(Id id, Context& defaultContext, Context* scopedContext);
 
 }  // namespace Oneg4FM::MainWindowTabCommands
 

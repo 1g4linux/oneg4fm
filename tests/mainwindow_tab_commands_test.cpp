@@ -61,6 +61,8 @@ class MainWindowTabCommandsTest : public QObject {
     void closeRightTabsClosesInDescendingOrder();
     void closeOtherTabsClosesBothSides();
     void focusCurrentTabViewRequiresActiveTab();
+    void scopedContextOverridesActiveContext();
+    void scopedContextFallbackUsesActiveContext();
 };
 
 void MainWindowTabCommandsTest::previousTabWrapsAndGuards() {
@@ -154,6 +156,37 @@ void MainWindowTabCommandsTest::focusCurrentTabViewRequiresActiveTab() {
     QVERIFY(canExecute(Id::FocusCurrentTabView, context));
     execute(Id::FocusCurrentTabView, context);
     QCOMPARE(context.focusCalls, 1);
+}
+
+void MainWindowTabCommandsTest::scopedContextOverridesActiveContext() {
+    using namespace Oneg4FM::MainWindowTabCommands;
+
+    FakeTabContext activeContext;
+    activeContext.currentIndexValue = 1;
+    activeContext.tabCountValue = 3;
+
+    FakeTabContext scopedContext;
+    scopedContext.currentIndexValue = 3;
+    scopedContext.tabCountValue = 5;
+
+    QVERIFY(canExecute(Id::CloseLeftTabs, activeContext, &scopedContext));
+    execute(Id::CloseLeftTabs, activeContext, &scopedContext);
+
+    QCOMPARE(scopedContext.closeTabCalls, QList<int>({2, 1, 0}));
+    QCOMPARE(activeContext.closeTabCalls.size(), 0);
+}
+
+void MainWindowTabCommandsTest::scopedContextFallbackUsesActiveContext() {
+    using namespace Oneg4FM::MainWindowTabCommands;
+
+    FakeTabContext activeContext;
+    activeContext.currentIndexValue = 2;
+    activeContext.tabCountValue = 4;
+
+    QVERIFY(canExecute(Id::CloseRightTabs, activeContext, nullptr));
+    execute(Id::CloseRightTabs, activeContext, nullptr);
+
+    QCOMPARE(activeContext.closeTabCalls, QList<int>({3}));
 }
 
 QTEST_MAIN(MainWindowTabCommandsTest)
