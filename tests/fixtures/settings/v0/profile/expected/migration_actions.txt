@@ -1,0 +1,2 @@
+rename_key|Search/searchHidden|migrated to Search/searchhHidden
+schema_version_bump|Meta/schema_version|0 -> 1

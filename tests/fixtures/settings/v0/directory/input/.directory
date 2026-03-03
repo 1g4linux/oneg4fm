@@ -1,0 +1,6 @@
+[File Manager]
+schema_version=0
+SortOrder=desc
+ShowHidden=true
+SortFolderFirst=false
+Recursive=true

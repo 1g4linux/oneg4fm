@@ -4,9 +4,11 @@
  */
 
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QObject>
+#include <QRandomGenerator>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QString>
@@ -15,6 +17,10 @@
 
 // Include the settings header
 #include "settings.h"
+
+#ifndef PCMANFM_SOURCE_DIR
+#error "PCMANFM_SOURCE_DIR must be defined"
+#endif
 
 class TestSettingsFunctionality : public QObject {
     Q_OBJECT
@@ -39,7 +45,57 @@ class TestSettingsFunctionality : public QObject {
     void testProfileLoadRejectsOversizedFile();
     void testProfileLoadRecoversFromTempFile();
     void testProfileSaveUsesCanonicalListFormatting();
+    void testDefaultGenerationFromTemplateMatchesCanonicalOutput();
+    void testProfileSchemaMigrationFixtureV0();
+    void testDirectorySchemaMigrationFixtureV0();
+    void testProfileLoadFuzzSafetySmoke();
+
+   private:
+    QString sourcePath(const QString& relative) const;
+    QStringList readFixtureLines(const QString& path) const;
+    QByteArray makeDeterministicFuzzPayload(quint32 seed) const;
 };
+
+QString TestSettingsFunctionality::sourcePath(const QString& relative) const {
+    return QStringLiteral(PCMANFM_SOURCE_DIR) + QLatin1Char('/') + relative;
+}
+
+QStringList TestSettingsFunctionality::readFixtureLines(const QString& path) const {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return {};
+    }
+
+    QStringList lines;
+    const QStringList rawLines = QString::fromUtf8(file.readAll()).split(QLatin1Char('\n'));
+    for (const QString& rawLine : rawLines) {
+        const QString trimmed = rawLine.trimmed();
+        if (trimmed.isEmpty() || trimmed.startsWith(QLatin1Char('#'))) {
+            continue;
+        }
+        lines.append(trimmed);
+    }
+    return lines;
+}
+
+QByteArray TestSettingsFunctionality::makeDeterministicFuzzPayload(quint32 seed) const {
+    static const QByteArray kAlphabet =
+        QByteArrayLiteral("[]=/ _-;#ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789");
+
+    QRandomGenerator rng(seed);
+    const int lineCount = 1 + static_cast<int>(rng.bounded(96u));
+    QByteArray payload;
+    payload.reserve(lineCount * 80);
+    for (int line = 0; line < lineCount; ++line) {
+        const int lineLength = static_cast<int>(rng.bounded(160u));
+        for (int i = 0; i < lineLength; ++i) {
+            const int index = static_cast<int>(rng.bounded(static_cast<quint32>(kAlphabet.size())));
+            payload.append(kAlphabet.at(index));
+        }
+        payload.append('\n');
+    }
+    return payload;
+}
 
 void TestSettingsFunctionality::testSettingsInitialization() {
     // Test that Settings can be constructed
@@ -846,6 +902,164 @@ void TestSettingsFunctionality::testProfileSaveUsesCanonicalListFormatting() {
     QVERIFY2(
         !text.contains(QStringLiteral("@Variant")),
         qPrintable(QStringLiteral("Serialized settings must not contain Qt @Variant encoding: %1").arg(settingsPath)));
+}
+
+void TestSettingsFunctionality::testDefaultGenerationFromTemplateMatchesCanonicalOutput() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    QVERIFY(qputenv("XDG_CONFIG_HOME", tempDir.path().toUtf8()));
+
+    const QString profileName = QStringLiteral("default-generation-profile");
+    Oneg4FM::Settings settings;
+    QVERIFY(settings.load(profileName));
+    QVERIFY(settings.save(profileName));
+
+    const QString generatedPath = settings.profileDir(profileName) + QStringLiteral("/settings.conf");
+    const QString templatePath = sourcePath(QStringLiteral("config/oneg4fm/default/settings.conf.in"));
+    QVERIFY2(QFile::exists(generatedPath),
+             qPrintable(QStringLiteral("Generated settings.conf missing: %1").arg(generatedPath)));
+    QVERIFY2(QFile::exists(templatePath), qPrintable(QStringLiteral("Template missing: %1").arg(templatePath)));
+
+    QFile generatedFile(generatedPath);
+    QVERIFY(generatedFile.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QByteArray generatedBytes = generatedFile.readAll();
+
+    QFile templateFile(templatePath);
+    QVERIFY(templateFile.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QByteArray templateBytes = templateFile.readAll();
+
+    QCOMPARE(generatedBytes, templateBytes);
+
+    QSettings generated(generatedPath, QSettings::IniFormat);
+    QCOMPARE(generated.value(QStringLiteral("Meta/schema_version")).toInt(), 1);
+}
+
+void TestSettingsFunctionality::testProfileSchemaMigrationFixtureV0() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    QVERIFY(qputenv("XDG_CONFIG_HOME", tempDir.path().toUtf8()));
+
+    const QString profileName = QStringLiteral("fixture-v0-profile");
+    const QString profileDir = tempDir.path() + QStringLiteral("/oneg4fm/") + profileName;
+    QVERIFY(QDir().mkpath(profileDir));
+
+    const QString fixturePath = sourcePath(QStringLiteral("tests/fixtures/settings/v0/profile/input/settings.conf"));
+    const QString expectedActionsPath =
+        sourcePath(QStringLiteral("tests/fixtures/settings/v0/profile/expected/migration_actions.txt"));
+    const QString settingsPath = profileDir + QStringLiteral("/settings.conf");
+    QVERIFY2(QFile::copy(fixturePath, settingsPath),
+             qPrintable(QStringLiteral("Failed to copy profile fixture: %1 -> %2").arg(fixturePath, settingsPath)));
+
+    Oneg4FM::Settings settings;
+    QVERIFY(settings.load(profileName));
+    QCOMPARE(settings.searchhHidden(), true);
+    QCOMPARE(settings.alwaysShowTabs(), false);
+    QCOMPARE(settings.lastProfileMigrationSourceVersion(), 0);
+    QCOMPARE(settings.lastProfileMigrationTargetVersion(), 1);
+    QCOMPARE(settings.lastProfileMigrationActions(), readFixtureLines(expectedActionsPath));
+
+    QVERIFY(settings.save(profileName));
+    QSettings saved(settingsPath, QSettings::IniFormat);
+    QCOMPARE(saved.value(QStringLiteral("Meta/schema_version")).toInt(), 1);
+    QCOMPARE(saved.value(QStringLiteral("Search/searchhHidden")).toBool(), true);
+    QCOMPARE(saved.value(QStringLiteral("Search/searchHidden")).toBool(), true);
+}
+
+void TestSettingsFunctionality::testDirectorySchemaMigrationFixtureV0() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+
+    const QString folderPath = tempDir.path() + QStringLiteral("/fixture-folder");
+    QVERIFY(QDir().mkpath(folderPath));
+
+    const QString fixturePath = sourcePath(QStringLiteral("tests/fixtures/settings/v0/directory/input/.directory"));
+    const QString expectedActionsPath =
+        sourcePath(QStringLiteral("tests/fixtures/settings/v0/directory/expected/migration_actions.txt"));
+    const QString dirConfigPath = folderPath + QStringLiteral("/.directory");
+    QVERIFY2(QFile::copy(fixturePath, dirConfigPath),
+             qPrintable(QStringLiteral("Failed to copy directory fixture: %1 -> %2").arg(fixturePath, dirConfigPath)));
+
+    Oneg4FM::Settings settings;
+    const Panel::FilePath path = Panel::FilePath::fromLocalPath(folderPath.toUtf8().constData());
+    const Oneg4FM::FolderSettings loaded = settings.loadFolderSettings(path);
+
+    QVERIFY(loaded.isCustomized());
+    QCOMPARE(loaded.sortOrder(), Qt::DescendingOrder);
+    QCOMPARE(loaded.showHidden(), true);
+    QCOMPARE(loaded.sortFolderFirst(), false);
+    QCOMPARE(loaded.recursive(), true);
+    QCOMPARE(settings.lastDirectoryMigrationSourceVersion(), 0);
+    QCOMPARE(settings.lastDirectoryMigrationTargetVersion(), 1);
+    QCOMPARE(settings.lastDirectoryMigrationActions(), readFixtureLines(expectedActionsPath));
+
+    settings.saveFolderSettings(path, loaded);
+    QSettings saved(dirConfigPath, QSettings::IniFormat);
+    QCOMPARE(saved.value(QStringLiteral("File Manager/schema_version")).toInt(), 1);
+    QCOMPARE(saved.value(QStringLiteral("File Manager/SortOrder")).toString(), QStringLiteral("descending"));
+}
+
+void TestSettingsFunctionality::testProfileLoadFuzzSafetySmoke() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    QVERIFY(qputenv("XDG_CONFIG_HOME", tempDir.path().toUtf8()));
+
+    QElapsedTimer totalTimer;
+    totalTimer.start();
+
+    for (int i = 0; i < 32; ++i) {
+        const QString profileName = QStringLiteral("fuzz-profile-%1").arg(i);
+        const QString profileDir = tempDir.path() + QStringLiteral("/oneg4fm/") + profileName;
+        QVERIFY(QDir().mkpath(profileDir));
+        const QString settingsPath = profileDir + QStringLiteral("/settings.conf");
+
+        QFile fuzzFile(settingsPath);
+        QVERIFY(fuzzFile.open(QIODevice::WriteOnly | QIODevice::Text));
+        const QByteArray payload = makeDeterministicFuzzPayload(0xC0FFEEu + static_cast<quint32>(i));
+        QVERIFY(fuzzFile.write(payload) == payload.size());
+        fuzzFile.close();
+
+        QElapsedTimer caseTimer;
+        caseTimer.start();
+        Oneg4FM::Settings settings;
+        const bool loaded = settings.load(profileName);
+        QVERIFY2(caseTimer.elapsed() < 1000, "Settings load should stay bounded for malformed random inputs");
+        if (loaded) {
+            QVERIFY(settings.save(profileName));
+        }
+    }
+
+    QVERIFY2(totalTimer.elapsed() < 5000, "Fuzz smoke run should remain lightweight");
+
+    const QString lineBoundProfile = QStringLiteral("fuzz-line-bound-profile");
+    const QString lineBoundDir = tempDir.path() + QStringLiteral("/oneg4fm/") + lineBoundProfile;
+    QVERIFY(QDir().mkpath(lineBoundDir));
+    QFile lineBoundFile(lineBoundDir + QStringLiteral("/settings.conf"));
+    QVERIFY(lineBoundFile.open(QIODevice::WriteOnly | QIODevice::Text));
+    QVERIFY(lineBoundFile.write("[Meta]\n"
+                                "schema_version=1\n"
+                                "[System]\n"
+                                "Terminal=") > 0);
+    const QByteArray longLine(17000, 'x');
+    QVERIFY(lineBoundFile.write(longLine) == longLine.size());
+    QVERIFY(lineBoundFile.write("\n") > 0);
+    lineBoundFile.close();
+    Oneg4FM::Settings lineBoundSettings;
+    QVERIFY(!lineBoundSettings.load(lineBoundProfile));
+
+    const QString countBoundProfile = QStringLiteral("fuzz-line-count-profile");
+    const QString countBoundDir = tempDir.path() + QStringLiteral("/oneg4fm/") + countBoundProfile;
+    QVERIFY(QDir().mkpath(countBoundDir));
+    QFile countBoundFile(countBoundDir + QStringLiteral("/settings.conf"));
+    QVERIFY(countBoundFile.open(QIODevice::WriteOnly | QIODevice::Text));
+    QByteArray manyLines("[Meta]\n");
+    manyLines.append("schema_version=1\n");
+    for (int i = 0; i < 17000; ++i) {
+        manyLines.append("K=V\n");
+    }
+    QVERIFY(countBoundFile.write(manyLines) == manyLines.size());
+    countBoundFile.close();
+    Oneg4FM::Settings countBoundSettings;
+    QVERIFY(!countBoundSettings.load(countBoundProfile));
 }
 
 QTEST_MAIN(TestSettingsFunctionality)

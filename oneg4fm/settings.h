@@ -110,6 +110,12 @@ class Settings : public QObject {
 
     bool load(QString profile = QStringLiteral("default"));
     bool save(QString profile = QString());
+    int lastProfileMigrationSourceVersion() const { return lastProfileMigrationSourceVersion_; }
+    int lastProfileMigrationTargetVersion() const { return lastProfileMigrationTargetVersion_; }
+    QStringList lastProfileMigrationActions() const { return lastProfileMigrationActions_; }
+    int lastDirectoryMigrationSourceVersion() const { return lastDirectoryMigrationSourceVersion_; }
+    int lastDirectoryMigrationTargetVersion() const { return lastDirectoryMigrationTargetVersion_; }
+    QStringList lastDirectoryMigrationActions() const { return lastDirectoryMigrationActions_; }
 
     static QString xdgUserConfigDir();
     static const QList<int>& iconSizes(IconType type);
@@ -618,6 +624,14 @@ class Settings : public QObject {
     // Unknown profile keys are preserved for the loaded profile on save.
     QString loadedProfileSettingsPath_;
     QHash<QString, QVariant> preservedUnknownProfileKeys_;
+
+    int lastProfileMigrationSourceVersion_;
+    int lastProfileMigrationTargetVersion_;
+    QStringList lastProfileMigrationActions_;
+
+    mutable int lastDirectoryMigrationSourceVersion_;
+    mutable int lastDirectoryMigrationTargetVersion_;
+    mutable QStringList lastDirectoryMigrationActions_;
 };
 
 }  // namespace Oneg4FM

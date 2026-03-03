@@ -265,6 +265,7 @@ oneg4fm_add_test(oneg4fm-settings-functionality-tests
     INCLUDES
         ${PCMANFM_SETTINGS_INCLUDES}
 )
+target_compile_definitions(oneg4fm-settings-functionality-tests PRIVATE "PCMANFM_SOURCE_DIR=\"${CMAKE_SOURCE_DIR}\"")
 
 oneg4fm_add_test(oneg4fm-settings-schema-tests
     SOURCES

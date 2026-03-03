@@ -598,6 +598,28 @@ void recordMigrationAction(MigrationReport& report,
     report.actions.push_back(MigrationAction{type, key, detail});
 }
 
+QString migrationActionTypeToToken(MigrationActionType type) {
+    switch (type) {
+        case MigrationActionType::SchemaVersionBump:
+            return QStringLiteral("schema_version_bump");
+        case MigrationActionType::RenameKey:
+            return QStringLiteral("rename_key");
+        case MigrationActionType::ValueTransform:
+            return QStringLiteral("value_transform");
+    }
+    return QStringLiteral("unknown");
+}
+
+QStringList formatMigrationActions(const MigrationReport& report) {
+    QStringList formatted;
+    formatted.reserve(report.actions.size());
+    for (const MigrationAction& action : report.actions) {
+        formatted.append(
+            QStringLiteral("%1|%2|%3").arg(migrationActionTypeToToken(action.type), action.key, action.detail));
+    }
+    return formatted;
+}
+
 bool parseBoolValue(const QVariant& rawValue, bool fallbackValue) {
     if (!rawValue.isValid() || rawValue.isNull()) {
         return fallbackValue;
@@ -1014,7 +1036,11 @@ Settings::Settings()
       searchContentRegexp_(true),
       searchRecursive_(false),
       searchhHidden_(false),
-      maxSearchHistory_(0) {}
+      maxSearchHistory_(0),
+      lastProfileMigrationSourceVersion_(0),
+      lastProfileMigrationTargetVersion_(0),
+      lastDirectoryMigrationSourceVersion_(0),
+      lastDirectoryMigrationTargetVersion_(0) {}
 
 Settings::~Settings() = default;
 
@@ -1072,6 +1098,9 @@ bool Settings::save(QString profile) {
 bool Settings::loadFile(QString filePath) {
     loadedProfileSettingsPath_.clear();
     preservedUnknownProfileKeys_.clear();
+    lastProfileMigrationSourceVersion_ = 0;
+    lastProfileMigrationTargetVersion_ = 0;
+    lastProfileMigrationActions_.clear();
 
     QVector<SchemaKey> schemaKeys;
     if (!loadProfileSchema(schemaKeys)) {
@@ -1087,6 +1116,9 @@ bool Settings::loadFile(QString filePath) {
                            &migrationReport)) {
         return false;
     }
+    lastProfileMigrationSourceVersion_ = migrationReport.sourceVersion;
+    lastProfileMigrationTargetVersion_ = migrationReport.targetVersion;
+    lastProfileMigrationActions_ = formatMigrationActions(migrationReport);
 
     const QHash<QString, QVariant> unknownKeys = collectUnknownAstEntries(ast, schemaKeySet(schemaKeys));
     if (!unknownKeys.isEmpty()) {
@@ -1595,6 +1627,10 @@ void Settings::setTerminal(QString terminalCommand) {
 // per-folder settings
 FolderSettings Settings::loadFolderSettings(const Panel::FilePath& path) const {
     FolderSettings settings;
+    lastDirectoryMigrationSourceVersion_ = 0;
+    lastDirectoryMigrationTargetVersion_ = 0;
+    lastDirectoryMigrationActions_.clear();
+
     const auto applyGlobalDefaults = [&]() {
         settings.setSortOrder(sortOrder());
         settings.setSortColumn(sortColumn());
@@ -1639,7 +1675,13 @@ FolderSettings Settings::loadFolderSettings(const Panel::FilePath& path) const {
             effectiveAst.insert(it.key(), it.value());
         }
         normalizedOut = normalizeAstBySchema(schemaKeys, effectiveAst);
-        return hasSupportedSchemaVersion(normalizedOut, QString::fromUtf8(kDirectorySchemaVersionKey));
+        if (!hasSupportedSchemaVersion(normalizedOut, QString::fromUtf8(kDirectorySchemaVersionKey))) {
+            return false;
+        }
+        lastDirectoryMigrationSourceVersion_ = migrationReport.sourceVersion;
+        lastDirectoryMigrationTargetVersion_ = migrationReport.targetVersion;
+        lastDirectoryMigrationActions_ = formatMigrationActions(migrationReport);
+        return true;
     };
 
     Panel::FolderConfig cfg(path);
