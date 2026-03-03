@@ -24,6 +24,7 @@ class TestSettingsFunctionality : public QObject {
     void testSettingsProfileDir();
     void testSettingsStringConversions();
     void testSettingsLoadSave();
+    void testProfileLoadSaveRoundtripNormalization();
     void testSchemaNormalizationConstraints();
     void testFolderSettingsSchemaNormalization();
     void testProfileSchemaVersionCompatibility();
@@ -285,6 +286,73 @@ void TestSettingsFunctionality::testSettingsLoadSave() {
     QCOMPARE(loadedSettings.contentPatterns(), settings.contentPatterns());
 }
 
+void TestSettingsFunctionality::testProfileLoadSaveRoundtripNormalization() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    QVERIFY(qputenv("XDG_CONFIG_HOME", tempDir.path().toUtf8()));
+
+    const QString profileName = QStringLiteral("roundtrip-normalization-profile");
+    const QString profileDir = tempDir.path() + QStringLiteral("/oneg4fm/") + profileName;
+    QVERIFY(QDir().mkpath(profileDir));
+
+    const QString longTerminal = QStringLiteral("term-终端-") + QString(6000, QLatin1Char('x'));
+
+    const QString settingsPath = profileDir + QStringLiteral("/settings.conf");
+    QFile settingsFile(settingsPath);
+    QVERIFY(settingsFile.open(QIODevice::WriteOnly | QIODevice::Text));
+    QByteArray payload;
+    payload += "; parser should ignore comments and preserve semantic values only\n";
+    payload += "\n";
+    payload += "[Search]\n";
+    payload += "NamePatterns = πρώτο, δεύτερο\n";
+    payload += "NamePatterns = τρίτο ,  τέταρτο\n";
+    payload += "ContentPatterns = café, 数据\n";
+    payload += "MaxSearchHistory = 10\n";
+    payload += "\n";
+    payload += "[Window]\n";
+    payload += "TabPaths = /tmp/a/../b, /tmp/c//d\n";
+    payload += "AlwaysShowTabs = false\n";
+    payload += "AlwaysShowTabs = true\n";
+    payload += "\n";
+    payload += "[Meta]\n";
+    payload += "schema_version = 1\n";
+    payload += "\n";
+    payload += "[System]\n";
+    payload += "Terminal = ";
+    payload += longTerminal.toUtf8();
+    payload += "\n";
+    QVERIFY(settingsFile.write(payload) == payload.size());
+    settingsFile.close();
+
+    Oneg4FM::Settings firstLoad;
+    QVERIFY(firstLoad.load(profileName));
+
+    QCOMPARE(firstLoad.alwaysShowTabs(), true);
+    QCOMPARE(firstLoad.tabPaths(), QStringList({QStringLiteral("/tmp/b"), QStringLiteral("/tmp/c/d")}));
+    QCOMPARE(firstLoad.namePatterns(), QStringList({QStringLiteral("τρίτο"), QStringLiteral("τέταρτο")}));
+    QCOMPARE(firstLoad.contentPatterns(), QStringList({QStringLiteral("café"), QStringLiteral("数据")}));
+    QCOMPARE(firstLoad.terminal(), longTerminal);
+
+    QVERIFY(firstLoad.save(profileName));
+
+    QFile canonicalFile(settingsPath);
+    QVERIFY(canonicalFile.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QString canonicalText = QString::fromUtf8(canonicalFile.readAll());
+    QVERIFY2(canonicalText.contains(QStringLiteral("schema_version=1")),
+             qPrintable(QStringLiteral("schema_version missing in %1").arg(settingsPath)));
+    QVERIFY2(!canonicalText.contains(QLatin1Char('#')) && !canonicalText.contains(QLatin1Char(';')),
+             qPrintable(QStringLiteral("canonical save should not preserve comments in %1").arg(settingsPath)));
+
+    Oneg4FM::Settings secondLoad;
+    QVERIFY(secondLoad.load(profileName));
+
+    QCOMPARE(secondLoad.alwaysShowTabs(), firstLoad.alwaysShowTabs());
+    QCOMPARE(secondLoad.tabPaths(), firstLoad.tabPaths());
+    QCOMPARE(secondLoad.namePatterns(), firstLoad.namePatterns());
+    QCOMPARE(secondLoad.contentPatterns(), firstLoad.contentPatterns());
+    QCOMPARE(secondLoad.terminal(), firstLoad.terminal());
+}
+
 void TestSettingsFunctionality::testSchemaNormalizationConstraints() {
     QTemporaryDir tempDir;
     QVERIFY(tempDir.isValid());
@@ -520,9 +588,10 @@ void TestSettingsFunctionality::testProfileUnknownKeysPreservedAndReported() {
         "unsupportedFutureToken=alpha\n");
     settingsFile.close();
 
-    const QString expectedWarning =
-        QStringLiteral("Unknown settings keys in %1: Future/ExperimentalFlag, Search/unsupportedFutureToken")
-            .arg(settingsPath);
+    const QString expectedWarning = QStringLiteral(
+                                        "Unknown settings keys in %1: Future/ExperimentalFlag (line 8), "
+                                        "Search/unsupportedFutureToken (line 11)")
+                                        .arg(settingsPath);
     QTest::ignoreMessage(QtWarningMsg, qPrintable(expectedWarning));
 
     Oneg4FM::Settings settings;
@@ -569,7 +638,7 @@ void TestSettingsFunctionality::testProfileUnknownKeysStrictModeRejectsLoad() {
     settingsFile.close();
 
     const QString expectedWarning =
-        QStringLiteral("Unknown settings keys in %1: Future/ExperimentalFlag").arg(settingsPath);
+        QStringLiteral("Unknown settings keys in %1: Future/ExperimentalFlag (line 8)").arg(settingsPath);
     QTest::ignoreMessage(QtWarningMsg, qPrintable(expectedWarning));
 
     Oneg4FM::Settings settings;

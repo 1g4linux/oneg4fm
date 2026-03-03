@@ -220,6 +220,70 @@ QStringList sortedUnknownKeys(const QHash<QString, QVariant>& unknownEntries) {
     return keys;
 }
 
+QHash<QString, int> readIniKeyLineNumbers(const QString& filePath) {
+    QHash<QString, int> lineNumbers;
+
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return lineNumbers;
+    }
+
+    const QString content = QString::fromUtf8(file.readAll());
+    const QStringList lines = content.split(QLatin1Char('\n'));
+    QString currentSection;
+    int lineNumber = 0;
+    for (const QString& rawLine : lines) {
+        ++lineNumber;
+        const QString trimmed = rawLine.trimmed();
+        if (trimmed.isEmpty() || trimmed.startsWith(QLatin1Char(';')) || trimmed.startsWith(QLatin1Char('#'))) {
+            continue;
+        }
+
+        if (trimmed.startsWith(QLatin1Char('['))) {
+            const int closeBracket = trimmed.indexOf(QLatin1Char(']'));
+            if (closeBracket > 1) {
+                currentSection = trimmed.mid(1, closeBracket - 1).trimmed();
+            }
+            continue;
+        }
+
+        const int separator = trimmed.indexOf(QLatin1Char('='));
+        if (separator <= 0) {
+            continue;
+        }
+
+        const QString key = trimmed.left(separator).trimmed();
+        if (key.isEmpty()) {
+            continue;
+        }
+
+        const QString fullKey = currentSection.isEmpty() ? key : QStringLiteral("%1/%2").arg(currentSection, key);
+        lineNumbers.insert(fullKey, lineNumber);
+    }
+
+    return lineNumbers;
+}
+
+QStringList formatUnknownKeysForDiagnostics(const QHash<QString, QVariant>& unknownEntries, const QString& filePath) {
+    const QStringList keys = sortedUnknownKeys(unknownEntries);
+    if (keys.isEmpty()) {
+        return {};
+    }
+
+    const QHash<QString, int> lineNumbers = readIniKeyLineNumbers(filePath);
+    QStringList formatted;
+    formatted.reserve(keys.size());
+    for (const QString& key : keys) {
+        const auto it = lineNumbers.constFind(key);
+        if (it == lineNumbers.cend()) {
+            formatted.push_back(key);
+            continue;
+        }
+        formatted.push_back(QStringLiteral("%1 (line %2)").arg(key).arg(*it));
+    }
+    return formatted;
+}
+
 bool strictUnknownKeysEnabled() {
     const QByteArray raw = qgetenv(kStrictUnknownKeysEnv);
     if (raw.isEmpty()) {
@@ -1026,8 +1090,9 @@ bool Settings::loadFile(QString filePath) {
 
     const QHash<QString, QVariant> unknownKeys = collectUnknownAstEntries(ast, schemaKeySet(schemaKeys));
     if (!unknownKeys.isEmpty()) {
-        qWarning().noquote() << QStringLiteral("Unknown settings keys in %1: %2")
-                                    .arg(filePath, sortedUnknownKeys(unknownKeys).join(QStringLiteral(", ")));
+        qWarning().noquote()
+            << QStringLiteral("Unknown settings keys in %1: %2")
+                   .arg(filePath, formatUnknownKeysForDiagnostics(unknownKeys, filePath).join(QStringLiteral(", ")));
         if (strictUnknownKeysEnabled()) {
             return false;
         }
