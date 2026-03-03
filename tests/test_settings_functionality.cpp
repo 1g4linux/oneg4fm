@@ -5,6 +5,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QObject>
 #include <QSettings>
 #include <QStandardPaths>
@@ -34,6 +35,9 @@ class TestSettingsFunctionality : public QObject {
     void testFolderSettingsDirectoryOverridesProfileDefaults();
     void testProfileDuplicateKeysLastWriteWins();
     void testDirectoryDuplicateKeysLastWriteWins();
+    void testProfileLoadRejectsOversizedFile();
+    void testProfileLoadRecoversFromTempFile();
+    void testProfileSaveUsesCanonicalListFormatting();
 };
 
 void TestSettingsFunctionality::testSettingsInitialization() {
@@ -692,6 +696,87 @@ void TestSettingsFunctionality::testDirectoryDuplicateKeysLastWriteWins() {
     QVERIFY(loaded.isCustomized());
     QCOMPARE(loaded.sortOrder(), Qt::DescendingOrder);
     QCOMPARE(loaded.showHidden(), true);
+}
+
+void TestSettingsFunctionality::testProfileLoadRejectsOversizedFile() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    QVERIFY(qputenv("XDG_CONFIG_HOME", tempDir.path().toUtf8()));
+
+    const QString profileName = QStringLiteral("oversized-profile");
+    const QString profileDir = tempDir.path() + QStringLiteral("/oneg4fm/") + profileName;
+    QVERIFY(QDir().mkpath(profileDir));
+
+    const QString settingsPath = profileDir + QStringLiteral("/settings.conf");
+    QFile settingsFile(settingsPath);
+    QVERIFY(settingsFile.open(QIODevice::WriteOnly | QIODevice::Text));
+    QVERIFY(settingsFile.write("[Meta]\n"
+                               "schema_version=1\n"
+                               "\n"
+                               "[System]\n"
+                               "Terminal=") > 0);
+    const QByteArray oversizedValue(1024 * 1024 + 128, 'x');
+    QVERIFY(settingsFile.write(oversizedValue) == oversizedValue.size());
+    QVERIFY(settingsFile.write("\n") > 0);
+    settingsFile.close();
+
+    Oneg4FM::Settings settings;
+    QVERIFY(!settings.load(profileName));
+}
+
+void TestSettingsFunctionality::testProfileLoadRecoversFromTempFile() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    QVERIFY(qputenv("XDG_CONFIG_HOME", tempDir.path().toUtf8()));
+
+    const QString profileName = QStringLiteral("temp-recovery-profile");
+    const QString profileDir = tempDir.path() + QStringLiteral("/oneg4fm/") + profileName;
+    QVERIFY(QDir().mkpath(profileDir));
+
+    const QString settingsPath = profileDir + QStringLiteral("/settings.conf");
+    const QString tempPath = settingsPath + QStringLiteral(".tmp");
+
+    QFile tempFile(tempPath);
+    QVERIFY(tempFile.open(QIODevice::WriteOnly | QIODevice::Text));
+    QVERIFY(tempFile.write("[Meta]\n"
+                           "schema_version=1\n"
+                           "\n"
+                           "[Window]\n"
+                           "AlwaysShowTabs=false\n") > 0);
+    tempFile.close();
+
+    QFile::remove(settingsPath);
+
+    Oneg4FM::Settings settings;
+    QVERIFY(settings.load(profileName));
+    QCOMPARE(settings.alwaysShowTabs(), false);
+    QVERIFY(QFile::exists(settingsPath));
+}
+
+void TestSettingsFunctionality::testProfileSaveUsesCanonicalListFormatting() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    QVERIFY(qputenv("XDG_CONFIG_HOME", tempDir.path().toUtf8()));
+
+    Oneg4FM::Settings settings;
+    QVERIFY(settings.load(QStringLiteral("canonical-save-profile")));
+    settings.setTabPaths(QStringList({QStringLiteral("/tmp/a"), QStringLiteral("/tmp/b")}));
+    settings.setHiddenColumns(QList<int>({4, 1}));
+    QVERIFY(settings.save(QStringLiteral("canonical-save-profile")));
+
+    const QString settingsPath =
+        settings.profileDir(QStringLiteral("canonical-save-profile")) + QStringLiteral("/settings.conf");
+    QFile saved(settingsPath);
+    QVERIFY(saved.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QString text = QString::fromUtf8(saved.readAll());
+
+    QVERIFY2(text.contains(QStringLiteral("TabPaths=/tmp/a,/tmp/b")),
+             qPrintable(QStringLiteral("TabPaths line not canonical: %1").arg(settingsPath)));
+    QVERIFY2(text.contains(QStringLiteral("HiddenColumns=1,4")),
+             qPrintable(QStringLiteral("HiddenColumns line not canonical: %1").arg(settingsPath)));
+    QVERIFY2(
+        !text.contains(QStringLiteral("@Variant")),
+        qPrintable(QStringLiteral("Serialized settings must not contain Qt @Variant encoding: %1").arg(settingsPath)));
 }
 
 QTEST_MAIN(TestSettingsFunctionality)

@@ -34,8 +34,13 @@
 #include <QRegularExpression>
 #include <QSettings>
 #include <QStandardPaths>
+#include <cerrno>
 #include <algorithm>
+#include <fcntl.h>
 #include <limits>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 #include <utility>
 #include "../src/ui/fsqt.h"
 
@@ -53,6 +58,10 @@ constexpr const char* kProfileSchemaVersionKey = "Meta/schema_version";
 constexpr const char* kDirectorySchemaVersionKey = "schema_version";
 constexpr const char* kLegacyProfileSearchHiddenKey = "Search/searchHidden";
 constexpr const char* kProfileSearchHiddenKey = "Search/searchhHidden";
+constexpr const char* kSettingsTmpSuffix = ".tmp";
+constexpr qint64 kMaxProfileSettingsFileBytes = 1024 * 1024;
+constexpr int kMaxProfileSettingsLineCount = 16384;
+constexpr int kMaxProfileSettingsLineBytes = 16384;
 
 enum class UnknownKeyPolicy { Preserve };
 
@@ -226,13 +235,265 @@ UnknownKeyPolicy profileUnknownKeyPolicy() {
     return UnknownKeyPolicy::Preserve;
 }
 
-QHash<QString, QVariant> readIniAst(const QString& filePath) {
-    QHash<QString, QVariant> ast;
+enum class IniReadStatus { Ok, Missing, Invalid };
+
+QString settingsTempPath(const QString& filePath) {
+    return filePath + QString::fromUtf8(kSettingsTmpSuffix);
+}
+
+bool settingsFileWithinBounds(const QString& filePath) {
+    const QFileInfo info(filePath);
+    if (!info.exists()) {
+        return true;
+    }
+    if (!info.isFile()) {
+        return false;
+    }
+    if (info.size() > kMaxProfileSettingsFileBytes) {
+        return false;
+    }
+
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return false;
+    }
+    const QByteArray content = file.readAll();
+    if (content.size() > kMaxProfileSettingsFileBytes) {
+        return false;
+    }
+
+    int lines = content.isEmpty() ? 0 : 1;
+    int lineLength = 0;
+    for (const char ch : content) {
+        if (lineLength > kMaxProfileSettingsLineBytes) {
+            return false;
+        }
+        if (ch == '\n') {
+            ++lines;
+            lineLength = 0;
+            if (lines > kMaxProfileSettingsLineCount) {
+                return false;
+            }
+            continue;
+        }
+        ++lineLength;
+    }
+    return lineLength <= kMaxProfileSettingsLineBytes;
+}
+
+IniReadStatus readIniAstFile(const QString& filePath, QHash<QString, QVariant>& ast) {
+    ast.clear();
+    const QFileInfo info(filePath);
+    if (!info.exists()) {
+        return IniReadStatus::Missing;
+    }
+    if (!settingsFileWithinBounds(filePath)) {
+        qWarning().noquote() << QStringLiteral("Settings file rejected by bounds: %1").arg(filePath);
+        return IniReadStatus::Invalid;
+    }
+
     QSettings settings(filePath, QSettings::IniFormat);
     for (const QString& key : settings.allKeys()) {
         ast.insert(key, settings.value(key));
     }
-    return ast;
+    if (settings.status() != QSettings::NoError) {
+        qWarning().noquote() << QStringLiteral("Settings file parse error: %1").arg(filePath);
+        ast.clear();
+        return IniReadStatus::Invalid;
+    }
+    return IniReadStatus::Ok;
+}
+
+bool syncDirectoryAfterRename(const QString& filePath) {
+    const QByteArray dirUtf8 = QFileInfo(filePath).absoluteDir().absolutePath().toUtf8();
+    const int dirFd = ::open(dirUtf8.constData(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (dirFd < 0) {
+        return false;
+    }
+    bool ok = true;
+    while (::fsync(dirFd) < 0) {
+        if (errno == EINTR) {
+            continue;
+        }
+        ok = false;
+        break;
+    }
+    ::close(dirFd);
+    return ok;
+}
+
+bool writeAllBytes(int fd, const QByteArray& payload) {
+    const char* cursor = payload.constData();
+    qint64 remaining = payload.size();
+    while (remaining > 0) {
+        const ssize_t written = ::write(fd, cursor, static_cast<size_t>(remaining));
+        if (written < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return false;
+        }
+        cursor += written;
+        remaining -= written;
+    }
+    return true;
+}
+
+QString serializeIniValue(const QVariant& value) {
+    if (!value.isValid() || value.isNull()) {
+        return QString();
+    }
+
+    if (value.metaType().id() == QMetaType::Bool) {
+        return value.toBool() ? QStringLiteral("true") : QStringLiteral("false");
+    }
+
+    if (value.metaType().id() == QMetaType::QVariantList) {
+        const QVariantList list = value.toList();
+        QStringList tokens;
+        tokens.reserve(list.size());
+        for (const QVariant& entry : list) {
+            tokens.append(entry.toString().trimmed());
+        }
+        return tokens.join(QLatin1Char(','));
+    }
+
+    if (value.metaType().id() == QMetaType::QStringList) {
+        QStringList tokens = value.toStringList();
+        for (QString& token : tokens) {
+            token = token.trimmed();
+        }
+        return tokens.join(QLatin1Char(','));
+    }
+
+    if (value.canConvert<QSize>()) {
+        const QSize size = value.toSize();
+        if (size.width() != -1 || size.height() != -1) {
+            return QStringLiteral("@Size(%1 %2)").arg(size.width()).arg(size.height());
+        }
+    }
+
+    return value.toString();
+}
+
+QByteArray renderCanonicalIni(const QStringList& orderedKeys, const QHash<QString, QVariant>& values) {
+    QByteArray out;
+    QString currentSection;
+    bool hasWrittenAnyKey = false;
+    for (const QString& fullKey : orderedKeys) {
+        if (!values.contains(fullKey)) {
+            continue;
+        }
+
+        const int separator = fullKey.indexOf(QLatin1Char('/'));
+        const QString section = separator >= 0 ? fullKey.left(separator) : QString();
+        const QString key = separator >= 0 ? fullKey.mid(separator + 1) : fullKey;
+        if (key.isEmpty()) {
+            continue;
+        }
+
+        if (section != currentSection) {
+            if (hasWrittenAnyKey) {
+                out.append('\n');
+            }
+            if (!section.isEmpty()) {
+                out.append('[');
+                out.append(section.toUtf8());
+                out.append("]\n");
+            }
+            currentSection = section;
+        }
+
+        out.append(key.toUtf8());
+        out.append('=');
+        out.append(serializeIniValue(values.value(fullKey)).toUtf8());
+        out.append('\n');
+        hasWrittenAnyKey = true;
+    }
+    return out;
+}
+
+bool atomicWriteIniFile(const QString& filePath, const QByteArray& payload) {
+    const QFileInfo info(filePath);
+    if (!QDir().mkpath(info.absolutePath())) {
+        return false;
+    }
+
+    const QString tempPath = settingsTempPath(filePath);
+    const QByteArray tempPathUtf8 = tempPath.toUtf8();
+    const int fd = ::open(tempPathUtf8.constData(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    if (fd < 0) {
+        return false;
+    }
+
+    bool ok = writeAllBytes(fd, payload);
+    if (ok) {
+        while (::fsync(fd) < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            ok = false;
+            break;
+        }
+    }
+
+    if (::close(fd) < 0) {
+        ok = false;
+    }
+    if (!ok) {
+        QFile::remove(tempPath);
+        return false;
+    }
+
+    QFile::remove(filePath);
+    if (::rename(tempPathUtf8.constData(), filePath.toUtf8().constData()) < 0) {
+        QFile::remove(tempPath);
+        return false;
+    }
+
+    if (!syncDirectoryAfterRename(filePath)) {
+        return false;
+    }
+
+    return true;
+}
+
+bool readIniAst(const QString& filePath, QHash<QString, QVariant>& ast) {
+    const QString tempPath = settingsTempPath(filePath);
+
+    QHash<QString, QVariant> primaryAst;
+    const IniReadStatus primaryStatus = readIniAstFile(filePath, primaryAst);
+    if (primaryStatus == IniReadStatus::Ok) {
+        ast = std::move(primaryAst);
+        if (QFileInfo::exists(tempPath)) {
+            QFile::remove(tempPath);
+        }
+        return true;
+    }
+
+    QHash<QString, QVariant> tempAst;
+    const IniReadStatus tempStatus = readIniAstFile(tempPath, tempAst);
+    if (tempStatus == IniReadStatus::Ok) {
+        ast = std::move(tempAst);
+        QFile::remove(filePath);
+        if (!QFile::rename(tempPath, filePath)) {
+            qWarning().noquote() << QStringLiteral("Failed to recover settings temp file: %1").arg(tempPath);
+        }
+        return true;
+    }
+
+    if (primaryStatus == IniReadStatus::Missing) {
+        if (tempStatus == IniReadStatus::Missing || tempStatus == IniReadStatus::Invalid) {
+            if (tempStatus == IniReadStatus::Invalid) {
+                QFile::remove(tempPath);
+            }
+            ast.clear();
+            return true;
+        }
+    }
+
+    ast.clear();
+    return false;
 }
 
 QHash<QString, QVariant> readFolderConfigAst(Panel::FolderConfig& cfg, const QVector<SchemaKey>& schemaKeys) {
@@ -753,7 +1014,10 @@ bool Settings::loadFile(QString filePath) {
         return false;
     }
 
-    QHash<QString, QVariant> ast = readIniAst(filePath);
+    QHash<QString, QVariant> ast;
+    if (!readIniAst(filePath, ast)) {
+        return false;
+    }
     MigrationReport migrationReport;
     if (!migrateAstForward(SettingsSurface::Profile, QString::fromUtf8(kProfileSchemaVersionKey), ast,
                            &migrationReport)) {
@@ -984,24 +1248,32 @@ bool Settings::saveFile(QString filePath) {
     values.insert(QStringLiteral("Search/NamePatterns"), namePatterns_);
     values.insert(QStringLiteral("Search/ContentPatterns"), contentPatterns_);
 
-    const QHash<QString, QVariant> normalized = normalizeAstBySchema(schemaKeys, values);
-    QSettings settings(filePath, QSettings::IniFormat);
+    QHash<QString, QVariant> persistedValues = normalizeAstBySchema(schemaKeys, values);
+    QStringList orderedKeys;
+    orderedKeys.reserve(schemaKeys.size() + preservedUnknownProfileKeys_.size());
     for (const SchemaKey& schemaKey : schemaKeys) {
-        settings.setValue(schemaKey.key, normalized.value(schemaKey.key, schemaKey.defaultValue));
+        orderedKeys.append(schemaKey.key);
     }
+
     if (profileUnknownKeyPolicy() == UnknownKeyPolicy::Preserve &&
         QFileInfo(filePath).absoluteFilePath() == loadedProfileSettingsPath_) {
         const QStringList unknownKeys = sortedUnknownKeys(preservedUnknownProfileKeys_);
         for (const QString& key : unknownKeys) {
-            settings.setValue(key, preservedUnknownProfileKeys_.value(key));
+            if (!persistedValues.contains(key)) {
+                orderedKeys.append(key);
+            }
+            persistedValues.insert(key, preservedUnknownProfileKeys_.value(key));
         }
     }
-    settings.sync();
+
+    if (!atomicWriteIniFile(filePath, renderCanonicalIni(orderedKeys, persistedValues))) {
+        return false;
+    }
 
     // save per-folder settings
     Panel::FolderConfig::saveCache();
 
-    return settings.status() == QSettings::NoError;
+    return true;
 }
 
 void Settings::clearSearchHistory() {
