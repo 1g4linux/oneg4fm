@@ -157,13 +157,44 @@ FilePath toFilePathFromCorePath(const std::string& path, const FilePath& fallbac
 
 GFileInfoPtr makePromptInfoFromPath(const FilePath& path) {
     GFileInfo* info = g_file_info_new();
+    GFileType fileType = G_FILE_TYPE_UNKNOWN;
+    const char* iconName = "text-x-generic";
+
     if (path) {
         const auto basename = path.baseName();
         if (basename) {
             g_file_info_set_name(info, basename.get());
             g_file_info_set_display_name(info, basename.get());
         }
+
+        if (path.isNative()) {
+            const auto localPath = path.localPath();
+            if (localPath && localPath.get()[0] != '\0') {
+                struct stat st{};
+                if (::lstat(localPath.get(), &st) == 0) {
+                    if (S_ISDIR(st.st_mode)) {
+                        fileType = G_FILE_TYPE_DIRECTORY;
+                        iconName = "folder";
+                    }
+                    else if (S_ISLNK(st.st_mode)) {
+                        fileType = G_FILE_TYPE_SYMBOLIC_LINK;
+                        iconName = "emblem-symbolic-link";
+                    }
+                    else if (S_ISREG(st.st_mode)) {
+                        fileType = G_FILE_TYPE_REGULAR;
+                    }
+                    else {
+                        fileType = G_FILE_TYPE_SPECIAL;
+                    }
+                }
+            }
+        }
     }
+
+    g_file_info_set_file_type(info, fileType);
+    GIcon* icon = g_themed_icon_new(iconName);
+    g_file_info_set_icon(info, icon);
+    g_object_unref(icon);
     return GFileInfoPtr{info, false};
 }
 

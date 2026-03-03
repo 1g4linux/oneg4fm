@@ -135,6 +135,11 @@ oneg4fm_add_test(oneg4fm-libfmqt-fileops-bridge-tests
         ../libfm-qt/src
         ${CMAKE_BINARY_DIR}/libfm-qt/src
 )
+if(EXISTS "${CMAKE_SOURCE_DIR}/src/core/file_ops_contract.cpp" AND DEFINED BLAKE3_LIBRARIES)
+    target_compile_definitions(oneg4fm-libfmqt-fileops-bridge-tests PRIVATE LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT=1)
+else()
+    target_compile_definitions(oneg4fm-libfmqt-fileops-bridge-tests PRIVATE LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT=0)
+endif()
 
 oneg4fm_add_test(oneg4fm-cross-layer-parity-tests
     SOURCES
