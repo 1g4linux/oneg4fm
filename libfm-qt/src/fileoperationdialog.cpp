@@ -30,7 +30,7 @@
 namespace Fm {
 
 FileOperationDialog::FileOperationDialog(FileOperation* _operation)
-    : QDialog(nullptr), operation(_operation), defaultOption(-1), ignoreNonCriticalErrors_(false) {
+    : QDialog(nullptr), operation(_operation), ignoreNonCriticalErrors_(false) {
     ui = new Ui::FileOperationDialog();
     ui->setupUi(this);
 
@@ -98,42 +98,24 @@ int FileOperationDialog::ask(QString /*question*/, char* const* /*options*/) {
 FileOperationJob::FileExistsAction FileOperationDialog::askRename(const FileInfo& src,
                                                                   const FileInfo& dest,
                                                                   FilePath& newDest) {
-    FileOperationJob::FileExistsAction ret;
-    // ask user if default action is not set or a self-overwriting might happen
-    if (defaultOption == -1 || (defaultOption == RenameDialog::ActionOverwrite && src.path() == dest.path())) {
-        RenameDialog dlg(src, dest, this);
-        dlg.exec();
-        switch (dlg.action()) {
-            case RenameDialog::ActionOverwrite:
-                ret = FileOperationJob::OVERWRITE;
-                if (dlg.applyToAll()) {
-                    defaultOption = ret;
-                }
-                break;
-            case RenameDialog::ActionRename: {
-                ret = FileOperationJob::RENAME;
-                auto newName = dlg.newName();
-                if (!newName.isEmpty()) {
-                    auto destDirPath = dest.path().parent();
-                    newDest = destDirPath.child(newName.toUtf8().constData());
-                }
-                break;
+    RenameDialog dlg(src, dest, this);
+    dlg.exec();
+    switch (dlg.action()) {
+        case RenameDialog::ActionOverwrite:
+            return dlg.applyToAll() ? FileOperationJob::OVERWRITE_ALL : FileOperationJob::OVERWRITE;
+        case RenameDialog::ActionRename: {
+            auto newName = dlg.newName();
+            if (!newName.isEmpty()) {
+                auto destDirPath = dest.path().parent();
+                newDest = destDirPath.child(newName.toUtf8().constData());
             }
-            case RenameDialog::ActionIgnore:
-                ret = FileOperationJob::SKIP;
-                if (dlg.applyToAll()) {
-                    defaultOption = ret;
-                }
-                break;
-            default:
-                ret = FileOperationJob::CANCEL;
-                break;
+            return dlg.applyToAll() ? FileOperationJob::RENAME_ALL : FileOperationJob::RENAME;
         }
+        case RenameDialog::ActionIgnore:
+            return dlg.applyToAll() ? FileOperationJob::SKIP_ALL : FileOperationJob::SKIP;
+        default:
+            return FileOperationJob::CANCEL;
     }
-    else {
-        ret = (FileOperationJob::FileExistsAction)defaultOption;
-    }
-    return ret;
 }
 
 Job::ErrorAction FileOperationDialog::error(GError* err, Job::ErrorSeverity severity) {

@@ -115,11 +115,13 @@ RenameDialog::~RenameDialog() {
 
 void RenameDialog::onRenameClicked() {
     action_ = ActionRename;
+    applyToAll_ = ui->applyToAll->isChecked();
     QDialog::done(QDialog::Accepted);
 }
 
 void RenameDialog::onIgnoreClicked() {
     action_ = ActionIgnore;
+    applyToAll_ = ui->applyToAll->isChecked();
 }
 
 // the overwrite button

@@ -14,7 +14,16 @@ namespace Fm {
 class LIBFM_QT_API FileOperationJob : public Fm::Job {
     Q_OBJECT
    public:
-    enum FileExistsAction { CANCEL = 0, OVERWRITE = 1 << 0, RENAME = 1 << 1, SKIP = 1 << 2, SKIP_ERROR = 1 << 3 };
+    enum FileExistsAction {
+        CANCEL = 0,
+        OVERWRITE = 1 << 0,
+        RENAME = 1 << 1,
+        SKIP = 1 << 2,
+        SKIP_ERROR = 1 << 3,
+        OVERWRITE_ALL = 1 << 4,
+        RENAME_ALL = 1 << 5,
+        SKIP_ALL = 1 << 6,
+    };
 
     explicit FileOperationJob();
 

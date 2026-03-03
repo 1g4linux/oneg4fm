@@ -866,6 +866,20 @@ void FileOpsInventoryTest::libfmQtCoreRoutedAdaptersAvoidPlannerRetryProbeLogic(
              "FileTransferJob core-routed section must map rename prompt choices");
     QVERIFY2(transferCoreBlock.contains(QStringLiteral("CoreFileOps::ConflictResolution::Rename"), Qt::CaseSensitive),
              "FileTransferJob core-routed section must pass rename semantics to core");
+    QVERIFY2(transferCoreBlock.contains(QStringLiteral("case FileOperationJob::OVERWRITE_ALL"), Qt::CaseSensitive),
+             "FileTransferJob core-routed section must map overwrite-all prompt choices");
+    QVERIFY2(
+        transferCoreBlock.contains(QStringLiteral("CoreFileOps::ConflictResolution::OverwriteAll"), Qt::CaseSensitive),
+        "FileTransferJob core-routed section must pass overwrite-all semantics to core");
+    QVERIFY2(transferCoreBlock.contains(QStringLiteral("case FileOperationJob::SKIP_ALL"), Qt::CaseSensitive),
+             "FileTransferJob core-routed section must map skip-all prompt choices");
+    QVERIFY2(transferCoreBlock.contains(QStringLiteral("CoreFileOps::ConflictResolution::SkipAll"), Qt::CaseSensitive),
+             "FileTransferJob core-routed section must pass skip-all semantics to core");
+    QVERIFY2(transferCoreBlock.contains(QStringLiteral("case FileOperationJob::RENAME_ALL"), Qt::CaseSensitive),
+             "FileTransferJob core-routed section must map rename-all prompt choices");
+    QVERIFY2(
+        transferCoreBlock.contains(QStringLiteral("CoreFileOps::ConflictResolution::RenameAll"), Qt::CaseSensitive),
+        "FileTransferJob core-routed section must pass rename-all semantics to core");
     QVERIFY2(!transferContent.contains(QStringLiteral("G_IO_ERROR_WOULD_RECURSE"), Qt::CaseSensitive),
              "FileTransferJob must not implement adapter-side move-then-copy retry fallback heuristics");
 
@@ -942,6 +956,19 @@ void FileOpsInventoryTest::libfmQtCoreRoutedAdaptersAvoidPlannerRetryProbeLogic(
              "UntrashJob core-routed section must not implement adapter retry loops");
     QVERIFY2(!untrashCoreBlock.contains(QStringLiteral("while (!isCancelled())"), Qt::CaseSensitive),
              "UntrashJob core-routed section must not wrap core execution in retry loops");
+    QVERIFY2(untrashCoreBlock.contains(QStringLiteral("case FileOperationJob::OVERWRITE_ALL"), Qt::CaseSensitive),
+             "UntrashJob core-routed section must map overwrite-all prompt choices");
+    QVERIFY2(
+        untrashCoreBlock.contains(QStringLiteral("CoreFileOps::ConflictResolution::OverwriteAll"), Qt::CaseSensitive),
+        "UntrashJob core-routed section must pass overwrite-all semantics to core");
+    QVERIFY2(untrashCoreBlock.contains(QStringLiteral("case FileOperationJob::SKIP_ALL"), Qt::CaseSensitive),
+             "UntrashJob core-routed section must map skip-all prompt choices");
+    QVERIFY2(untrashCoreBlock.contains(QStringLiteral("CoreFileOps::ConflictResolution::SkipAll"), Qt::CaseSensitive),
+             "UntrashJob core-routed section must pass skip-all semantics to core");
+    QVERIFY2(untrashCoreBlock.contains(QStringLiteral("case FileOperationJob::RENAME_ALL"), Qt::CaseSensitive),
+             "UntrashJob core-routed section must map rename-all prompt choices");
+    QVERIFY2(untrashCoreBlock.contains(QStringLiteral("CoreFileOps::ConflictResolution::RenameAll"), Qt::CaseSensitive),
+             "UntrashJob core-routed section must pass rename-all semantics to core");
     QVERIFY2(untrashLegacyBlock.contains(
                  QStringLiteral("Core file-ops contract unavailable: refusing legacy untrash adapter path"),
                  Qt::CaseSensitive),

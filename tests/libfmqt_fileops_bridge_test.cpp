@@ -49,6 +49,7 @@ class LibfmQtFileOpsBridgeTest : public QObject {
 
    private Q_SLOTS:
     void copyConflictSkipCountsAsCompletedWork();
+    void copyConflictOverwriteAllPromptsOnceForBatch();
     void deleteNativeDirectoryTreeTracksCompletion();
     void coreRoutingEligibilityAcceptsNativeLocalPath();
     void coreRoutingEligibilityRejectsUriSchemes();
@@ -101,6 +102,50 @@ void LibfmQtFileOpsBridgeTest::copyConflictSkipCountsAsCompletedWork() {
 
     QCOMPARE(finishedBytes, totalBytes);
     QCOMPARE(finishedFiles, totalFiles);
+}
+
+void LibfmQtFileOpsBridgeTest::copyConflictOverwriteAllPromptsOnceForBatch() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcDir = dir.path() + QLatin1String("/src");
+    const QString dstDir = dir.path() + QLatin1String("/dst");
+    QVERIFY(QDir().mkpath(srcDir));
+    QVERIFY(QDir().mkpath(dstDir));
+
+    const QString sourceTree = srcDir + QLatin1String("/tree");
+    QVERIFY(QDir().mkpath(sourceTree));
+    const QString srcAlpha = writeFile(sourceTree + QLatin1String("/alpha.txt"), QByteArray("alpha-source"));
+    const QString srcBeta = writeFile(sourceTree + QLatin1String("/beta.txt"), QByteArray("beta-source"));
+
+    const QString destTree = dstDir + QLatin1String("/tree");
+    QVERIFY(QDir().mkpath(destTree));
+    const QString dstAlpha = writeFile(destTree + QLatin1String("/alpha.txt"), QByteArray("alpha-existing"));
+    const QString dstBeta = writeFile(destTree + QLatin1String("/beta.txt"), QByteArray("beta-existing"));
+
+    Fm::FilePathList sources;
+    sources.emplace_back(toLocalFilePath(sourceTree));
+
+    Fm::FileTransferJob job(std::move(sources), Fm::FileTransferJob::Mode::COPY);
+    job.setDestDirPath(toLocalFilePath(dstDir));
+
+    int promptCount = 0;
+    connect(
+        &job, &Fm::FileOperationJob::fileExists, &job,
+        [&promptCount](const Fm::FileInfo&, const Fm::FileInfo&, Fm::FileOperationJob::FileExistsAction& response,
+                       Fm::FilePath&) {
+            ++promptCount;
+            response = Fm::FileOperationJob::OVERWRITE_ALL;
+        },
+        Qt::DirectConnection);
+
+    job.run();
+
+    QCOMPARE(promptCount, 1);
+    QCOMPARE(readFile(dstAlpha), QByteArray("alpha-source"));
+    QCOMPARE(readFile(dstBeta), QByteArray("beta-source"));
+    QVERIFY(QFileInfo::exists(srcAlpha));
+    QVERIFY(QFileInfo::exists(srcBeta));
 }
 
 void LibfmQtFileOpsBridgeTest::deleteNativeDirectoryTreeTracksCompletion() {

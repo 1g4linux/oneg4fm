@@ -182,11 +182,17 @@ void UntrashJob::exec() {
             switch (action) {
                 case FileOperationJob::OVERWRITE:
                     return CoreFileOps::ConflictResolution::Overwrite;
+                case FileOperationJob::OVERWRITE_ALL:
+                    return CoreFileOps::ConflictResolution::OverwriteAll;
                 case FileOperationJob::SKIP:
                 case FileOperationJob::SKIP_ERROR:
                     return CoreFileOps::ConflictResolution::Skip;
+                case FileOperationJob::SKIP_ALL:
+                    return CoreFileOps::ConflictResolution::SkipAll;
                 case FileOperationJob::RENAME:
                     return CoreFileOps::ConflictResolution::Rename;
+                case FileOperationJob::RENAME_ALL:
+                    return CoreFileOps::ConflictResolution::RenameAll;
                 case FileOperationJob::CANCEL:
                 default:
                     cancel();

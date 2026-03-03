@@ -61,7 +61,6 @@ class LIBFM_QT_API FileOperationDialog : public QDialog {
    private:
     Ui::FileOperationDialog* ui;
     FileOperation* operation;
-    int defaultOption;
     bool ignoreNonCriticalErrors_;
 };
 

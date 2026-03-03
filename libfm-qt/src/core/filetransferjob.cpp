@@ -403,13 +403,16 @@ bool FileTransferJob::makeDir(const FilePath& srcPath, GFileInfoPtr srcInfo, Fil
                 FileExistsAction opt = askRename(FileInfo{srcInfo, srcPath}, FileInfo{destInfo, destPath}, newDestPath);
                 switch (opt) {
                     case FileOperationJob::RENAME:
+                    case FileOperationJob::RENAME_ALL:
                         destPath = std::move(newDestPath);
                         break;
                     case FileOperationJob::SKIP:
+                    case FileOperationJob::SKIP_ALL:
                         /* when a dir is skipped, we need to know its total size to calculate correct progress */
                         mkdir_done = true; /* pretend that dir creation succeeded */
                         break;
                     case FileOperationJob::OVERWRITE:
+                    case FileOperationJob::OVERWRITE_ALL:
                         mkdir_done = true; /* pretend that dir creation succeeded */
                         break;
                     case FileOperationJob::CANCEL:
@@ -476,6 +479,7 @@ bool FileTransferJob::handleError(GErrorPtr& err,
             FileExistsAction opt = askRename(FileInfo{srcInfo, srcPath}, FileInfo{destInfo, destPath}, newDestPath);
             switch (opt) {
                 case FileOperationJob::RENAME:
+                case FileOperationJob::RENAME_ALL:
                     // try a new file name
                     if (newDestPath.isValid()) {
                         destPath = std::move(newDestPath);
@@ -484,6 +488,7 @@ bool FileTransferJob::handleError(GErrorPtr& err,
                     retry = true;
                     break;
                 case FileOperationJob::OVERWRITE:
+                case FileOperationJob::OVERWRITE_ALL:
                     // overwrite existing file
                     flags |= G_FILE_COPY_OVERWRITE;
                     retry = true;
@@ -494,6 +499,7 @@ bool FileTransferJob::handleError(GErrorPtr& err,
                     cancel();
                     break;
                 case FileOperationJob::SKIP:
+                case FileOperationJob::SKIP_ALL:
                     // skip current file and don't copy it
                 case FileOperationJob::SKIP_ERROR:; /* FIXME */
                     retry = false;
@@ -918,11 +924,17 @@ void FileTransferJob::exec() {
             switch (action) {
                 case FileOperationJob::OVERWRITE:
                     return CoreFileOps::ConflictResolution::Overwrite;
+                case FileOperationJob::OVERWRITE_ALL:
+                    return CoreFileOps::ConflictResolution::OverwriteAll;
                 case FileOperationJob::SKIP:
                 case FileOperationJob::SKIP_ERROR:
                     return CoreFileOps::ConflictResolution::Skip;
+                case FileOperationJob::SKIP_ALL:
+                    return CoreFileOps::ConflictResolution::SkipAll;
                 case FileOperationJob::RENAME:
                     return CoreFileOps::ConflictResolution::Rename;
+                case FileOperationJob::RENAME_ALL:
+                    return CoreFileOps::ConflictResolution::RenameAll;
                 case FileOperationJob::CANCEL:
                 default:
                     cancel();
