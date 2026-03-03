@@ -190,52 +190,102 @@ class QtFileOps::Worker : public QObject {
    private:
     using Clock = std::chrono::steady_clock;
     static constexpr auto kProgressEmitInterval = std::chrono::milliseconds(50);
+    static constexpr std::uint64_t kProgressEmitByteDelta = 1024 * 1024;  // 1 MiB
 
     void resetProgressDispatchState() {
+        std::lock_guard<std::mutex> lock(progressMutex_);
         pendingProgress_.reset();
         lastEmittedProgress_.reset();
         hasLastProgressEmitTime_ = false;
+        progressDispatchQueued_ = false;
     }
 
     static bool isTerminalProgress(const FileOpProgress& info) {
         return info.filesTotal >= 0 && info.filesDone >= info.filesTotal && info.bytesDone >= info.bytesTotal;
     }
 
-    bool shouldEmitProgressNow(const FileOpProgress& info, const Clock::time_point now) const {
+    bool shouldEmitProgressNowLocked(const FileOpProgress& info, const Clock::time_point now) const {
         if (!hasLastProgressEmitTime_) {
             return true;
         }
         if (isTerminalProgress(info)) {
             return true;
         }
+        if (lastEmittedProgress_) {
+            if (info.filesDone != lastEmittedProgress_->filesDone) {
+                return true;
+            }
+            if (info.currentPath != lastEmittedProgress_->currentPath) {
+                return true;
+            }
+            if (info.bytesDone >= lastEmittedProgress_->bytesDone + kProgressEmitByteDelta) {
+                return true;
+            }
+        }
         return (now - lastProgressEmitTime_) >= kProgressEmitInterval;
     }
 
     void queueProgressUpdate(const FileOpsContract::ProgressSnapshot& info) {
-        pendingProgress_ = toQtProgress(info);
+        const FileOpProgress candidate = toQtProgress(info);
+        bool scheduleDispatch = false;
+        {
+            std::lock_guard<std::mutex> lock(progressMutex_);
+            pendingProgress_ = candidate;
 
-        const Clock::time_point now = Clock::now();
-        if (shouldEmitProgressNow(*pendingProgress_, now)) {
-            flushPendingProgress(now);
+            const Clock::time_point now = Clock::now();
+            if (!progressDispatchQueued_ && shouldEmitProgressNowLocked(*pendingProgress_, now)) {
+                progressDispatchQueued_ = true;
+                scheduleDispatch = true;
+            }
         }
+
+        if (!scheduleDispatch || !owner_) {
+            return;
+        }
+
+        QMetaObject::invokeMethod(
+            owner_, [this]() { dispatchProgressOnOwnerThread(/*force=*/false); }, Qt::QueuedConnection);
     }
 
-    void flushPendingProgress(const std::optional<Clock::time_point>& emitTime = std::nullopt) {
-        if (!pendingProgress_) {
+    void flushPendingProgress() {
+        if (!owner_) {
             return;
         }
+        QMetaObject::invokeMethod(
+            owner_, [this]() { dispatchProgressOnOwnerThread(/*force=*/true); }, Qt::BlockingQueuedConnection);
+    }
 
-        const FileOpProgress info = *pendingProgress_;
-        pendingProgress_.reset();
+    void dispatchProgressOnOwnerThread(bool force) {
+        std::optional<FileOpProgress> toEmit;
+        {
+            std::lock_guard<std::mutex> lock(progressMutex_);
+            progressDispatchQueued_ = false;
+            if (!pendingProgress_) {
+                return;
+            }
 
-        if (lastEmittedProgress_ && sameProgressSnapshot(info, *lastEmittedProgress_)) {
-            return;
+            const Clock::time_point now = Clock::now();
+            if (!force && !shouldEmitProgressNowLocked(*pendingProgress_, now)) {
+                return;
+            }
+
+            const FileOpProgress info = *pendingProgress_;
+            pendingProgress_.reset();
+
+            if (lastEmittedProgress_ && sameProgressSnapshot(info, *lastEmittedProgress_)) {
+                return;
+            }
+
+            toEmit = info;
+            lastEmittedProgress_ = info;
+            hasLastProgressEmitTime_ = true;
+            lastProgressEmitTime_ = now;
         }
 
-        Q_EMIT progress(info);
-        lastEmittedProgress_ = info;
-        hasLastProgressEmitTime_ = true;
-        lastProgressEmitTime_ = emitTime.value_or(Clock::now());
+        if (!toEmit.has_value()) {
+            return;
+        }
+        Q_EMIT progress(*toEmit);
     }
 
     bool hasConflictResponder() const {
@@ -372,10 +422,12 @@ class QtFileOps::Worker : public QObject {
     bool waitingForConflictResolution_ = false;
     bool hasConflictResolution_ = false;
     FileOpConflictResolution pendingConflictResolution_ = FileOpConflictResolution::Abort;
+    std::mutex progressMutex_;
     std::optional<FileOpProgress> pendingProgress_;
     std::optional<FileOpProgress> lastEmittedProgress_;
     Clock::time_point lastProgressEmitTime_{};
     bool hasLastProgressEmitTime_ = false;
+    bool progressDispatchQueued_ = false;
 };
 
 QtFileOps::QtFileOps(QObject* parent)

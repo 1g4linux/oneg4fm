@@ -136,7 +136,17 @@ void QtFileOpsTest::copyProgressIsMonotonicAndTotalsStable() {
     bool hasStableBytesTotal = false;
     int prevFilesDone = -1;
     int stableFilesTotal = -1;
+    FileOpProgress prevSnapshot{};
+    bool hasPrevSnapshot = false;
     for (const FileOpProgress& info : updates) {
+        if (hasPrevSnapshot) {
+            QVERIFY(!(info.bytesDone == prevSnapshot.bytesDone && info.bytesTotal == prevSnapshot.bytesTotal &&
+                      info.filesDone == prevSnapshot.filesDone && info.filesTotal == prevSnapshot.filesTotal &&
+                      info.currentPath == prevSnapshot.currentPath));
+        }
+        prevSnapshot = info;
+        hasPrevSnapshot = true;
+
         if (hasPrevBytesDone) {
             QVERIFY(info.bytesDone >= prevBytesDone);
         }
