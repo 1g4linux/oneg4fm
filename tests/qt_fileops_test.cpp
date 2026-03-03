@@ -128,6 +128,7 @@ void QtFileOpsTest::copyProgressIsMonotonicAndTotalsStable() {
     QVERIFY(args.at(0).toBool());
     QVERIFY(QFileInfo::exists(dstPath));
     QVERIFY(!updates.isEmpty());
+    QVERIFY2(updates.size() < 300, "Progress updates should be coalesced to avoid starving finished delivery");
 
     std::uint64_t prevBytesDone = 0;
     bool hasPrevBytesDone = false;

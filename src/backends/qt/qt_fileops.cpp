@@ -14,8 +14,10 @@
 
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <condition_variable>
 #include <mutex>
+#include <optional>
 
 namespace Oneg4FM {
 
@@ -102,6 +104,11 @@ FileOpsContract::ConflictResolution toContractResolution(FileOpConflictResolutio
     return FileOpsContract::ConflictResolution::Abort;
 }
 
+bool sameProgressSnapshot(const FileOpProgress& lhs, const FileOpProgress& rhs) {
+    return lhs.bytesDone == rhs.bytesDone && lhs.bytesTotal == rhs.bytesTotal && lhs.filesDone == rhs.filesDone &&
+           lhs.filesTotal == rhs.filesTotal && lhs.currentPath == rhs.currentPath;
+}
+
 }  // namespace
 
 class QtFileOps::Worker : public QObject {
@@ -115,6 +122,7 @@ class QtFileOps::Worker : public QObject {
 
    public Q_SLOTS:
     void processRequest(const FileOpRequest& req) {
+        resetProgressDispatchState();
         FileOpsContract::Request contractReq;
         QString requestError;
         if (!buildContractRequest(req, contractReq, requestError)) {
@@ -136,11 +144,12 @@ class QtFileOps::Worker : public QObject {
         contractReq.cancellationRequested = [flag = cancelRequested_]() { return flag && flag->load(); };
 
         const FileOpsContract::EventHandlers handlers{
-            [this](const FileOpsContract::ProgressSnapshot& info) { Q_EMIT progress(toQtProgress(info)); },
+            [this](const FileOpsContract::ProgressSnapshot& info) { queueProgressUpdate(info); },
             [this](const FileOpsContract::ConflictEvent& event) { return waitForConflictResolution(event); },
         };
 
         const FileOpsContract::Result result = FileOpsContract::run(contractReq, handlers);
+        flushPendingProgress();
         if (result.success) {
             Q_EMIT finished(true, QString());
             return;
@@ -179,6 +188,56 @@ class QtFileOps::Worker : public QObject {
     void finished(bool success, const QString& errorMessage);
 
    private:
+    using Clock = std::chrono::steady_clock;
+    static constexpr auto kProgressEmitInterval = std::chrono::milliseconds(50);
+
+    void resetProgressDispatchState() {
+        pendingProgress_.reset();
+        lastEmittedProgress_.reset();
+        hasLastProgressEmitTime_ = false;
+    }
+
+    static bool isTerminalProgress(const FileOpProgress& info) {
+        return info.filesTotal >= 0 && info.filesDone >= info.filesTotal && info.bytesDone >= info.bytesTotal;
+    }
+
+    bool shouldEmitProgressNow(const FileOpProgress& info, const Clock::time_point now) const {
+        if (!hasLastProgressEmitTime_) {
+            return true;
+        }
+        if (isTerminalProgress(info)) {
+            return true;
+        }
+        return (now - lastProgressEmitTime_) >= kProgressEmitInterval;
+    }
+
+    void queueProgressUpdate(const FileOpsContract::ProgressSnapshot& info) {
+        pendingProgress_ = toQtProgress(info);
+
+        const Clock::time_point now = Clock::now();
+        if (shouldEmitProgressNow(*pendingProgress_, now)) {
+            flushPendingProgress(now);
+        }
+    }
+
+    void flushPendingProgress(const std::optional<Clock::time_point>& emitTime = std::nullopt) {
+        if (!pendingProgress_) {
+            return;
+        }
+
+        const FileOpProgress info = *pendingProgress_;
+        pendingProgress_.reset();
+
+        if (lastEmittedProgress_ && sameProgressSnapshot(info, *lastEmittedProgress_)) {
+            return;
+        }
+
+        Q_EMIT progress(info);
+        lastEmittedProgress_ = info;
+        hasLastProgressEmitTime_ = true;
+        lastProgressEmitTime_ = emitTime.value_or(Clock::now());
+    }
+
     bool hasConflictResponder() const {
         if (!owner_) {
             return false;
@@ -313,6 +372,10 @@ class QtFileOps::Worker : public QObject {
     bool waitingForConflictResolution_ = false;
     bool hasConflictResolution_ = false;
     FileOpConflictResolution pendingConflictResolution_ = FileOpConflictResolution::Abort;
+    std::optional<FileOpProgress> pendingProgress_;
+    std::optional<FileOpProgress> lastEmittedProgress_;
+    Clock::time_point lastProgressEmitTime_{};
+    bool hasLastProgressEmitTime_ = false;
 };
 
 QtFileOps::QtFileOps(QObject* parent)

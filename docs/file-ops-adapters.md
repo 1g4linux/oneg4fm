@@ -48,6 +48,8 @@ backend/capability combinations fail early with a clear core-generated reason.
 ### Signal/Conflict Bridge
 
 - Progress: core `ProgressSnapshot` -> Qt `progress(FileOpProgress)`.
+  Delivery is coalesced in the adapter (latest snapshot wins, max ~20 Hz) and
+  any pending snapshot is flushed before `finished(...)` is emitted.
 - Conflict: core `ConflictEvent` -> Qt `conflictRequested(FileOpConflict)`.
 - Prompt conflict requires a connected responder; otherwise request fails.
 - Cancellation:
