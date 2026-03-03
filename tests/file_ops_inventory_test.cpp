@@ -42,6 +42,7 @@ class FileOpsInventoryTest : public QObject {
     void hackingDocCoversLinuxSecurityModelAndContract();
     void coreContractDocCoversFieldsEventsAndErrors();
     void adapterDocCoversQtAndLibfmQtBridge();
+    void libfmQtCoreRoutedAdaptersAvoidPlannerRetryProbeLogic();
 
    private:
     QString sourceRoot() const;
@@ -836,6 +837,101 @@ void FileOpsInventoryTest::adapterDocCoversQtAndLibfmQtBridge() {
         QVERIFY2(content.contains(term, Qt::CaseSensitive),
                  qPrintable(QStringLiteral("Adapter doc is missing required term: %1").arg(term)));
     }
+}
+
+void FileOpsInventoryTest::libfmQtCoreRoutedAdaptersAvoidPlannerRetryProbeLogic() {
+    const auto [transferContent, transferError] = readTextFile(QStringLiteral("libfm-qt/src/core/filetransferjob.cpp"));
+    QVERIFY2(transferError.isEmpty(), qPrintable(transferError));
+    const int transferExecPos = transferContent.indexOf(QStringLiteral("void FileTransferJob::exec()"));
+    QVERIFY2(transferExecPos >= 0, "filetransferjob.cpp must define FileTransferJob::exec()");
+
+    const int transferPlannerPos = transferContent.indexOf(
+        QStringLiteral("TotalSizeJob totalSizeJob{srcPaths_, totalSizeFlags};"), transferExecPos);
+    QVERIFY2(transferPlannerPos >= 0, "FileTransferJob planner symbol must exist for non-core fallback builds");
+    const int transferPlannerGuardPos =
+        transferContent.lastIndexOf(QStringLiteral("#if !LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT"), transferPlannerPos);
+    const int transferPlannerElsePos = transferContent.indexOf(QStringLiteral("#else"), transferPlannerGuardPos);
+    QVERIFY2(transferPlannerGuardPos >= 0 && transferPlannerElsePos > transferPlannerPos,
+             "FileTransferJob planner must be guarded behind !LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT");
+
+    const int transferCoreIfPos =
+        transferContent.indexOf(QStringLiteral("#if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT"), transferExecPos);
+    const int transferCoreEndPos = transferContent.indexOf(QStringLiteral("#endif"), transferCoreIfPos);
+    QVERIFY2(transferCoreIfPos >= 0 && transferCoreEndPos > transferCoreIfPos,
+             "FileTransferJob core-routed section must be present");
+    const QString transferCoreBlock = transferContent.mid(transferCoreIfPos, transferCoreEndPos - transferCoreIfPos);
+    QVERIFY2(!transferCoreBlock.contains(QStringLiteral("ErrorAction::RETRY"), Qt::CaseSensitive),
+             "FileTransferJob core-routed section must not implement adapter retry loops");
+    QVERIFY2(!transferCoreBlock.contains(QStringLiteral("renameRequest"), Qt::CaseSensitive),
+             "FileTransferJob core-routed conflict handling must not duplicate rename retry policy");
+    QVERIFY2(transferCoreBlock.contains(QStringLiteral("case FileOperationJob::RENAME"), Qt::CaseSensitive),
+             "FileTransferJob core-routed section must map rename prompt choices");
+    QVERIFY2(transferCoreBlock.contains(QStringLiteral("CoreFileOps::ConflictResolution::Rename"), Qt::CaseSensitive),
+             "FileTransferJob core-routed section must pass rename semantics to core");
+
+    const auto [deleteContent, deleteError] = readTextFile(QStringLiteral("libfm-qt/src/core/deletejob.cpp"));
+    QVERIFY2(deleteError.isEmpty(), qPrintable(deleteError));
+    const int deleteExecPos = deleteContent.indexOf(QStringLiteral("void DeleteJob::exec()"));
+    QVERIFY2(deleteExecPos >= 0, "deletejob.cpp must define DeleteJob::exec()");
+
+    const int deletePlannerPos = deleteContent.indexOf(
+        QStringLiteral("TotalSizeJob totalSizeJob{paths_, TotalSizeJob::Flags::PREPARE_DELETE};"), deleteExecPos);
+    QVERIFY2(deletePlannerPos >= 0, "DeleteJob planner symbol must exist for non-core fallback builds");
+    const int deletePlannerGuardPos =
+        deleteContent.lastIndexOf(QStringLiteral("#if !LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT"), deletePlannerPos);
+    const int deletePlannerElsePos = deleteContent.indexOf(QStringLiteral("#else"), deletePlannerGuardPos);
+    QVERIFY2(deletePlannerGuardPos >= 0 && deletePlannerElsePos > deletePlannerPos,
+             "DeleteJob planner must be guarded behind !LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT");
+
+    const int deleteCoreIfPos =
+        deleteContent.indexOf(QStringLiteral("#if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT"), deleteExecPos);
+    const int deleteCoreEndPos = deleteContent.indexOf(QStringLiteral("#endif"), deleteCoreIfPos);
+    QVERIFY2(deleteCoreIfPos >= 0 && deleteCoreEndPos > deleteCoreIfPos,
+             "DeleteJob core-routed section must be present");
+    const QString deleteCoreBlock = deleteContent.mid(deleteCoreIfPos, deleteCoreEndPos - deleteCoreIfPos);
+    QVERIFY2(!deleteCoreBlock.contains(QStringLiteral("ErrorAction::RETRY"), Qt::CaseSensitive),
+             "DeleteJob core-routed section must not implement adapter retry loops");
+    QVERIFY2(!deleteCoreBlock.contains(QStringLiteral("while (!isCancelled())"), Qt::CaseSensitive),
+             "DeleteJob core-routed section must not wrap core execution in retry loops");
+
+    const auto [trashContent, trashError] = readTextFile(QStringLiteral("libfm-qt/src/core/trashjob.cpp"));
+    QVERIFY2(trashError.isEmpty(), qPrintable(trashError));
+    const int trashExecPos = trashContent.indexOf(QStringLiteral("void TrashJob::exec()"));
+    QVERIFY2(trashExecPos >= 0, "trashjob.cpp must define TrashJob::exec()");
+    const int trashCoreIfPos =
+        trashContent.indexOf(QStringLiteral("#if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT"), trashExecPos);
+    const int trashCoreElsePos = trashContent.indexOf(QStringLiteral("#else"), trashCoreIfPos);
+    QVERIFY2(trashCoreIfPos >= 0 && trashCoreElsePos > trashCoreIfPos, "TrashJob core-routed section must be present");
+    const QString trashCoreBlock = trashContent.mid(trashCoreIfPos, trashCoreElsePos - trashCoreIfPos);
+    QVERIFY2(!trashCoreBlock.contains(QStringLiteral("ErrorAction::RETRY"), Qt::CaseSensitive),
+             "TrashJob core-routed section must not implement adapter retry loops");
+    QVERIFY2(!trashCoreBlock.contains(QStringLiteral("g_file_find_enclosing_mount"), Qt::CaseSensitive),
+             "TrashJob core-routed section must not probe mounts for behavior decisions");
+
+    const auto [untrashContent, untrashError] = readTextFile(QStringLiteral("libfm-qt/src/core/untrashjob.cpp"));
+    QVERIFY2(untrashError.isEmpty(), qPrintable(untrashError));
+    const int untrashExecPos = untrashContent.indexOf(QStringLiteral("void UntrashJob::exec()"));
+    QVERIFY2(untrashExecPos >= 0, "untrashjob.cpp must define UntrashJob::exec()");
+    const int untrashCoreIfPos =
+        untrashContent.indexOf(QStringLiteral("#if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT"), untrashExecPos);
+    const int untrashCoreElsePos = untrashContent.indexOf(QStringLiteral("#else"), untrashCoreIfPos);
+    QVERIFY2(untrashCoreIfPos >= 0 && untrashCoreElsePos > untrashCoreIfPos,
+             "UntrashJob core-routed section must be present");
+    const QString untrashCoreBlock = untrashContent.mid(untrashCoreIfPos, untrashCoreElsePos - untrashCoreIfPos);
+    QVERIFY2(!untrashCoreBlock.contains(QStringLiteral("ErrorAction::RETRY"), Qt::CaseSensitive),
+             "UntrashJob core-routed section must not implement adapter retry loops");
+    QVERIFY2(!untrashCoreBlock.contains(QStringLiteral("while (!isCancelled())"), Qt::CaseSensitive),
+             "UntrashJob core-routed section must not wrap core execution in retry loops");
+
+    const auto [policyContent, policyError] =
+        readTextFile(QStringLiteral("libfm-qt/src/core/fileops_bridge_policy.cpp"));
+    QVERIFY2(policyError.isEmpty(), qPrintable(policyError));
+    QVERIFY2(!policyContent.contains(QStringLiteral("queryFilesystemRemote"), Qt::CaseSensitive),
+             "fileops_bridge_policy.cpp must not probe filesystem metadata for routing behavior");
+    QVERIFY2(!policyContent.contains(QStringLiteral("g_file_query_filesystem_info"), Qt::CaseSensitive),
+             "fileops_bridge_policy.cpp must not call g_file_query_filesystem_info for routing behavior");
+    QVERIFY2(policyContent.contains(QStringLiteral("return RoutingClass::CoreLocal;"), Qt::CaseSensitive),
+             "Native local paths must route deterministically to RoutingClass::CoreLocal");
 }
 
 QTEST_MAIN(FileOpsInventoryTest)

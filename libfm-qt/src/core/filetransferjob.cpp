@@ -808,6 +808,7 @@ bool FileTransferJob::createShortcut(const FilePath& srcPath, const GFileInfoPtr
 }
 
 void FileTransferJob::exec() {
+#if !LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
     // calculate the total size of files to copy
     auto totalSizeFlags = (mode_ == Mode::COPY ? TotalSizeJob::DEFAULT : TotalSizeJob::PREPARE_MOVE);
     TotalSizeJob totalSizeJob{srcPaths_, totalSizeFlags};
@@ -820,6 +821,13 @@ void FileTransferJob::exec() {
 
     // ready to start
     setTotalAmount(totalSizeJob.totalSize(), totalSizeJob.fileCount());
+#else
+    std::uint64_t aggregateTotalBytes = 0;
+    std::uint64_t aggregateTotalFiles = 0;
+    std::uint64_t aggregateFinishedBytes = 0;
+    std::uint64_t aggregateFinishedFiles = 0;
+    setTotalAmount(aggregateTotalBytes, aggregateTotalFiles);
+#endif
     Q_EMIT preparedToRun();
 
     if (srcPaths_.size() != destPaths_.size()) {
@@ -828,9 +836,10 @@ void FileTransferJob::exec() {
     }
 
 #if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
-    auto runCoreRoutedPath = [this](const FilePath& srcPath, const FilePath& originalDestPath,
-                                    FileOpsBridgePolicy::RoutingClass srcRouting,
-                                    FileOpsBridgePolicy::RoutingClass destRouting) -> bool {
+    auto runCoreRoutedPath = [this, &aggregateTotalBytes, &aggregateTotalFiles, &aggregateFinishedBytes,
+                              &aggregateFinishedFiles](const FilePath& srcPath, const FilePath& originalDestPath,
+                                                       FileOpsBridgePolicy::RoutingClass srcRouting,
+                                                       FileOpsBridgePolicy::RoutingClass destRouting) -> bool {
         CoreFileOps::EndpointKind sourceEndpointKind = CoreFileOps::EndpointKind::NativePath;
         CoreFileOps::EndpointKind destinationEndpointKind = CoreFileOps::EndpointKind::NativePath;
         std::string sourceEndpoint;
@@ -842,149 +851,123 @@ void FileTransferJob::exec() {
 
         const CoreFileOps::Backend requestBackend = backendForRouting(srcRouting, destRouting);
 
-        while (!isCancelled()) {
-            std::uint64_t baseFinishedBytes = 0;
-            std::uint64_t baseFinishedFiles = 0;
-            finishedAmount(baseFinishedBytes, baseFinishedFiles);
-
-            const FilePath destinationPath = toFilePathFromCorePath(destinationEndpoint, originalDestPath);
-            const FilePath destinationDir = destinationPath.parent();
-            std::string destinationDirEndpoint;
-            CoreFileOps::EndpointKind destinationDirKind = CoreFileOps::EndpointKind::NativePath;
-            if (!destinationDir || !toCoreEndpointPath(destinationDir, destinationDirEndpoint, destinationDirKind)) {
-                GErrorPtr err;
-                g_set_error(&err, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "%s",
-                            "Destination parent directory is invalid");
-                const ErrorAction action = emitError(err, ErrorSeverity::MODERATE);
-                if (action == ErrorAction::ABORT) {
-                    cancel();
-                }
-                return false;
-            }
-
-            struct RenameRequestState {
-                bool requested = false;
-                std::string destination;
-                CoreFileOps::EndpointKind destinationKind = CoreFileOps::EndpointKind::NativePath;
-            } renameRequest;
-
-            CoreFileOps::TransferRequest request;
-            request.transferOperation = toCoreOperation(mode_);
-            request.common.sources = {sourceEndpoint};
-            request.common.destination.targetDir = destinationDirEndpoint;
-            request.common.destination.mappingMode = CoreFileOps::DestinationMappingMode::ExplicitPerSource;
-            request.common.destination.explicitTargets = {destinationEndpoint};
-            request.common.policy.conflictPolicy = CoreFileOps::ConflictPolicy::Prompt;
-            request.common.options.symlinkPolicy.followSymlinks = false;
-            request.common.options.symlinkPolicy.copyMode = CoreFileOps::SymlinkCopyMode::CopyLinkAsLink;
-            request.common.options.metadata.preserveOwnership = true;
-            request.common.options.metadata.preservePermissions = true;
-            request.common.options.metadata.preserveTimestamps = true;
-            request.common.options.atomicity.requireAtomicReplace = false;
-            request.common.options.atomicity.bestEffortAtomicMove = true;
-            request.common.options.cancelGranularity = CoreFileOps::CancelCheckpointGranularity::PerChunk;
-            request.common.cancellationRequested = [this, cancelHandle = request.common.cancelHandle]() mutable {
-                if (isCancelled()) {
-                    cancelHandle.cancel();
-                }
-                return cancelHandle.isCancelled();
-            };
-            request.common.options.linuxSafety.requireOpenat2Resolve =
-                (requestBackend == CoreFileOps::Backend::LocalHardened);
-            request.common.options.linuxSafety.requireLandlock = false;
-            request.common.options.linuxSafety.requireSeccomp = false;
-            request.common.options.linuxSafety.workerMode = CoreFileOps::WorkerMode::InProcess;
-            request.common.options.routing.defaultBackend = requestBackend;
-            request.common.options.routing.sourceKinds = {sourceEndpointKind};
-            request.common.options.routing.sourceBackends = {requestBackend};
-            request.common.options.routing.destinationKind = destinationEndpointKind;
-            request.common.options.routing.destinationBackend = requestBackend;
-
-            CoreFileOps::EventHandlers handlers;
-            handlers.onProgress = [this, baseFinishedBytes, baseFinishedFiles,
-                                   srcPath](const CoreFileOps::ProgressSnapshot& progress) {
-                setCurrentFile(toFilePathFromCorePath(progress.currentPath, srcPath));
-                setCurrentFileProgress(0, 0);
-
-                const std::uint64_t bytesDone = progress.bytesDone;
-                const std::uint64_t filesDone =
-                    progress.filesDone > 0 ? static_cast<std::uint64_t>(progress.filesDone) : 0;
-                setFinishedAmount(baseFinishedBytes + bytesDone, baseFinishedFiles + filesDone);
-            };
-
-            handlers.onConflict = [this, &renameRequest, srcPath,
-                                   originalDestPath](const CoreFileOps::ConflictEvent& event) {
-                const FilePath eventSource = toFilePathFromCorePath(event.sourcePath, srcPath);
-                const FilePath eventDestination = toFilePathFromCorePath(event.destinationPath, originalDestPath);
-
-                GFileInfoPtr sourceInfo = queryInfoOrFallback(eventSource, cancellable().get());
-                GFileInfoPtr destinationInfo = queryInfoOrFallback(eventDestination, cancellable().get());
-
-                FilePath newDestination;
-                const FileExistsAction action = askRename(FileInfo{sourceInfo, eventSource},
-                                                          FileInfo{destinationInfo, eventDestination}, newDestination);
-                switch (action) {
-                    case FileOperationJob::OVERWRITE:
-                        return CoreFileOps::ConflictResolution::Overwrite;
-                    case FileOperationJob::SKIP:
-                    case FileOperationJob::SKIP_ERROR:
-                        return CoreFileOps::ConflictResolution::Skip;
-                    case FileOperationJob::RENAME: {
-                        std::string renamedDestination;
-                        CoreFileOps::EndpointKind renamedKind = CoreFileOps::EndpointKind::NativePath;
-                        if (newDestination && toCoreEndpointPath(newDestination, renamedDestination, renamedKind)) {
-                            renameRequest.requested = true;
-                            renameRequest.destination = std::move(renamedDestination);
-                            renameRequest.destinationKind = renamedKind;
-                            return CoreFileOps::ConflictResolution::Abort;
-                        }
-                        return CoreFileOps::ConflictResolution::Rename;
-                    }
-                    case FileOperationJob::CANCEL:
-                    default:
-                        cancel();
-                        return CoreFileOps::ConflictResolution::Abort;
-                }
-            };
-
-            const CoreFileOps::Result result = CoreFileOps::run(request, handlers);
-
-            if (renameRequest.requested) {
-                destinationEndpoint = std::move(renameRequest.destination);
-                destinationEndpointKind = renameRequest.destinationKind;
-                setFinishedAmount(baseFinishedBytes, baseFinishedFiles);
-                continue;
-            }
-
-            if (result.success) {
-                const std::uint64_t bytesDone = result.finalProgress.bytesDone;
-                const std::uint64_t filesDone =
-                    result.finalProgress.filesDone > 0 ? static_cast<std::uint64_t>(result.finalProgress.filesDone) : 0;
-                setFinishedAmount(baseFinishedBytes + bytesDone, baseFinishedFiles + filesDone);
-                setCurrentFileProgress(0, 0);
-                return true;
-            }
-
-            if (result.cancelled || result.error.sysErrno == ECANCELED) {
-                cancel();
-                setCurrentFileProgress(0, 0);
-                return false;
-            }
-
-            GErrorPtr err = coreResultToError(result, "Core file operation failed");
+        const FilePath destinationPath = toFilePathFromCorePath(destinationEndpoint, originalDestPath);
+        const FilePath destinationDir = destinationPath.parent();
+        std::string destinationDirEndpoint;
+        CoreFileOps::EndpointKind destinationDirKind = CoreFileOps::EndpointKind::NativePath;
+        if (!destinationDir || !toCoreEndpointPath(destinationDir, destinationDirEndpoint, destinationDirKind)) {
+            GErrorPtr err;
+            g_set_error(&err, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "%s", "Destination parent directory is invalid");
             const ErrorAction action = emitError(err, ErrorSeverity::MODERATE);
-            if (action == ErrorAction::RETRY) {
-                setFinishedAmount(baseFinishedBytes, baseFinishedFiles);
-                setCurrentFileProgress(0, 0);
-                continue;
-            }
             if (action == ErrorAction::ABORT) {
                 cancel();
             }
-            setCurrentFileProgress(0, 0);
             return false;
         }
 
+        CoreFileOps::TransferRequest request;
+        request.transferOperation = toCoreOperation(mode_);
+        request.common.sources = {sourceEndpoint};
+        request.common.destination.targetDir = destinationDirEndpoint;
+        request.common.destination.mappingMode = CoreFileOps::DestinationMappingMode::ExplicitPerSource;
+        request.common.destination.explicitTargets = {destinationEndpoint};
+        request.common.policy.conflictPolicy = CoreFileOps::ConflictPolicy::Prompt;
+        request.common.options.symlinkPolicy.followSymlinks = false;
+        request.common.options.symlinkPolicy.copyMode = CoreFileOps::SymlinkCopyMode::CopyLinkAsLink;
+        request.common.options.metadata.preserveOwnership = true;
+        request.common.options.metadata.preservePermissions = true;
+        request.common.options.metadata.preserveTimestamps = true;
+        request.common.options.atomicity.requireAtomicReplace = false;
+        request.common.options.atomicity.bestEffortAtomicMove = true;
+        request.common.options.cancelGranularity = CoreFileOps::CancelCheckpointGranularity::PerChunk;
+        request.common.cancellationRequested = [this, cancelHandle = request.common.cancelHandle]() mutable {
+            if (isCancelled()) {
+                cancelHandle.cancel();
+            }
+            return cancelHandle.isCancelled();
+        };
+        request.common.options.linuxSafety.requireOpenat2Resolve =
+            (requestBackend == CoreFileOps::Backend::LocalHardened);
+        request.common.options.linuxSafety.requireLandlock = false;
+        request.common.options.linuxSafety.requireSeccomp = false;
+        request.common.options.linuxSafety.workerMode = CoreFileOps::WorkerMode::InProcess;
+        request.common.options.routing.defaultBackend = requestBackend;
+        request.common.options.routing.sourceKinds = {sourceEndpointKind};
+        request.common.options.routing.sourceBackends = {requestBackend};
+        request.common.options.routing.destinationKind = destinationEndpointKind;
+        request.common.options.routing.destinationBackend = requestBackend;
+
+        CoreFileOps::EventHandlers handlers;
+        handlers.onProgress = [this, &aggregateTotalBytes, &aggregateTotalFiles, &aggregateFinishedBytes,
+                               &aggregateFinishedFiles, srcPath](const CoreFileOps::ProgressSnapshot& progress) {
+            setCurrentFile(toFilePathFromCorePath(progress.currentPath, srcPath));
+            setCurrentFileProgress(0, 0);
+
+            const std::uint64_t bytesDone = progress.bytesDone;
+            const std::uint64_t filesDone = progress.filesDone > 0 ? static_cast<std::uint64_t>(progress.filesDone) : 0;
+            const std::uint64_t bytesTotal = progress.bytesTotal;
+            const std::uint64_t filesTotal =
+                progress.filesTotal > 0 ? static_cast<std::uint64_t>(progress.filesTotal) : 0;
+
+            setTotalAmount(aggregateTotalBytes + bytesTotal, aggregateTotalFiles + filesTotal);
+            setFinishedAmount(aggregateFinishedBytes + bytesDone, aggregateFinishedFiles + filesDone);
+        };
+
+        handlers.onConflict = [this, srcPath, originalDestPath](const CoreFileOps::ConflictEvent& event) {
+            const FilePath eventSource = toFilePathFromCorePath(event.sourcePath, srcPath);
+            const FilePath eventDestination = toFilePathFromCorePath(event.destinationPath, originalDestPath);
+
+            GFileInfoPtr sourceInfo = queryInfoOrFallback(eventSource, cancellable().get());
+            GFileInfoPtr destinationInfo = queryInfoOrFallback(eventDestination, cancellable().get());
+
+            FilePath ignoredNewDestination;
+            const FileExistsAction action = askRename(
+                FileInfo{sourceInfo, eventSource}, FileInfo{destinationInfo, eventDestination}, ignoredNewDestination);
+            switch (action) {
+                case FileOperationJob::OVERWRITE:
+                    return CoreFileOps::ConflictResolution::Overwrite;
+                case FileOperationJob::SKIP:
+                case FileOperationJob::SKIP_ERROR:
+                    return CoreFileOps::ConflictResolution::Skip;
+                case FileOperationJob::RENAME:
+                    return CoreFileOps::ConflictResolution::Rename;
+                case FileOperationJob::CANCEL:
+                default:
+                    cancel();
+                    return CoreFileOps::ConflictResolution::Abort;
+            }
+        };
+
+        const CoreFileOps::Result result = CoreFileOps::run(request, handlers);
+        const std::uint64_t bytesDone = result.finalProgress.bytesDone;
+        const std::uint64_t filesDone =
+            result.finalProgress.filesDone > 0 ? static_cast<std::uint64_t>(result.finalProgress.filesDone) : 0;
+        const std::uint64_t bytesTotal = result.finalProgress.bytesTotal;
+        const std::uint64_t filesTotal =
+            result.finalProgress.filesTotal > 0 ? static_cast<std::uint64_t>(result.finalProgress.filesTotal) : 0;
+
+        aggregateTotalBytes += bytesTotal;
+        aggregateTotalFiles += filesTotal;
+        aggregateFinishedBytes += bytesDone;
+        aggregateFinishedFiles += filesDone;
+        setTotalAmount(aggregateTotalBytes, aggregateTotalFiles);
+        setFinishedAmount(aggregateFinishedBytes, aggregateFinishedFiles);
+        setCurrentFileProgress(0, 0);
+
+        if (result.success) {
+            return true;
+        }
+
+        if (result.cancelled || result.error.sysErrno == ECANCELED) {
+            cancel();
+            return false;
+        }
+
+        GErrorPtr err = coreResultToError(result, "Core file operation failed");
+        const ErrorAction action = emitError(err, ErrorSeverity::MODERATE);
+        if (action == ErrorAction::ABORT) {
+            cancel();
+        }
         return false;
     };
 #endif

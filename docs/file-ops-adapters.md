@@ -76,16 +76,18 @@ Relevant files:
 
 `RoutingClass` values:
 
-- `RoutingClass::CoreLocal`: native local path on non-remote filesystem.
-- `RoutingClass::LegacyGio`: URI/non-native/remote path that must run through
-  core with backend `Gio`.
-- `RoutingClass::Unsupported`: native-looking path that cannot be classified safely.
+- `RoutingClass::CoreLocal`: native local path with a valid local path string.
+- `RoutingClass::LegacyGio`: URI/non-native path that must run through core
+  with backend `Gio`.
+- `RoutingClass::Unsupported`: invalid/empty path input.
 
 Rules:
 
 - Copy/move/delete requests route through `FileOpsContract::run` for both
   `RoutingClass::CoreLocal` and `RoutingClass::LegacyGio`.
 - `RoutingClass::Unsupported` is a hard error; no unsafe local fallback.
+- `classifyPathForFileOps` is deterministic and does not probe filesystem
+  metadata to choose behavior.
 - Adapters do not call GIO file-op mutation APIs directly for these operations.
 
 ### `FileTransferJob` Bridge
@@ -97,18 +99,19 @@ Rules:
 - Uses `DestinationMappingMode::ExplicitPerSource` for per-item destination.
 - Conflict dialog integration:
   - Legacy UI asks user via `askRename(...)`
-  - overwrite/skip map directly to core conflict resolutions
-  - rename is handled by providing a new destination and retrying with a new
-    core request
+  - overwrite/skip/rename map directly to core conflict resolutions
 - Progress from core is translated into legacy finished/current progress values.
-- Cancellation and retry/error actions remain driven by legacy job mechanics.
+- Non-conflict errors are surfaced once through legacy error signals; adapter
+  does not run retry loops.
 
 ### `DeleteJob` Bridge
 
 - Delete routes through core contract for both `CoreLocal` and `LegacyGio`
   classifications.
 - Adapter builds `FileOpsContract::DeleteRequest`.
-- Progress is aggregated into legacy `finishedAmount`.
+- Progress and totals are aggregated from core snapshots into legacy
+  `finishedAmount`/`totalAmount`.
+- Adapter does not pre-scan with `TotalSizeJob` on core-routed paths.
 - Unsupported routing class is reported as a critical error and operation abort.
 
 ### `TrashJob` and `UntrashJob` Bridge
@@ -118,6 +121,8 @@ Rules:
   `FileOpsContract::TrashRequest` / `FileOpsContract::UntrashRequest`.
 - Legacy dialogs continue to receive mapped conflict/error/cancel behavior
   through the same job interfaces.
+- Adapter does not probe mount/filesystem metadata or run retry loops for
+  core-routed trash/untrash paths.
 
 ## Adapter Invariant
 
@@ -126,3 +131,8 @@ Both adapters are semantic pass-through layers:
 - Core decides traversal, conflict policy effects, progress monotonicity,
   cancellation semantics, and cleanup behavior.
 - Adapters only transform types and bridge UI/job events.
+- For core-routed `libfm-qt` jobs (copy/move/delete/trash/untrash):
+  - no adapter-side planner/pre-scan (`TotalSizeJob`) runs
+  - no adapter retry loop is applied
+  - no adapter conflict policy heuristics are added beyond mapping UI choices
+  - no filesystem probing is used for routing decisions

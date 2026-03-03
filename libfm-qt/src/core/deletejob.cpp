@@ -245,6 +245,7 @@ DeleteJob::DeleteJob(FilePathList&& paths) : paths_{paths} {
 DeleteJob::~DeleteJob() {}
 
 void DeleteJob::exec() {
+#if !LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
     /* prepare the job, count total work needed with FmDeepCountJob */
     TotalSizeJob totalSizeJob{paths_, TotalSizeJob::Flags::PREPARE_DELETE};
     connect(&totalSizeJob, &TotalSizeJob::error, this, &DeleteJob::error);
@@ -256,10 +257,19 @@ void DeleteJob::exec() {
     }
 
     setTotalAmount(totalSizeJob.totalSize(), totalSizeJob.fileCount());
+#else
+    std::uint64_t aggregateTotalBytes = 0;
+    std::uint64_t aggregateTotalFiles = 0;
+    std::uint64_t aggregateFinishedBytes = 0;
+    std::uint64_t aggregateFinishedFiles = 0;
+    setTotalAmount(aggregateTotalBytes, aggregateTotalFiles);
+#endif
     Q_EMIT preparedToRun();
 
 #if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
-    auto runCoreRoutedDelete = [this](const FilePath& path, FileOpsBridgePolicy::RoutingClass routingClass) -> bool {
+    auto runCoreRoutedDelete = [this, &aggregateTotalBytes, &aggregateTotalFiles, &aggregateFinishedBytes,
+                                &aggregateFinishedFiles](const FilePath& path,
+                                                         FileOpsBridgePolicy::RoutingClass routingClass) -> bool {
         std::string sourceEndpoint;
         CoreFileOps::EndpointKind sourceKind = CoreFileOps::EndpointKind::NativePath;
         if (!toCoreEndpointPath(path, sourceEndpoint, sourceKind)) {
@@ -268,76 +278,75 @@ void DeleteJob::exec() {
 
         const CoreFileOps::Backend requestBackend = backendForRouting(routingClass);
 
-        while (!isCancelled()) {
-            std::uint64_t baseFinishedBytes = 0;
-            std::uint64_t baseFinishedFiles = 0;
-            finishedAmount(baseFinishedBytes, baseFinishedFiles);
-
-            CoreFileOps::DeleteRequest request;
-            request.common.sources = {sourceEndpoint};
-            request.common.options.symlinkPolicy.followSymlinks = false;
-            request.common.options.symlinkPolicy.copyMode = CoreFileOps::SymlinkCopyMode::CopyLinkAsLink;
-            request.common.options.metadata.preserveOwnership = true;
-            request.common.options.metadata.preservePermissions = true;
-            request.common.options.metadata.preserveTimestamps = true;
-            request.common.options.cancelGranularity = CoreFileOps::CancelCheckpointGranularity::PerChunk;
-            request.common.cancellationRequested = [this, cancelHandle = request.common.cancelHandle]() mutable {
-                if (isCancelled()) {
-                    cancelHandle.cancel();
-                }
-                return cancelHandle.isCancelled();
-            };
-            request.common.options.linuxSafety.requireOpenat2Resolve =
-                (requestBackend == CoreFileOps::Backend::LocalHardened);
-            request.common.options.linuxSafety.requireLandlock = false;
-            request.common.options.linuxSafety.requireSeccomp = false;
-            request.common.options.linuxSafety.workerMode = CoreFileOps::WorkerMode::InProcess;
-            request.common.options.routing.defaultBackend = requestBackend;
-            request.common.options.routing.sourceKinds = {sourceKind};
-            request.common.options.routing.sourceBackends = {requestBackend};
-
-            CoreFileOps::EventHandlers handlers;
-            handlers.onProgress = [this, baseFinishedBytes, baseFinishedFiles,
-                                   path](const CoreFileOps::ProgressSnapshot& progress) {
-                setCurrentFile(toFilePathFromCorePath(progress.currentPath, path));
-                setCurrentFileProgress(0, 0);
-
-                const std::uint64_t bytesDone = progress.bytesDone;
-                const std::uint64_t filesDone =
-                    progress.filesDone > 0 ? static_cast<std::uint64_t>(progress.filesDone) : 0;
-                setFinishedAmount(baseFinishedBytes + bytesDone, baseFinishedFiles + filesDone);
-            };
-
-            const CoreFileOps::Result result = CoreFileOps::run(request, handlers);
-            if (result.success) {
-                const std::uint64_t bytesDone = result.finalProgress.bytesDone;
-                const std::uint64_t filesDone =
-                    result.finalProgress.filesDone > 0 ? static_cast<std::uint64_t>(result.finalProgress.filesDone) : 0;
-                setFinishedAmount(baseFinishedBytes + bytesDone, baseFinishedFiles + filesDone);
-                setCurrentFileProgress(0, 0);
-                return true;
+        CoreFileOps::DeleteRequest request;
+        request.common.sources = {sourceEndpoint};
+        request.common.options.symlinkPolicy.followSymlinks = false;
+        request.common.options.symlinkPolicy.copyMode = CoreFileOps::SymlinkCopyMode::CopyLinkAsLink;
+        request.common.options.metadata.preserveOwnership = true;
+        request.common.options.metadata.preservePermissions = true;
+        request.common.options.metadata.preserveTimestamps = true;
+        request.common.options.cancelGranularity = CoreFileOps::CancelCheckpointGranularity::PerChunk;
+        request.common.cancellationRequested = [this, cancelHandle = request.common.cancelHandle]() mutable {
+            if (isCancelled()) {
+                cancelHandle.cancel();
             }
+            return cancelHandle.isCancelled();
+        };
+        request.common.options.linuxSafety.requireOpenat2Resolve =
+            (requestBackend == CoreFileOps::Backend::LocalHardened);
+        request.common.options.linuxSafety.requireLandlock = false;
+        request.common.options.linuxSafety.requireSeccomp = false;
+        request.common.options.linuxSafety.workerMode = CoreFileOps::WorkerMode::InProcess;
+        request.common.options.routing.defaultBackend = requestBackend;
+        request.common.options.routing.sourceKinds = {sourceKind};
+        request.common.options.routing.sourceBackends = {requestBackend};
 
-            if (result.cancelled || result.error.sysErrno == ECANCELED) {
-                cancel();
-                setCurrentFileProgress(0, 0);
-                return false;
-            }
-
-            GErrorPtr err = coreResultToError(result, "Core delete operation failed");
-            const ErrorAction action = emitError(err, ErrorSeverity::MODERATE);
-            if (action == ErrorAction::RETRY) {
-                setFinishedAmount(baseFinishedBytes, baseFinishedFiles);
-                setCurrentFileProgress(0, 0);
-                continue;
-            }
-            if (action == ErrorAction::ABORT) {
-                cancel();
-            }
+        CoreFileOps::EventHandlers handlers;
+        handlers.onProgress = [this, &aggregateTotalBytes, &aggregateTotalFiles, &aggregateFinishedBytes,
+                               &aggregateFinishedFiles, path](const CoreFileOps::ProgressSnapshot& progress) {
+            setCurrentFile(toFilePathFromCorePath(progress.currentPath, path));
             setCurrentFileProgress(0, 0);
+
+            const std::uint64_t bytesDone = progress.bytesDone;
+            const std::uint64_t filesDone = progress.filesDone > 0 ? static_cast<std::uint64_t>(progress.filesDone) : 0;
+            const std::uint64_t bytesTotal = progress.bytesTotal;
+            const std::uint64_t filesTotal =
+                progress.filesTotal > 0 ? static_cast<std::uint64_t>(progress.filesTotal) : 0;
+
+            setTotalAmount(aggregateTotalBytes + bytesTotal, aggregateTotalFiles + filesTotal);
+            setFinishedAmount(aggregateFinishedBytes + bytesDone, aggregateFinishedFiles + filesDone);
+        };
+
+        const CoreFileOps::Result result = CoreFileOps::run(request, handlers);
+        const std::uint64_t bytesDone = result.finalProgress.bytesDone;
+        const std::uint64_t filesDone =
+            result.finalProgress.filesDone > 0 ? static_cast<std::uint64_t>(result.finalProgress.filesDone) : 0;
+        const std::uint64_t bytesTotal = result.finalProgress.bytesTotal;
+        const std::uint64_t filesTotal =
+            result.finalProgress.filesTotal > 0 ? static_cast<std::uint64_t>(result.finalProgress.filesTotal) : 0;
+
+        aggregateTotalBytes += bytesTotal;
+        aggregateTotalFiles += filesTotal;
+        aggregateFinishedBytes += bytesDone;
+        aggregateFinishedFiles += filesDone;
+        setTotalAmount(aggregateTotalBytes, aggregateTotalFiles);
+        setFinishedAmount(aggregateFinishedBytes, aggregateFinishedFiles);
+        setCurrentFileProgress(0, 0);
+
+        if (result.success) {
+            return true;
+        }
+
+        if (result.cancelled || result.error.sysErrno == ECANCELED) {
+            cancel();
             return false;
         }
 
+        GErrorPtr err = coreResultToError(result, "Core delete operation failed");
+        const ErrorAction action = emitError(err, ErrorSeverity::MODERATE);
+        if (action == ErrorAction::ABORT) {
+            cancel();
+        }
         return false;
     };
 #endif

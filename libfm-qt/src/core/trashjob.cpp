@@ -1,6 +1,5 @@
 #include "trashjob.h"
 
-#include "core/legacy/fm-config.h"
 #include "fileops_bridge_policy.h"
 
 #include <cerrno>
@@ -90,86 +89,71 @@ void TrashJob::exec() {
         // TODO: get parent dir of the current path.
         //       if there is a Fm::Folder object created for it, block the update for the folder temporarily.
 
-        for (;;) {  // retry the i/o operation on errors
-            auto gf = path.gfile();
-            bool ret = false;
-            // FIXME: do not depend on fm_config
-            if (fm_config->no_usb_trash) {
-                GMountPtr mnt{g_file_find_enclosing_mount(gf.get(), nullptr, nullptr), false};
-                if (mnt) {
-                    ret = g_mount_can_unmount(mnt.get()); /* TRUE if it's removable media */
-                    if (ret) {
-                        unsupportedFiles_.push_back(path);
-                        break;  // don't trash the file
-                    }
-                }
-            }
-
 #if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
-            std::string sourceEndpoint;
-            CoreFileOps::EndpointKind sourceKind = CoreFileOps::EndpointKind::NativePath;
-            if (!toCoreEndpointPath(path, sourceEndpoint, sourceKind)) {
-                GErrorPtr err;
-                g_set_error(&err, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "%s", "Unable to encode source path");
-                const ErrorAction action = emitError(err, ErrorSeverity::MODERATE);
-                if (action == ErrorAction::ABORT) {
-                    cancel();
-                    return;
-                }
-                if (action != ErrorAction::RETRY) {
-                    break;
-                }
-                continue;
-            }
-
-            CoreFileOps::TrashRequest request;
-            request.common.sources = {sourceEndpoint};
-            request.common.options.symlinkPolicy.followSymlinks = false;
-            request.common.options.symlinkPolicy.copyMode = CoreFileOps::SymlinkCopyMode::CopyLinkAsLink;
-            request.common.options.metadata.preserveOwnership = true;
-            request.common.options.metadata.preservePermissions = true;
-            request.common.options.metadata.preserveTimestamps = true;
-            request.common.options.cancelGranularity = CoreFileOps::CancelCheckpointGranularity::PerChunk;
-            request.common.cancellationRequested = [this, cancelHandle = request.common.cancelHandle]() mutable {
-                if (isCancelled()) {
-                    cancelHandle.cancel();
-                }
-                return cancelHandle.isCancelled();
-            };
-            request.common.options.linuxSafety.requireOpenat2Resolve = false;
-            request.common.options.linuxSafety.requireLandlock = false;
-            request.common.options.linuxSafety.requireSeccomp = false;
-            request.common.options.linuxSafety.workerMode = CoreFileOps::WorkerMode::InProcess;
-            request.common.options.routing.defaultBackend = CoreFileOps::Backend::Gio;
-            request.common.options.routing.sourceKinds = {sourceKind};
-            request.common.options.routing.sourceBackends = {CoreFileOps::Backend::Gio};
-
-            const CoreFileOps::Result result = CoreFileOps::run(request);
-            if (result.success) {
-                break;
-            }
-
-            if (result.cancelled || result.error.sysErrno == ECANCELED) {
-                cancel();
-                return;
-            }
-
-            if (result.error.sysErrno == ENOTSUP) {
-                unsupportedFiles_.push_back(path);
-                break;
-            }
-
-            GErrorPtr err = coreResultToError(result, "Trash operation failed");
+        std::string sourceEndpoint;
+        CoreFileOps::EndpointKind sourceKind = CoreFileOps::EndpointKind::NativePath;
+        if (!toCoreEndpointPath(path, sourceEndpoint, sourceKind)) {
+            GErrorPtr err;
+            g_set_error(&err, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "%s", "Unable to encode source path");
             const ErrorAction action = emitError(err, ErrorSeverity::MODERATE);
-            if (action == ErrorAction::RETRY) {
-                continue;
-            }
             if (action == ErrorAction::ABORT) {
                 cancel();
                 return;
             }
-            break;
+            addFinishedAmount(1, 1);
+            continue;
+        }
+
+        CoreFileOps::TrashRequest request;
+        request.common.sources = {sourceEndpoint};
+        request.common.options.symlinkPolicy.followSymlinks = false;
+        request.common.options.symlinkPolicy.copyMode = CoreFileOps::SymlinkCopyMode::CopyLinkAsLink;
+        request.common.options.metadata.preserveOwnership = true;
+        request.common.options.metadata.preservePermissions = true;
+        request.common.options.metadata.preserveTimestamps = true;
+        request.common.options.cancelGranularity = CoreFileOps::CancelCheckpointGranularity::PerChunk;
+        request.common.cancellationRequested = [this, cancelHandle = request.common.cancelHandle]() mutable {
+            if (isCancelled()) {
+                cancelHandle.cancel();
+            }
+            return cancelHandle.isCancelled();
+        };
+        request.common.options.linuxSafety.requireOpenat2Resolve = false;
+        request.common.options.linuxSafety.requireLandlock = false;
+        request.common.options.linuxSafety.requireSeccomp = false;
+        request.common.options.linuxSafety.workerMode = CoreFileOps::WorkerMode::InProcess;
+        request.common.options.routing.defaultBackend = CoreFileOps::Backend::Gio;
+        request.common.options.routing.sourceKinds = {sourceKind};
+        request.common.options.routing.sourceBackends = {CoreFileOps::Backend::Gio};
+
+        const CoreFileOps::Result result = CoreFileOps::run(request);
+        if (result.success) {
+            addFinishedAmount(1, 1);
+            continue;
+        }
+
+        if (result.cancelled || result.error.sysErrno == ECANCELED) {
+            cancel();
+            return;
+        }
+
+        if (result.error.sysErrno == ENOTSUP) {
+            unsupportedFiles_.push_back(path);
+            addFinishedAmount(1, 1);
+            continue;
+        }
+
+        GErrorPtr err = coreResultToError(result, "Trash operation failed");
+        const ErrorAction action = emitError(err, ErrorSeverity::MODERATE);
+        if (action == ErrorAction::ABORT) {
+            cancel();
+            return;
+        }
+        addFinishedAmount(1, 1);
 #else
+        for (;;) {  // retry the i/o operation on errors
+            auto gf = path.gfile();
+            bool ret = false;
             // move the file to trash
             GErrorPtr err;
             ret = g_file_trash(gf.get(), cancellable().get(), &err);
@@ -196,9 +180,9 @@ void TrashJob::exec() {
                     }
                 }
             }
-#endif
         }
         addFinishedAmount(1, 1);
+#endif
     }
 }
 

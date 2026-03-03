@@ -125,110 +125,98 @@ void UntrashJob::exec() {
                 cancel();
                 return;
             }
-            if (action != ErrorAction::RETRY) {
-                addFinishedAmount(1, 1);
-                continue;
-            }
+            addFinishedAmount(1, 1);
             continue;
         }
 
-        while (!isCancelled()) {
-            std::uint64_t baseFinishedBytes = 0;
-            std::uint64_t baseFinishedFiles = 0;
-            finishedAmount(baseFinishedBytes, baseFinishedFiles);
+        std::uint64_t baseFinishedBytes = 0;
+        std::uint64_t baseFinishedFiles = 0;
+        finishedAmount(baseFinishedBytes, baseFinishedFiles);
 
-            CoreFileOps::UntrashRequest request;
-            request.common.sources = {sourceEndpoint};
-            request.common.policy.conflictPolicy = CoreFileOps::ConflictPolicy::Prompt;
-            request.common.options.symlinkPolicy.followSymlinks = false;
-            request.common.options.symlinkPolicy.copyMode = CoreFileOps::SymlinkCopyMode::CopyLinkAsLink;
-            request.common.options.metadata.preserveOwnership = true;
-            request.common.options.metadata.preservePermissions = true;
-            request.common.options.metadata.preserveTimestamps = true;
-            request.common.options.atomicity.requireAtomicReplace = false;
-            request.common.options.atomicity.bestEffortAtomicMove = true;
-            request.common.options.cancelGranularity = CoreFileOps::CancelCheckpointGranularity::PerChunk;
-            request.common.cancellationRequested = [this, cancelHandle = request.common.cancelHandle]() mutable {
-                if (isCancelled()) {
-                    cancelHandle.cancel();
-                }
-                return cancelHandle.isCancelled();
-            };
-            request.common.options.linuxSafety.requireOpenat2Resolve = false;
-            request.common.options.linuxSafety.requireLandlock = false;
-            request.common.options.linuxSafety.requireSeccomp = false;
-            request.common.options.linuxSafety.workerMode = CoreFileOps::WorkerMode::InProcess;
-            request.common.options.routing.defaultBackend = CoreFileOps::Backend::Gio;
-            request.common.options.routing.sourceKinds = {sourceKind};
-            request.common.options.routing.sourceBackends = {CoreFileOps::Backend::Gio};
-
-            CoreFileOps::EventHandlers handlers;
-            handlers.onProgress = [this, baseFinishedBytes, baseFinishedFiles,
-                                   srcPath](const CoreFileOps::ProgressSnapshot& progress) {
-                setCurrentFile(toFilePathFromCorePath(progress.currentPath, srcPath));
-                setCurrentFileProgress(0, 0);
-
-                const std::uint64_t bytesDone = progress.bytesDone;
-                const std::uint64_t filesDone =
-                    progress.filesDone > 0 ? static_cast<std::uint64_t>(progress.filesDone) : 0;
-                setFinishedAmount(baseFinishedBytes + bytesDone, baseFinishedFiles + filesDone);
-            };
-
-            handlers.onConflict = [this, srcPath](const CoreFileOps::ConflictEvent& event) {
-                const FilePath eventSource = toFilePathFromCorePath(event.sourcePath, srcPath);
-                const FilePath eventDestination = toFilePathFromCorePath(event.destinationPath, FilePath{});
-
-                GFileInfoPtr sourceInfo = queryInfoOrFallback(eventSource, cancellable().get());
-                GFileInfoPtr destinationInfo = queryInfoOrFallback(eventDestination, cancellable().get());
-
-                FilePath ignoredNewDestination;
-                const FileExistsAction action =
-                    askRename(FileInfo{sourceInfo, eventSource}, FileInfo{destinationInfo, eventDestination},
-                              ignoredNewDestination);
-                switch (action) {
-                    case FileOperationJob::OVERWRITE:
-                        return CoreFileOps::ConflictResolution::Overwrite;
-                    case FileOperationJob::SKIP:
-                    case FileOperationJob::SKIP_ERROR:
-                        return CoreFileOps::ConflictResolution::Skip;
-                    case FileOperationJob::RENAME:
-                        return CoreFileOps::ConflictResolution::Rename;
-                    case FileOperationJob::CANCEL:
-                    default:
-                        cancel();
-                        return CoreFileOps::ConflictResolution::Abort;
-                }
-            };
-
-            const CoreFileOps::Result result = CoreFileOps::run(request, handlers);
-            if (result.success) {
-                const std::uint64_t bytesDone = result.finalProgress.bytesDone;
-                const std::uint64_t filesDone =
-                    result.finalProgress.filesDone > 0 ? static_cast<std::uint64_t>(result.finalProgress.filesDone) : 0;
-                setFinishedAmount(baseFinishedBytes + bytesDone, baseFinishedFiles + filesDone);
-                setCurrentFileProgress(0, 0);
-                break;
+        CoreFileOps::UntrashRequest request;
+        request.common.sources = {sourceEndpoint};
+        request.common.policy.conflictPolicy = CoreFileOps::ConflictPolicy::Prompt;
+        request.common.options.symlinkPolicy.followSymlinks = false;
+        request.common.options.symlinkPolicy.copyMode = CoreFileOps::SymlinkCopyMode::CopyLinkAsLink;
+        request.common.options.metadata.preserveOwnership = true;
+        request.common.options.metadata.preservePermissions = true;
+        request.common.options.metadata.preserveTimestamps = true;
+        request.common.options.atomicity.requireAtomicReplace = false;
+        request.common.options.atomicity.bestEffortAtomicMove = true;
+        request.common.options.cancelGranularity = CoreFileOps::CancelCheckpointGranularity::PerChunk;
+        request.common.cancellationRequested = [this, cancelHandle = request.common.cancelHandle]() mutable {
+            if (isCancelled()) {
+                cancelHandle.cancel();
             }
+            return cancelHandle.isCancelled();
+        };
+        request.common.options.linuxSafety.requireOpenat2Resolve = false;
+        request.common.options.linuxSafety.requireLandlock = false;
+        request.common.options.linuxSafety.requireSeccomp = false;
+        request.common.options.linuxSafety.workerMode = CoreFileOps::WorkerMode::InProcess;
+        request.common.options.routing.defaultBackend = CoreFileOps::Backend::Gio;
+        request.common.options.routing.sourceKinds = {sourceKind};
+        request.common.options.routing.sourceBackends = {CoreFileOps::Backend::Gio};
 
-            if (result.cancelled || result.error.sysErrno == ECANCELED) {
-                cancel();
-                setCurrentFileProgress(0, 0);
-                return;
-            }
-
-            GErrorPtr err = coreResultToError(result, "Untrash operation failed");
-            const ErrorAction action = emitError(err, ErrorSeverity::MODERATE);
-            if (action == ErrorAction::RETRY) {
-                setFinishedAmount(baseFinishedBytes, baseFinishedFiles);
-                setCurrentFileProgress(0, 0);
-                continue;
-            }
-            if (action == ErrorAction::ABORT) {
-                cancel();
-            }
+        CoreFileOps::EventHandlers handlers;
+        handlers.onProgress = [this, baseFinishedBytes, baseFinishedFiles,
+                               srcPath](const CoreFileOps::ProgressSnapshot& progress) {
+            setCurrentFile(toFilePathFromCorePath(progress.currentPath, srcPath));
             setCurrentFileProgress(0, 0);
-            break;
+
+            const std::uint64_t bytesDone = progress.bytesDone;
+            const std::uint64_t filesDone = progress.filesDone > 0 ? static_cast<std::uint64_t>(progress.filesDone) : 0;
+            setFinishedAmount(baseFinishedBytes + bytesDone, baseFinishedFiles + filesDone);
+        };
+
+        handlers.onConflict = [this, srcPath](const CoreFileOps::ConflictEvent& event) {
+            const FilePath eventSource = toFilePathFromCorePath(event.sourcePath, srcPath);
+            const FilePath eventDestination = toFilePathFromCorePath(event.destinationPath, FilePath{});
+
+            GFileInfoPtr sourceInfo = queryInfoOrFallback(eventSource, cancellable().get());
+            GFileInfoPtr destinationInfo = queryInfoOrFallback(eventDestination, cancellable().get());
+
+            FilePath ignoredNewDestination;
+            const FileExistsAction action = askRename(
+                FileInfo{sourceInfo, eventSource}, FileInfo{destinationInfo, eventDestination}, ignoredNewDestination);
+            switch (action) {
+                case FileOperationJob::OVERWRITE:
+                    return CoreFileOps::ConflictResolution::Overwrite;
+                case FileOperationJob::SKIP:
+                case FileOperationJob::SKIP_ERROR:
+                    return CoreFileOps::ConflictResolution::Skip;
+                case FileOperationJob::RENAME:
+                    return CoreFileOps::ConflictResolution::Rename;
+                case FileOperationJob::CANCEL:
+                default:
+                    cancel();
+                    return CoreFileOps::ConflictResolution::Abort;
+            }
+        };
+
+        const CoreFileOps::Result result = CoreFileOps::run(request, handlers);
+        if (result.success) {
+            const std::uint64_t bytesDone = result.finalProgress.bytesDone;
+            const std::uint64_t filesDone =
+                result.finalProgress.filesDone > 0 ? static_cast<std::uint64_t>(result.finalProgress.filesDone) : 0;
+            setFinishedAmount(baseFinishedBytes + bytesDone, baseFinishedFiles + filesDone);
+            setCurrentFileProgress(0, 0);
+            continue;
         }
+
+        if (result.cancelled || result.error.sysErrno == ECANCELED) {
+            cancel();
+            setCurrentFileProgress(0, 0);
+            return;
+        }
+
+        GErrorPtr err = coreResultToError(result, "Untrash operation failed");
+        const ErrorAction action = emitError(err, ErrorSeverity::MODERATE);
+        if (action == ErrorAction::ABORT) {
+            cancel();
+            return;
+        }
+        setCurrentFileProgress(0, 0);
     }
 #else
     // preparing for the job
