@@ -866,24 +866,11 @@ void FileOpsInventoryTest::libfmQtCoreRoutedAdaptersAvoidPlannerRetryProbeLogic(
              "FileTransferJob core-routed conflict handling must avoid filesystem metadata probing helpers");
     QVERIFY2(!transferCoreBlock.contains(QStringLiteral("g_file_query_info"), Qt::CaseSensitive),
              "FileTransferJob core-routed conflict handling must not query filesystem metadata");
-    QVERIFY2(transferCoreBlock.contains(QStringLiteral("case FileOperationJob::RENAME"), Qt::CaseSensitive),
-             "FileTransferJob core-routed section must map rename prompt choices");
-    QVERIFY2(transferCoreBlock.contains(QStringLiteral("CoreFileOps::ConflictResolution::Rename"), Qt::CaseSensitive),
-             "FileTransferJob core-routed section must pass rename semantics to core");
-    QVERIFY2(transferCoreBlock.contains(QStringLiteral("case FileOperationJob::OVERWRITE_ALL"), Qt::CaseSensitive),
-             "FileTransferJob core-routed section must map overwrite-all prompt choices");
     QVERIFY2(
-        transferCoreBlock.contains(QStringLiteral("CoreFileOps::ConflictResolution::OverwriteAll"), Qt::CaseSensitive),
-        "FileTransferJob core-routed section must pass overwrite-all semantics to core");
-    QVERIFY2(transferCoreBlock.contains(QStringLiteral("case FileOperationJob::SKIP_ALL"), Qt::CaseSensitive),
-             "FileTransferJob core-routed section must map skip-all prompt choices");
-    QVERIFY2(transferCoreBlock.contains(QStringLiteral("CoreFileOps::ConflictResolution::SkipAll"), Qt::CaseSensitive),
-             "FileTransferJob core-routed section must pass skip-all semantics to core");
-    QVERIFY2(transferCoreBlock.contains(QStringLiteral("case FileOperationJob::RENAME_ALL"), Qt::CaseSensitive),
-             "FileTransferJob core-routed section must map rename-all prompt choices");
-    QVERIFY2(
-        transferCoreBlock.contains(QStringLiteral("CoreFileOps::ConflictResolution::RenameAll"), Qt::CaseSensitive),
-        "FileTransferJob core-routed section must pass rename-all semantics to core");
+        transferCoreBlock.contains(QStringLiteral("FileOpsBridgePolicy::toCoreConflictResolution"), Qt::CaseSensitive),
+        "FileTransferJob core-routed section must route conflict choices through bridge policy translation");
+    QVERIFY2(!transferCoreBlock.contains(QStringLiteral("case FileOperationJob::OVERWRITE_ALL"), Qt::CaseSensitive),
+             "FileTransferJob core-routed section must not inline conflict mapping switches");
     QVERIFY2(transferCoreBlock.contains(QStringLiteral("CoreFileOps::EventStreamHandlers streamHandlers"),
                                         Qt::CaseSensitive),
              "FileTransferJob core-routed section must subscribe to core event-stream handlers");
@@ -975,19 +962,11 @@ void FileOpsInventoryTest::libfmQtCoreRoutedAdaptersAvoidPlannerRetryProbeLogic(
              "UntrashJob core-routed conflict handling must avoid filesystem metadata probing helpers");
     QVERIFY2(!untrashCoreBlock.contains(QStringLiteral("g_file_query_info"), Qt::CaseSensitive),
              "UntrashJob core-routed conflict handling must not query filesystem metadata");
-    QVERIFY2(untrashCoreBlock.contains(QStringLiteral("case FileOperationJob::OVERWRITE_ALL"), Qt::CaseSensitive),
-             "UntrashJob core-routed section must map overwrite-all prompt choices");
     QVERIFY2(
-        untrashCoreBlock.contains(QStringLiteral("CoreFileOps::ConflictResolution::OverwriteAll"), Qt::CaseSensitive),
-        "UntrashJob core-routed section must pass overwrite-all semantics to core");
-    QVERIFY2(untrashCoreBlock.contains(QStringLiteral("case FileOperationJob::SKIP_ALL"), Qt::CaseSensitive),
-             "UntrashJob core-routed section must map skip-all prompt choices");
-    QVERIFY2(untrashCoreBlock.contains(QStringLiteral("CoreFileOps::ConflictResolution::SkipAll"), Qt::CaseSensitive),
-             "UntrashJob core-routed section must pass skip-all semantics to core");
-    QVERIFY2(untrashCoreBlock.contains(QStringLiteral("case FileOperationJob::RENAME_ALL"), Qt::CaseSensitive),
-             "UntrashJob core-routed section must map rename-all prompt choices");
-    QVERIFY2(untrashCoreBlock.contains(QStringLiteral("CoreFileOps::ConflictResolution::RenameAll"), Qt::CaseSensitive),
-             "UntrashJob core-routed section must pass rename-all semantics to core");
+        untrashCoreBlock.contains(QStringLiteral("FileOpsBridgePolicy::toCoreConflictResolution"), Qt::CaseSensitive),
+        "UntrashJob core-routed section must route conflict choices through bridge policy translation");
+    QVERIFY2(!untrashCoreBlock.contains(QStringLiteral("case FileOperationJob::OVERWRITE_ALL"), Qt::CaseSensitive),
+             "UntrashJob core-routed section must not inline conflict mapping switches");
     QVERIFY2(
         untrashCoreBlock.contains(QStringLiteral("CoreFileOps::EventStreamHandlers streamHandlers"), Qt::CaseSensitive),
         "UntrashJob core-routed section must subscribe to core event-stream handlers");
@@ -1015,6 +994,44 @@ void FileOpsInventoryTest::libfmQtCoreRoutedAdaptersAvoidPlannerRetryProbeLogic(
              "fileops_bridge_policy.cpp must not probe filesystem metadata for routing behavior");
     QVERIFY2(!policyContent.contains(QStringLiteral("g_file_query_filesystem_info"), Qt::CaseSensitive),
              "fileops_bridge_policy.cpp must not call g_file_query_filesystem_info for routing behavior");
+    QVERIFY2(policyContent.contains(QStringLiteral("kRoutingBackendMap"), Qt::CaseSensitive),
+             "fileops_bridge_policy.cpp must contain explicit routing-class backend translation tables");
+    QVERIFY2(policyContent.contains(QStringLiteral("kRoutingPairBackendMap"), Qt::CaseSensitive),
+             "fileops_bridge_policy.cpp must contain explicit source/destination backend translation tables");
+    QVERIFY2(policyContent.contains(QStringLiteral("kTransferOperationMap"), Qt::CaseSensitive),
+             "fileops_bridge_policy.cpp must contain explicit transfer-kind translation tables");
+    QVERIFY2(policyContent.contains(QStringLiteral("kConflictResolutionMap"), Qt::CaseSensitive),
+             "fileops_bridge_policy.cpp must contain explicit conflict-resolution translation tables");
+    QVERIFY2(policyContent.contains(QStringLiteral("FileOperationJob::CANCEL"), Qt::CaseSensitive),
+             "fileops_bridge_policy.cpp must map cancel prompt choices");
+    QVERIFY2(policyContent.contains(QStringLiteral("FileOperationJob::OVERWRITE"), Qt::CaseSensitive),
+             "fileops_bridge_policy.cpp must map overwrite prompt choices");
+    QVERIFY2(policyContent.contains(QStringLiteral("FileOperationJob::OVERWRITE_ALL"), Qt::CaseSensitive),
+             "fileops_bridge_policy.cpp must map overwrite-all bridge prompt choices");
+    QVERIFY2(policyContent.contains(QStringLiteral("FileOperationJob::RENAME"), Qt::CaseSensitive),
+             "fileops_bridge_policy.cpp must map rename prompt choices");
+    QVERIFY2(policyContent.contains(QStringLiteral("FileOperationJob::RENAME_ALL"), Qt::CaseSensitive),
+             "fileops_bridge_policy.cpp must map rename-all prompt choices");
+    QVERIFY2(policyContent.contains(QStringLiteral("FileOperationJob::SKIP"), Qt::CaseSensitive),
+             "fileops_bridge_policy.cpp must map skip prompt choices");
+    QVERIFY2(policyContent.contains(QStringLiteral("FileOperationJob::SKIP_ERROR"), Qt::CaseSensitive),
+             "fileops_bridge_policy.cpp must map skip-error prompt choices");
+    QVERIFY2(policyContent.contains(QStringLiteral("FileOperationJob::SKIP_ALL"), Qt::CaseSensitive),
+             "fileops_bridge_policy.cpp must map skip-all prompt choices");
+    QVERIFY2(policyContent.contains(QStringLiteral("CoreFileOps::ConflictResolution::Abort"), Qt::CaseSensitive),
+             "fileops_bridge_policy.cpp must map cancel/unknown choices to core abort semantics");
+    QVERIFY2(policyContent.contains(QStringLiteral("CoreFileOps::ConflictResolution::Overwrite"), Qt::CaseSensitive),
+             "fileops_bridge_policy.cpp must map overwrite choices to core overwrite semantics");
+    QVERIFY2(policyContent.contains(QStringLiteral("CoreFileOps::ConflictResolution::OverwriteAll"), Qt::CaseSensitive),
+             "fileops_bridge_policy.cpp must map overwrite-all bridge prompt choices to core semantics");
+    QVERIFY2(policyContent.contains(QStringLiteral("CoreFileOps::ConflictResolution::Rename"), Qt::CaseSensitive),
+             "fileops_bridge_policy.cpp must map rename choices to core rename semantics");
+    QVERIFY2(policyContent.contains(QStringLiteral("CoreFileOps::ConflictResolution::RenameAll"), Qt::CaseSensitive),
+             "fileops_bridge_policy.cpp must map rename-all choices to core rename-all semantics");
+    QVERIFY2(policyContent.contains(QStringLiteral("CoreFileOps::ConflictResolution::Skip"), Qt::CaseSensitive),
+             "fileops_bridge_policy.cpp must map skip choices to core skip semantics");
+    QVERIFY2(policyContent.contains(QStringLiteral("CoreFileOps::ConflictResolution::SkipAll"), Qt::CaseSensitive),
+             "fileops_bridge_policy.cpp must map skip-all choices to core skip-all semantics");
     QVERIFY2(policyContent.contains(QStringLiteral("return RoutingClass::CoreLocal;"), Qt::CaseSensitive),
              "Native local paths must route deterministically to RoutingClass::CoreLocal");
 }

@@ -41,18 +41,6 @@ GErrorPtr coreResultToError(const CoreFileOps::OpResult& result, const char* fal
     return err;
 }
 
-const char* routingClassName(FileOpsBridgePolicy::RoutingClass routingClass) {
-    switch (routingClass) {
-        case FileOpsBridgePolicy::RoutingClass::CoreLocal:
-            return "CoreLocal";
-        case FileOpsBridgePolicy::RoutingClass::LegacyGio:
-            return "LegacyGio";
-        case FileOpsBridgePolicy::RoutingClass::Unsupported:
-            return "Unsupported";
-    }
-    return "Unknown";
-}
-
 std::string describePathForRoutingError(const FilePath& path) {
     if (!path) {
         return "<invalid>";
@@ -81,8 +69,8 @@ GErrorPtr unsupportedRoutingError(const FilePath& source,
     g_set_error(&err, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
                 "Refusing legacy local copy/move fallback: unsafe routing classification (source=%s, destination=%s, "
                 "sourceClass=%s, destinationClass=%s)",
-                sourcePath.c_str(), destinationPath.c_str(), routingClassName(sourceRouting),
-                routingClassName(destinationRouting));
+                sourcePath.c_str(), destinationPath.c_str(), FileOpsBridgePolicy::routingClassName(sourceRouting),
+                FileOpsBridgePolicy::routingClassName(destinationRouting));
     return err;
 }
 #endif
@@ -840,25 +828,13 @@ void FileTransferJob::exec() {
                                                 : promptForConflictAction(event.sourcePath, event.destinationPath);
             pendingPromptDecision = false;
 
-            switch (action) {
-                case FileOperationJob::OVERWRITE:
-                    return CoreFileOps::ConflictResolution::Overwrite;
-                case FileOperationJob::OVERWRITE_ALL:
-                    return CoreFileOps::ConflictResolution::OverwriteAll;
-                case FileOperationJob::SKIP:
-                case FileOperationJob::SKIP_ERROR:
-                    return CoreFileOps::ConflictResolution::Skip;
-                case FileOperationJob::SKIP_ALL:
-                    return CoreFileOps::ConflictResolution::SkipAll;
-                case FileOperationJob::RENAME:
-                    return CoreFileOps::ConflictResolution::Rename;
-                case FileOperationJob::RENAME_ALL:
-                    return CoreFileOps::ConflictResolution::RenameAll;
-                case FileOperationJob::CANCEL:
-                default:
-                    cancel();
-                    return CoreFileOps::ConflictResolution::Abort;
+            bool mappedConflictAction = false;
+            const CoreFileOps::ConflictResolution resolution =
+                FileOpsBridgePolicy::toCoreConflictResolution(action, &mappedConflictAction);
+            if (!mappedConflictAction || action == FileOperationJob::CANCEL) {
+                cancel();
             }
+            return resolution;
         };
 
         const CoreFileOps::Result rawResult =

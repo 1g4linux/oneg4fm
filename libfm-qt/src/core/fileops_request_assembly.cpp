@@ -66,22 +66,6 @@ bool toCoreEndpointPath(const FilePath& path,
     return false;
 }
 
-CoreFileOps::Backend backendForRouting(FileOpsBridgePolicy::RoutingClass routingClass) {
-    if (routingClass == FileOpsBridgePolicy::RoutingClass::LegacyGio) {
-        return CoreFileOps::Backend::Gio;
-    }
-    return CoreFileOps::Backend::LocalHardened;
-}
-
-CoreFileOps::Backend backendForRouting(FileOpsBridgePolicy::RoutingClass sourceRouting,
-                                       FileOpsBridgePolicy::RoutingClass destinationRouting) {
-    if (sourceRouting == FileOpsBridgePolicy::RoutingClass::LegacyGio ||
-        destinationRouting == FileOpsBridgePolicy::RoutingClass::LegacyGio) {
-        return CoreFileOps::Backend::Gio;
-    }
-    return CoreFileOps::Backend::LocalHardened;
-}
-
 CoreFileOps::SourceSnapshot captureSourceSnapshot(const FilePath& sourcePath) {
     CoreFileOps::SourceSnapshot snapshot;
     if (!sourcePath.isNative()) {
@@ -158,11 +142,6 @@ void applyIdentityAndSnapshot(CoreFileOps::RequestCommon& common, const char* op
     common.uiContext.initiator = std::string(opPrefix) + ";" + snapshotSummary(snapshot);
 }
 
-CoreFileOps::TransferOperation toCoreTransferOperation(TransferKind transferKind) {
-    return transferKind == TransferKind::Move ? CoreFileOps::TransferOperation::Move
-                                              : CoreFileOps::TransferOperation::Copy;
-}
-
 }  // namespace
 
 FilePath toFilePathFromCorePath(const std::string& path, const FilePath& fallback) {
@@ -224,8 +203,8 @@ bool buildTransferRequest(const FilePath& sourcePath,
         return false;
     }
 
-    const CoreFileOps::Backend backend = backendForRouting(sourceRouting, destinationRouting);
-    requestOut.transferOperation = toCoreTransferOperation(transferKind);
+    const CoreFileOps::Backend backend = FileOpsBridgePolicy::toCoreBackend(sourceRouting, destinationRouting);
+    requestOut.transferOperation = FileOpsBridgePolicy::toCoreTransferOperation(transferKind);
     requestOut.common.sources = {sourceEndpoint};
     requestOut.common.destination.targetDir = destinationDirEndpoint;
     requestOut.common.destination.mappingMode = CoreFileOps::DestinationMappingMode::ExplicitPerSource;
@@ -256,7 +235,7 @@ bool buildDeleteRequest(const FilePath& sourcePath,
         return false;
     }
 
-    const CoreFileOps::Backend backend = backendForRouting(routingClass);
+    const CoreFileOps::Backend backend = FileOpsBridgePolicy::toCoreBackend(routingClass);
     requestOut.common.sources = {sourceEndpoint};
     applyCommonDefaults(requestOut.common, backend, backend == CoreFileOps::Backend::LocalHardened);
     requestOut.common.options.routing.sourceKinds = {sourceKind};

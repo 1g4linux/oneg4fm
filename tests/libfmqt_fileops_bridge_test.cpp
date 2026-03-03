@@ -55,6 +55,7 @@ class LibfmQtFileOpsBridgeTest : public QObject {
     void deleteNativeDirectoryTreeTracksCompletion();
     void coreRoutingEligibilityAcceptsNativeLocalPath();
     void coreRoutingEligibilityRejectsUriSchemes();
+    void bridgePolicyTranslationTablesAreTotalAndStable();
     void noSpaceErrorCleansPartialDestinationWithoutOverwrite();
     void noSpaceErrorPreservesDestinationWithOverwrite();
     void createShortcutFailureIsReportedAsFailure();
@@ -205,6 +206,97 @@ void LibfmQtFileOpsBridgeTest::coreRoutingEligibilityRejectsUriSchemes() {
     QVERIFY(!Fm::FileOpsBridgePolicy::isCoreLocalPathEligible(remoteUri));
 }
 
+void LibfmQtFileOpsBridgeTest::bridgePolicyTranslationTablesAreTotalAndStable() {
+    using RoutingClass = Fm::FileOpsBridgePolicy::RoutingClass;
+    QCOMPARE(QString::fromLatin1(Fm::FileOpsBridgePolicy::routingClassName(RoutingClass::CoreLocal)),
+             QStringLiteral("CoreLocal"));
+    QCOMPARE(QString::fromLatin1(Fm::FileOpsBridgePolicy::routingClassName(RoutingClass::LegacyGio)),
+             QStringLiteral("LegacyGio"));
+    QCOMPARE(QString::fromLatin1(Fm::FileOpsBridgePolicy::routingClassName(RoutingClass::Unsupported)),
+             QStringLiteral("Unsupported"));
+
+#if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
+    namespace CoreFileOps = Oneg4FM::FileOpsContract;
+
+    QCOMPARE(Fm::FileOpsBridgePolicy::toCoreBackend(RoutingClass::CoreLocal), CoreFileOps::Backend::LocalHardened);
+    QCOMPARE(Fm::FileOpsBridgePolicy::toCoreBackend(RoutingClass::LegacyGio), CoreFileOps::Backend::Gio);
+    QCOMPARE(Fm::FileOpsBridgePolicy::toCoreBackend(RoutingClass::Unsupported), CoreFileOps::Backend::LocalHardened);
+
+    QCOMPARE(Fm::FileOpsBridgePolicy::toCoreBackend(RoutingClass::CoreLocal, RoutingClass::CoreLocal),
+             CoreFileOps::Backend::LocalHardened);
+    QCOMPARE(Fm::FileOpsBridgePolicy::toCoreBackend(RoutingClass::CoreLocal, RoutingClass::LegacyGio),
+             CoreFileOps::Backend::Gio);
+    QCOMPARE(Fm::FileOpsBridgePolicy::toCoreBackend(RoutingClass::CoreLocal, RoutingClass::Unsupported),
+             CoreFileOps::Backend::LocalHardened);
+    QCOMPARE(Fm::FileOpsBridgePolicy::toCoreBackend(RoutingClass::LegacyGio, RoutingClass::CoreLocal),
+             CoreFileOps::Backend::Gio);
+    QCOMPARE(Fm::FileOpsBridgePolicy::toCoreBackend(RoutingClass::LegacyGio, RoutingClass::LegacyGio),
+             CoreFileOps::Backend::Gio);
+    QCOMPARE(Fm::FileOpsBridgePolicy::toCoreBackend(RoutingClass::LegacyGio, RoutingClass::Unsupported),
+             CoreFileOps::Backend::Gio);
+    QCOMPARE(Fm::FileOpsBridgePolicy::toCoreBackend(RoutingClass::Unsupported, RoutingClass::CoreLocal),
+             CoreFileOps::Backend::LocalHardened);
+    QCOMPARE(Fm::FileOpsBridgePolicy::toCoreBackend(RoutingClass::Unsupported, RoutingClass::LegacyGio),
+             CoreFileOps::Backend::Gio);
+    QCOMPARE(Fm::FileOpsBridgePolicy::toCoreBackend(RoutingClass::Unsupported, RoutingClass::Unsupported),
+             CoreFileOps::Backend::LocalHardened);
+
+    QCOMPARE(Fm::FileOpsBridgePolicy::toCoreTransferOperation(Fm::FileOpsBridgePolicy::TransferKind::Copy),
+             CoreFileOps::TransferOperation::Copy);
+    QCOMPARE(Fm::FileOpsBridgePolicy::toCoreTransferOperation(Fm::FileOpsBridgePolicy::TransferKind::Move),
+             CoreFileOps::TransferOperation::Move);
+
+    bool mapped = false;
+    QCOMPARE(Fm::FileOpsBridgePolicy::toCoreConflictResolution(Fm::FileOperationJob::CANCEL, &mapped),
+             CoreFileOps::ConflictResolution::Abort);
+    QVERIFY(mapped);
+    QCOMPARE(Fm::FileOpsBridgePolicy::toCoreConflictResolution(Fm::FileOperationJob::OVERWRITE, &mapped),
+             CoreFileOps::ConflictResolution::Overwrite);
+    QVERIFY(mapped);
+    QCOMPARE(Fm::FileOpsBridgePolicy::toCoreConflictResolution(Fm::FileOperationJob::OVERWRITE_ALL, &mapped),
+             CoreFileOps::ConflictResolution::OverwriteAll);
+    QVERIFY(mapped);
+    QCOMPARE(Fm::FileOpsBridgePolicy::toCoreConflictResolution(Fm::FileOperationJob::RENAME, &mapped),
+             CoreFileOps::ConflictResolution::Rename);
+    QVERIFY(mapped);
+    QCOMPARE(Fm::FileOpsBridgePolicy::toCoreConflictResolution(Fm::FileOperationJob::RENAME_ALL, &mapped),
+             CoreFileOps::ConflictResolution::RenameAll);
+    QVERIFY(mapped);
+    QCOMPARE(Fm::FileOpsBridgePolicy::toCoreConflictResolution(Fm::FileOperationJob::SKIP, &mapped),
+             CoreFileOps::ConflictResolution::Skip);
+    QVERIFY(mapped);
+    QCOMPARE(Fm::FileOpsBridgePolicy::toCoreConflictResolution(Fm::FileOperationJob::SKIP_ERROR, &mapped),
+             CoreFileOps::ConflictResolution::Skip);
+    QVERIFY(mapped);
+    QCOMPARE(Fm::FileOpsBridgePolicy::toCoreConflictResolution(Fm::FileOperationJob::SKIP_ALL, &mapped),
+             CoreFileOps::ConflictResolution::SkipAll);
+    QVERIFY(mapped);
+
+    QCOMPARE(Fm::FileOpsBridgePolicy::toCoreConflictResolution(
+                 static_cast<Fm::FileOperationJob::FileExistsAction>(0x7fffffff), &mapped),
+             CoreFileOps::ConflictResolution::Abort);
+    QVERIFY(!mapped);
+#else
+    const QString policyPath = QFINDTESTDATA("../libfm-qt/src/core/fileops_bridge_policy.cpp");
+    QVERIFY2(!policyPath.isEmpty(), "Unable to locate libfm-qt/src/core/fileops_bridge_policy.cpp");
+    QFile policySource(policyPath);
+    QVERIFY(policySource.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QByteArray policyBytes = policySource.readAll();
+    QVERIFY(policyBytes.contains("kRoutingBackendMap"));
+    QVERIFY(policyBytes.contains("kRoutingPairBackendMap"));
+    QVERIFY(policyBytes.contains("kTransferOperationMap"));
+    QVERIFY(policyBytes.contains("kConflictResolutionMap"));
+    QVERIFY(policyBytes.contains("FileOperationJob::CANCEL"));
+    QVERIFY(policyBytes.contains("FileOperationJob::OVERWRITE"));
+    QVERIFY(policyBytes.contains("FileOperationJob::OVERWRITE_ALL"));
+    QVERIFY(policyBytes.contains("FileOperationJob::RENAME"));
+    QVERIFY(policyBytes.contains("FileOperationJob::RENAME_ALL"));
+    QVERIFY(policyBytes.contains("FileOperationJob::SKIP"));
+    QVERIFY(policyBytes.contains("FileOperationJob::SKIP_ERROR"));
+    QVERIFY(policyBytes.contains("FileOperationJob::SKIP_ALL"));
+#endif
+}
+
 void LibfmQtFileOpsBridgeTest::noSpaceErrorCleansPartialDestinationWithoutOverwrite() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -290,8 +382,6 @@ void LibfmQtFileOpsBridgeTest::nativeCopyMoveDeleteRoutingUsesExplicitClassifica
 
     QVERIFY(transferBytes.contains("classifyPathForFileOps(srcPath)"));
     QVERIFY(transferBytes.contains("classifyPathForFileOps(destPath)"));
-    QVERIFY(transferBytes.contains("RoutingClass::CoreLocal"));
-    QVERIFY(transferBytes.contains("RoutingClass::LegacyGio"));
     QVERIFY(transferBytes.contains("RoutingClass::Unsupported"));
     QVERIFY(transferBytes.contains("CoreFileOps::TransferRequest"));
     QVERIFY(transferBytes.contains("FileOpsRequestAssembly::buildTransferRequest"));
@@ -299,6 +389,7 @@ void LibfmQtFileOpsBridgeTest::nativeCopyMoveDeleteRoutingUsesExplicitClassifica
     QVERIFY(transferBytes.contains("CoreFileOps::EventStreamHandlers streamHandlers"));
     QVERIFY(transferBytes.contains("streamHandlers.onPrompt"));
     QVERIFY(transferBytes.contains("streamHandlers.onConflict"));
+    QVERIFY(transferBytes.contains("FileOpsBridgePolicy::toCoreConflictResolution"));
     QVERIFY(transferBytes.contains("CoreFileOps::run(CoreFileOps::toRequest(request), handlers, streamHandlers)"));
     QVERIFY(transferBytes.contains("runCoreRoutedPath(srcPath, destPath, srcRouting, destRouting)"));
 
@@ -309,8 +400,6 @@ void LibfmQtFileOpsBridgeTest::nativeCopyMoveDeleteRoutingUsesExplicitClassifica
     const QByteArray deleteBytes = deleteSource.readAll();
 
     QVERIFY(deleteBytes.contains("classifyPathForFileOps(path)"));
-    QVERIFY(deleteBytes.contains("RoutingClass::CoreLocal"));
-    QVERIFY(deleteBytes.contains("RoutingClass::LegacyGio"));
     QVERIFY(deleteBytes.contains("RoutingClass::Unsupported"));
     QVERIFY(deleteBytes.contains("CoreFileOps::DeleteRequest"));
     QVERIFY(deleteBytes.contains("FileOpsRequestAssembly::buildDeleteRequest"));
@@ -330,6 +419,15 @@ void LibfmQtFileOpsBridgeTest::nativeCopyMoveDeleteRoutingUsesExplicitClassifica
     QVERIFY(untrashSource.open(QIODevice::ReadOnly | QIODevice::Text));
     const QByteArray untrashBytes = untrashSource.readAll();
     QVERIFY(untrashBytes.contains("CoreFileOps::UntrashRequest"));
+
+    const QString policyPath = QFINDTESTDATA("../libfm-qt/src/core/fileops_bridge_policy.cpp");
+    QVERIFY2(!policyPath.isEmpty(), "Unable to locate libfm-qt/src/core/fileops_bridge_policy.cpp");
+    QFile policySource(policyPath);
+    QVERIFY(policySource.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QByteArray policyBytes = policySource.readAll();
+    QVERIFY(policyBytes.contains("RoutingClass::CoreLocal"));
+    QVERIFY(policyBytes.contains("RoutingClass::LegacyGio"));
+    QVERIFY(policyBytes.contains("RoutingClass::Unsupported"));
 }
 
 void LibfmQtFileOpsBridgeTest::trashAndUntrashJobsRouteViaCoreContract() {
@@ -354,6 +452,7 @@ void LibfmQtFileOpsBridgeTest::trashAndUntrashJobsRouteViaCoreContract() {
     QVERIFY(untrashBytes.contains("CoreFileOps::EventStreamHandlers streamHandlers"));
     QVERIFY(untrashBytes.contains("streamHandlers.onPrompt"));
     QVERIFY(untrashBytes.contains("streamHandlers.onConflict"));
+    QVERIFY(untrashBytes.contains("FileOpsBridgePolicy::toCoreConflictResolution"));
     QVERIFY(untrashBytes.contains("CoreFileOps::run(CoreFileOps::toRequest(request), handlers, streamHandlers)"));
 }
 

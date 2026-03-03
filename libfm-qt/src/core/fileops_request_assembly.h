@@ -25,11 +25,7 @@ bool validateRequestPathCount(std::size_t pathCount, const char* operationName, 
 
 #if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
 namespace CoreFileOps = Oneg4FM::FileOpsContract;
-
-enum class TransferKind {
-    Copy,
-    Move,
-};
+using TransferKind = FileOpsBridgePolicy::TransferKind;
 
 FilePath toFilePathFromCorePath(const std::string& path, const FilePath& fallback);
 GFileInfoPtr makePromptInfoFromPath(const FilePath& path);

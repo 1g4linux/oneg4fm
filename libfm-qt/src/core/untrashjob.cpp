@@ -130,25 +130,13 @@ void UntrashJob::exec() {
                                                 : promptForConflictAction(event.sourcePath, event.destinationPath);
             pendingPromptDecision = false;
 
-            switch (action) {
-                case FileOperationJob::OVERWRITE:
-                    return CoreFileOps::ConflictResolution::Overwrite;
-                case FileOperationJob::OVERWRITE_ALL:
-                    return CoreFileOps::ConflictResolution::OverwriteAll;
-                case FileOperationJob::SKIP:
-                case FileOperationJob::SKIP_ERROR:
-                    return CoreFileOps::ConflictResolution::Skip;
-                case FileOperationJob::SKIP_ALL:
-                    return CoreFileOps::ConflictResolution::SkipAll;
-                case FileOperationJob::RENAME:
-                    return CoreFileOps::ConflictResolution::Rename;
-                case FileOperationJob::RENAME_ALL:
-                    return CoreFileOps::ConflictResolution::RenameAll;
-                case FileOperationJob::CANCEL:
-                default:
-                    cancel();
-                    return CoreFileOps::ConflictResolution::Abort;
+            bool mappedConflictAction = false;
+            const CoreFileOps::ConflictResolution resolution =
+                FileOpsBridgePolicy::toCoreConflictResolution(action, &mappedConflictAction);
+            if (!mappedConflictAction || action == FileOperationJob::CANCEL) {
+                cancel();
             }
+            return resolution;
         };
 
         const CoreFileOps::Result rawResult =

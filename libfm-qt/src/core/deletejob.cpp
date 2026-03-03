@@ -38,18 +38,6 @@ GErrorPtr coreResultToError(const CoreFileOps::OpResult& result, const char* fal
     return err;
 }
 
-const char* routingClassName(FileOpsBridgePolicy::RoutingClass routingClass) {
-    switch (routingClass) {
-        case FileOpsBridgePolicy::RoutingClass::CoreLocal:
-            return "CoreLocal";
-        case FileOpsBridgePolicy::RoutingClass::LegacyGio:
-            return "LegacyGio";
-        case FileOpsBridgePolicy::RoutingClass::Unsupported:
-            return "Unsupported";
-    }
-    return "Unknown";
-}
-
 std::string describePathForRoutingError(const FilePath& path) {
     if (!path) {
         return "<invalid>";
@@ -72,7 +60,7 @@ GErrorPtr unsupportedDeleteRoutingError(const FilePath& path, FileOpsBridgePolic
     GErrorPtr err;
     g_set_error(&err, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
                 "Refusing legacy local delete fallback: unsafe routing classification (path=%s, pathClass=%s)",
-                routedPath.c_str(), routingClassName(routingClass));
+                routedPath.c_str(), FileOpsBridgePolicy::routingClassName(routingClass));
     return err;
 }
 #endif
