@@ -4,8 +4,10 @@
  */
 
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QUuid>
@@ -48,6 +50,16 @@ QByteArray readFile(const QString& path) {
         return {};
     }
     return file.readAll();
+}
+
+int countRegularFilesRecursively(const QString& rootPath) {
+    int count = 0;
+    QDirIterator it(rootPath, QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        it.next();
+        ++count;
+    }
+    return count;
 }
 
 struct AdapterPromptObservation {
@@ -251,6 +263,8 @@ class LibfmQtFileOpsBridgeTest : public QObject {
     void goldenPromptProtocolDestinationConflictMatrix();
     void goldenPromptProtocolNonConflictErrorsDoNotPrompt();
     void goldenPromptProtocolCrossDeviceMoveFallbackPromptsOnce();
+    void cancelMidTransferPropagatesCancellationAndFinishesWithoutDanglingSignals();
+    void cancelDuringConflictPromptAbortsOperationWithoutDeadlock();
 };
 
 void LibfmQtFileOpsBridgeTest::copyConflictSkipCountsAsCompletedWork() {
@@ -939,6 +953,175 @@ void LibfmQtFileOpsBridgeTest::goldenPromptProtocolCrossDeviceMoveFallbackPrompt
     QCOMPARE(readFile(adapterDestinationPath), QByteArray("adapter-source"));
 
     QVERIFY(QDir(destinationRoot).removeRecursively());
+#else
+    QSKIP("Core file-ops contract disabled");
+#endif
+}
+
+void LibfmQtFileOpsBridgeTest::cancelMidTransferPropagatesCancellationAndFinishesWithoutDanglingSignals() {
+#if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcDir = dir.path() + QLatin1String("/src");
+    const QString dstDir = dir.path() + QLatin1String("/dst");
+    QVERIFY(QDir().mkpath(srcDir));
+    QVERIFY(QDir().mkpath(dstDir));
+
+    constexpr int kSourceFileCount = 64;
+    Fm::FilePathList sources;
+    sources.reserve(kSourceFileCount);
+    const QByteArray chunk(1024 * 1024, 'x');
+    for (int i = 0; i < kSourceFileCount; ++i) {
+        const QString srcPath = srcDir + QStringLiteral("/large-%1.bin").arg(i);
+        QFile srcFile(srcPath);
+        QVERIFY(srcFile.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        for (int j = 0; j < 2; ++j) {
+            const qint64 written = srcFile.write(chunk);
+            QCOMPARE(written, qint64(chunk.size()));
+        }
+        srcFile.close();
+        sources.emplace_back(toLocalFilePath(srcPath));
+    }
+
+    Fm::FileTransferJob job(std::move(sources), Fm::FileTransferJob::Mode::COPY);
+    job.setAutoDelete(false);
+    job.setDestDirPath(toLocalFilePath(dstDir));
+
+    int errorCount = 0;
+    QObject::connect(
+        &job, &Fm::Job::error, &job,
+        [&errorCount](const Fm::GErrorPtr&, Fm::Job::ErrorSeverity, Fm::Job::ErrorAction& response) {
+            ++errorCount;
+            response = Fm::Job::ErrorAction::CONTINUE;
+        },
+        Qt::DirectConnection);
+
+    QSignalSpy finishedSpy(&job, &Fm::Job::finished);
+    QSignalSpy cancelledSpy(&job, &Fm::Job::cancelled);
+
+    job.runAsync();
+
+    bool cancelIssued = false;
+    bool sawInFlightProgress = false;
+    for (int i = 0; i < 6000 && finishedSpy.count() == 0; ++i) {
+        std::uint64_t totalBytes = 0;
+        std::uint64_t totalFiles = 0;
+        std::uint64_t finishedBytes = 0;
+        std::uint64_t finishedFiles = 0;
+        if (job.totalAmount(totalBytes, totalFiles) && job.finishedAmount(finishedBytes, finishedFiles)) {
+            if (finishedBytes > 0 || finishedFiles > 0) {
+                sawInFlightProgress = true;
+            }
+        }
+
+        if (!cancelIssued && finishedFiles >= 1) {
+            cancelIssued = true;
+            job.cancel();
+        }
+        QTest::qWait(1);
+    }
+
+    QVERIFY2(cancelIssued, "Did not observe a cancellable in-flight transfer state");
+    QCOMPARE(finishedSpy.count(), 1);
+    QCOMPARE(cancelledSpy.count(), 1);
+    QVERIFY(job.isCancelled());
+    QVERIFY(sawInFlightProgress);
+    QCOMPARE(errorCount, 0);
+
+    std::uint64_t totalBytes = 0;
+    std::uint64_t totalFiles = 0;
+    std::uint64_t finishedBytes = 0;
+    std::uint64_t finishedFiles = 0;
+    QVERIFY(job.totalAmount(totalBytes, totalFiles));
+    QVERIFY(job.finishedAmount(finishedBytes, finishedFiles));
+    QVERIFY(totalFiles >= 1);
+    QVERIFY(finishedFiles >= 1);
+    QVERIFY(finishedFiles < static_cast<std::uint64_t>(kSourceFileCount));
+
+    const int copiedFileCount = countRegularFilesRecursively(dstDir);
+    QVERIFY(copiedFileCount >= 1);
+    QVERIFY(copiedFileCount < kSourceFileCount);
+
+    QTest::qWait(25);
+    QCOMPARE(finishedSpy.count(), 1);
+    QCOMPARE(cancelledSpy.count(), 1);
+#else
+    QSKIP("Core file-ops contract disabled");
+#endif
+}
+
+void LibfmQtFileOpsBridgeTest::cancelDuringConflictPromptAbortsOperationWithoutDeadlock() {
+#if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcDir = dir.path() + QLatin1String("/src");
+    const QString dstDir = dir.path() + QLatin1String("/dst");
+    QVERIFY(QDir().mkpath(srcDir));
+    QVERIFY(QDir().mkpath(dstDir));
+
+    const QString srcPath = writeFile(srcDir + QLatin1String("/item.txt"), QByteArray("source-data"));
+    const QString dstPath = writeFile(dstDir + QLatin1String("/item.txt"), QByteArray("existing-data"));
+
+    Fm::FilePathList sources;
+    sources.emplace_back(toLocalFilePath(srcPath));
+
+    Fm::FileTransferJob job(std::move(sources), Fm::FileTransferJob::Mode::COPY);
+    job.setAutoDelete(false);
+    job.setDestDirPath(toLocalFilePath(dstDir));
+
+    QSignalSpy finishedSpy(&job, &Fm::Job::finished);
+    QSignalSpy cancelledSpy(&job, &Fm::Job::cancelled);
+
+    int promptCount = 0;
+    int errorCount = 0;
+    QObject promptContext;
+    QObject::connect(
+        &job, &Fm::FileOperationJob::fileExists, &promptContext,
+        [&promptCount, &job](const Fm::FileInfo&, const Fm::FileInfo&, Fm::FileOperationJob::FileExistsAction& response,
+                             Fm::FilePath&) {
+            ++promptCount;
+            job.cancel();
+            response = Fm::FileOperationJob::CANCEL;
+        },
+        Qt::BlockingQueuedConnection);
+
+    QObject::connect(
+        &job, &Fm::Job::error, &promptContext,
+        [&errorCount](const Fm::GErrorPtr&, Fm::Job::ErrorSeverity, Fm::Job::ErrorAction& response) {
+            ++errorCount;
+            response = Fm::Job::ErrorAction::CONTINUE;
+        },
+        Qt::BlockingQueuedConnection);
+
+    job.runAsync();
+    for (int i = 0; i < 1000 && finishedSpy.count() == 0; ++i) {
+        QTest::qWait(5);
+    }
+
+    QCOMPARE(finishedSpy.count(), 1);
+    QCOMPARE(cancelledSpy.count(), 1);
+    QCOMPARE(promptCount, 1);
+    QCOMPARE(errorCount, 0);
+    QVERIFY(job.isCancelled());
+
+    std::uint64_t totalBytes = 0;
+    std::uint64_t totalFiles = 0;
+    std::uint64_t finishedBytes = 0;
+    std::uint64_t finishedFiles = 0;
+    QVERIFY(job.totalAmount(totalBytes, totalFiles));
+    QVERIFY(job.finishedAmount(finishedBytes, finishedFiles));
+    QCOMPARE(totalFiles, std::uint64_t{1});
+    QCOMPARE(finishedFiles, std::uint64_t{0});
+    QCOMPARE(finishedBytes, std::uint64_t{0});
+
+    QCOMPARE(readFile(srcPath), QByteArray("source-data"));
+    QCOMPARE(readFile(dstPath), QByteArray("existing-data"));
+
+    QTest::qWait(25);
+    QCOMPARE(finishedSpy.count(), 1);
+    QCOMPARE(cancelledSpy.count(), 1);
 #else
     QSKIP("Core file-ops contract disabled");
 #endif
