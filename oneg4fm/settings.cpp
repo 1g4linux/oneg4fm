@@ -59,6 +59,7 @@ constexpr const char* kDirectorySchemaVersionKey = "schema_version";
 constexpr const char* kLegacyProfileSearchHiddenKey = "Search/searchHidden";
 constexpr const char* kProfileSearchHiddenKey = "Search/searchhHidden";
 constexpr const char* kSettingsTmpSuffix = ".tmp";
+constexpr const char* kSettingsDefaultsSourceToken = "schema_defaults";
 constexpr qint64 kMaxProfileSettingsFileBytes = 1024 * 1024;
 constexpr int kMaxProfileSettingsLineCount = 16384;
 constexpr int kMaxProfileSettingsLineBytes = 16384;
@@ -130,12 +131,18 @@ QString resolveSchemaPath() {
     return QString();
 }
 
-bool loadSchemaSurface(const QString& surfaceId, QVector<SchemaKey>& schemaKeys) {
+bool loadSchemaSurface(const QString& surfaceId, QVector<SchemaKey>& schemaKeys, QString* schemaPathOut = nullptr) {
     schemaKeys.clear();
+    if (schemaPathOut != nullptr) {
+        schemaPathOut->clear();
+    }
 
     const QString schemaPath = resolveSchemaPath();
     if (schemaPath.isEmpty()) {
         return false;
+    }
+    if (schemaPathOut != nullptr) {
+        *schemaPathOut = schemaPath;
     }
 
     QFile schemaFile(schemaPath);
@@ -183,12 +190,12 @@ bool loadSchemaSurface(const QString& surfaceId, QVector<SchemaKey>& schemaKeys)
     return false;
 }
 
-bool loadProfileSchema(QVector<SchemaKey>& schemaKeys) {
-    return loadSchemaSurface(QString::fromUtf8(kProfileSchemaSurfaceId), schemaKeys);
+bool loadProfileSchema(QVector<SchemaKey>& schemaKeys, QString* schemaPathOut = nullptr) {
+    return loadSchemaSurface(QString::fromUtf8(kProfileSchemaSurfaceId), schemaKeys, schemaPathOut);
 }
 
-bool loadDirectorySchema(QVector<SchemaKey>& schemaKeys) {
-    return loadSchemaSurface(QString::fromUtf8(kDirectorySchemaSurfaceId), schemaKeys);
+bool loadDirectorySchema(QVector<SchemaKey>& schemaKeys, QString* schemaPathOut = nullptr) {
+    return loadSchemaSurface(QString::fromUtf8(kDirectorySchemaSurfaceId), schemaKeys, schemaPathOut);
 }
 
 QSet<QString> schemaKeySet(const QVector<SchemaKey>& schemaKeys) {
@@ -301,6 +308,11 @@ UnknownKeyPolicy profileUnknownKeyPolicy() {
 
 enum class IniReadStatus { Ok, Missing, Invalid };
 
+struct IniReadMetadata {
+    QStringList sourcesUsed;
+    QStringList errors;
+};
+
 QString settingsTempPath(const QString& filePath) {
     return filePath + QString::fromUtf8(kSettingsTmpSuffix);
 }
@@ -345,14 +357,21 @@ bool settingsFileWithinBounds(const QString& filePath) {
     return lineLength <= kMaxProfileSettingsLineBytes;
 }
 
-IniReadStatus readIniAstFile(const QString& filePath, QHash<QString, QVariant>& ast) {
+IniReadStatus readIniAstFile(const QString& filePath, QHash<QString, QVariant>& ast, QString* errorOut = nullptr) {
     ast.clear();
+    if (errorOut != nullptr) {
+        errorOut->clear();
+    }
     const QFileInfo info(filePath);
     if (!info.exists()) {
         return IniReadStatus::Missing;
     }
     if (!settingsFileWithinBounds(filePath)) {
-        qWarning().noquote() << QStringLiteral("Settings file rejected by bounds: %1").arg(filePath);
+        const QString message = QStringLiteral("Settings file rejected by bounds: %1").arg(filePath);
+        qWarning().noquote() << message;
+        if (errorOut != nullptr) {
+            *errorOut = message;
+        }
         return IniReadStatus::Invalid;
     }
 
@@ -361,7 +380,11 @@ IniReadStatus readIniAstFile(const QString& filePath, QHash<QString, QVariant>& 
         ast.insert(key, settings.value(key));
     }
     if (settings.status() != QSettings::NoError) {
-        qWarning().noquote() << QStringLiteral("Settings file parse error: %1").arg(filePath);
+        const QString message = QStringLiteral("Settings file parse error: %1").arg(filePath);
+        qWarning().noquote() << message;
+        if (errorOut != nullptr) {
+            *errorOut = message;
+        }
         ast.clear();
         return IniReadStatus::Invalid;
     }
@@ -522,13 +545,24 @@ bool atomicWriteIniFile(const QString& filePath, const QByteArray& payload) {
     return true;
 }
 
-bool readIniAst(const QString& filePath, QHash<QString, QVariant>& ast) {
+bool readIniAst(const QString& filePath, QHash<QString, QVariant>& ast, IniReadMetadata* metadata = nullptr) {
+    if (metadata != nullptr) {
+        metadata->sourcesUsed.clear();
+        metadata->errors.clear();
+    }
+
+    const QString absolutePrimaryPath = QFileInfo(filePath).absoluteFilePath();
     const QString tempPath = settingsTempPath(filePath);
+    const QString absoluteTempPath = QFileInfo(tempPath).absoluteFilePath();
 
     QHash<QString, QVariant> primaryAst;
-    const IniReadStatus primaryStatus = readIniAstFile(filePath, primaryAst);
+    QString primaryError;
+    const IniReadStatus primaryStatus = readIniAstFile(filePath, primaryAst, &primaryError);
     if (primaryStatus == IniReadStatus::Ok) {
         ast = std::move(primaryAst);
+        if (metadata != nullptr) {
+            metadata->sourcesUsed.append(absolutePrimaryPath);
+        }
         if (QFileInfo::exists(tempPath)) {
             QFile::remove(tempPath);
         }
@@ -536,9 +570,13 @@ bool readIniAst(const QString& filePath, QHash<QString, QVariant>& ast) {
     }
 
     QHash<QString, QVariant> tempAst;
-    const IniReadStatus tempStatus = readIniAstFile(tempPath, tempAst);
+    QString tempError;
+    const IniReadStatus tempStatus = readIniAstFile(tempPath, tempAst, &tempError);
     if (tempStatus == IniReadStatus::Ok) {
         ast = std::move(tempAst);
+        if (metadata != nullptr) {
+            metadata->sourcesUsed.append(absoluteTempPath);
+        }
         QFile::remove(filePath);
         if (!QFile::rename(tempPath, filePath)) {
             qWarning().noquote() << QStringLiteral("Failed to recover settings temp file: %1").arg(tempPath);
@@ -550,13 +588,27 @@ bool readIniAst(const QString& filePath, QHash<QString, QVariant>& ast) {
         if (tempStatus == IniReadStatus::Missing || tempStatus == IniReadStatus::Invalid) {
             if (tempStatus == IniReadStatus::Invalid) {
                 QFile::remove(tempPath);
+                if (metadata != nullptr && !tempError.isEmpty()) {
+                    metadata->errors.append(tempError);
+                }
             }
             ast.clear();
+            if (metadata != nullptr) {
+                metadata->sourcesUsed.append(QString::fromUtf8(kSettingsDefaultsSourceToken));
+            }
             return true;
         }
     }
 
     ast.clear();
+    if (metadata != nullptr) {
+        if (primaryStatus == IniReadStatus::Invalid && !primaryError.isEmpty()) {
+            metadata->errors.append(primaryError);
+        }
+        if (tempStatus == IniReadStatus::Invalid && !tempError.isEmpty()) {
+            metadata->errors.append(tempError);
+        }
+    }
     return false;
 }
 
@@ -618,6 +670,43 @@ QStringList formatMigrationActions(const MigrationReport& report) {
             QStringLiteral("%1|%2|%3").arg(migrationActionTypeToToken(action.type), action.key, action.detail));
     }
     return formatted;
+}
+
+QStringList deprecatedKeysUsed(const MigrationReport& report) {
+    QSet<QString> keys;
+    for (const MigrationAction& action : report.actions) {
+        if (action.type == MigrationActionType::RenameKey && !action.key.isEmpty()) {
+            keys.insert(action.key);
+        }
+    }
+    QStringList sorted = keys.values();
+    std::sort(sorted.begin(), sorted.end());
+    return sorted;
+}
+
+QJsonArray toJsonArray(const QStringList& values) {
+    QJsonArray out;
+    for (const QString& value : values) {
+        out.append(value);
+    }
+    return out;
+}
+
+QJsonObject diagnosticsReportToJsonObject(const Oneg4FM::SettingsDiagnosticsReport& report) {
+    QJsonObject obj;
+    obj.insert(QStringLiteral("profile_name"), report.profileName);
+    obj.insert(QStringLiteral("profile_settings_path"), report.profileSettingsPath);
+    obj.insert(QStringLiteral("schema_path"), report.schemaPath);
+    obj.insert(QStringLiteral("schema_version"), report.schemaVersion);
+    obj.insert(QStringLiteral("source_schema_version"), report.sourceSchemaVersion);
+    obj.insert(QStringLiteral("target_schema_version"), report.targetSchemaVersion);
+    obj.insert(QStringLiteral("sources_used"), toJsonArray(report.sourcesUsed));
+    obj.insert(QStringLiteral("unknown_keys"), toJsonArray(report.unknownKeys));
+    obj.insert(QStringLiteral("deprecated_keys_used"), toJsonArray(report.deprecatedKeysUsed));
+    obj.insert(QStringLiteral("migration_actions"), toJsonArray(report.migrationActions));
+    obj.insert(QStringLiteral("errors"), toJsonArray(report.errors));
+    obj.insert(QStringLiteral("valid"), report.errors.isEmpty());
+    return obj;
 }
 
 bool parseBoolValue(const QVariant& rawValue, bool fallbackValue) {
@@ -1101,31 +1190,67 @@ bool Settings::loadFile(QString filePath) {
     lastProfileMigrationSourceVersion_ = 0;
     lastProfileMigrationTargetVersion_ = 0;
     lastProfileMigrationActions_.clear();
+    lastProfileDiagnosticsReport_ = SettingsDiagnosticsReport();
+    lastProfileDiagnosticsReport_.profileName = profileName_;
+    lastProfileDiagnosticsReport_.profileSettingsPath = QFileInfo(filePath).absoluteFilePath();
+    lastProfileDiagnosticsReport_.schemaVersion = CURRENT_SCHEMA_VERSION;
 
     QVector<SchemaKey> schemaKeys;
-    if (!loadProfileSchema(schemaKeys)) {
+    QString schemaPath;
+    if (!loadProfileSchema(schemaKeys, &schemaPath)) {
+        lastProfileDiagnosticsReport_.errors.append(QStringLiteral("Failed to load profile settings schema"));
         return false;
     }
+    lastProfileDiagnosticsReport_.schemaPath = schemaPath;
+    appendIfUnique(lastProfileDiagnosticsReport_.sourcesUsed, schemaPath);
 
     QHash<QString, QVariant> ast;
-    if (!readIniAst(filePath, ast)) {
+    IniReadMetadata readMetadata;
+    if (!readIniAst(filePath, ast, &readMetadata)) {
+        if (!readMetadata.errors.isEmpty()) {
+            lastProfileDiagnosticsReport_.errors.append(readMetadata.errors);
+        }
+        else {
+            lastProfileDiagnosticsReport_.errors.append(
+                QStringLiteral("Failed to load settings file: %1").arg(filePath));
+        }
         return false;
     }
+    for (const QString& source : readMetadata.sourcesUsed) {
+        appendIfUnique(lastProfileDiagnosticsReport_.sourcesUsed, source);
+    }
+
+    const int rawSchemaVersion = readSchemaVersionFromRawAst(ast, QString::fromUtf8(kProfileSchemaVersionKey));
     MigrationReport migrationReport;
     if (!migrateAstForward(SettingsSurface::Profile, QString::fromUtf8(kProfileSchemaVersionKey), ast,
                            &migrationReport)) {
+        lastProfileDiagnosticsReport_.sourceSchemaVersion = rawSchemaVersion;
+        lastProfileDiagnosticsReport_.targetSchemaVersion = rawSchemaVersion;
+        lastProfileDiagnosticsReport_.errors.append(
+            QStringLiteral("Unsupported profile schema version in %1: %2 (supported: %3-%4)")
+                .arg(filePath)
+                .arg(rawSchemaVersion)
+                .arg(oldestSupportedSchemaVersion())
+                .arg(CURRENT_SCHEMA_VERSION));
         return false;
     }
     lastProfileMigrationSourceVersion_ = migrationReport.sourceVersion;
     lastProfileMigrationTargetVersion_ = migrationReport.targetVersion;
     lastProfileMigrationActions_ = formatMigrationActions(migrationReport);
+    lastProfileDiagnosticsReport_.sourceSchemaVersion = migrationReport.sourceVersion;
+    lastProfileDiagnosticsReport_.targetSchemaVersion = migrationReport.targetVersion;
+    lastProfileDiagnosticsReport_.migrationActions = lastProfileMigrationActions_;
+    lastProfileDiagnosticsReport_.deprecatedKeysUsed = deprecatedKeysUsed(migrationReport);
 
     const QHash<QString, QVariant> unknownKeys = collectUnknownAstEntries(ast, schemaKeySet(schemaKeys));
+    lastProfileDiagnosticsReport_.unknownKeys = formatUnknownKeysForDiagnostics(unknownKeys, filePath);
     if (!unknownKeys.isEmpty()) {
-        qWarning().noquote()
-            << QStringLiteral("Unknown settings keys in %1: %2")
-                   .arg(filePath, formatUnknownKeysForDiagnostics(unknownKeys, filePath).join(QStringLiteral(", ")));
+        const QString unknownKeyMessage =
+            QStringLiteral("Unknown settings keys in %1: %2")
+                .arg(filePath, lastProfileDiagnosticsReport_.unknownKeys.join(QStringLiteral(", ")));
+        qWarning().noquote() << unknownKeyMessage;
         if (strictUnknownKeysEnabled()) {
+            lastProfileDiagnosticsReport_.errors.append(unknownKeyMessage);
             return false;
         }
     }
@@ -1133,6 +1258,8 @@ bool Settings::loadFile(QString filePath) {
     const QHash<QString, QVariant> normalized = normalizeAstBySchema(schemaKeys, ast);
     const auto value = [&](const char* key) { return normalized.value(QString::fromUtf8(key)); };
     if (!isSupportedSchemaVersion(normalizeSchemaVersion(value(kProfileSchemaVersionKey)))) {
+        lastProfileDiagnosticsReport_.errors.append(
+            QStringLiteral("Normalized settings have unsupported schema version in %1").arg(filePath));
         return false;
     }
 
@@ -1243,12 +1370,7 @@ bool Settings::loadFile(QString filePath) {
     return true;
 }
 
-bool Settings::saveFile(QString filePath) {
-    QVector<SchemaKey> schemaKeys;
-    if (!loadProfileSchema(schemaKeys)) {
-        return false;
-    }
-
+QHash<QString, QVariant> Settings::buildProfileAstForPersistence() const {
     QHash<QString, QVariant> values;
     values.insert(QString::fromUtf8(kProfileSchemaVersionKey), CURRENT_SCHEMA_VERSION);
     values.insert(QStringLiteral("System/FallbackIconThemeName"), fallbackIconThemeName_);
@@ -1345,6 +1467,17 @@ bool Settings::saveFile(QString filePath) {
     values.insert(QStringLiteral("Search/NamePatterns"), namePatterns_);
     values.insert(QStringLiteral("Search/ContentPatterns"), contentPatterns_);
 
+    return values;
+}
+
+bool Settings::saveFile(QString filePath) {
+    QVector<SchemaKey> schemaKeys;
+    if (!loadProfileSchema(schemaKeys)) {
+        return false;
+    }
+
+    QHash<QString, QVariant> values = buildProfileAstForPersistence();
+
     QHash<QString, QVariant> persistedValues = normalizeAstBySchema(schemaKeys, values);
     QStringList orderedKeys;
     orderedKeys.reserve(schemaKeys.size() + preservedUnknownProfileKeys_.size());
@@ -1370,6 +1503,41 @@ bool Settings::saveFile(QString filePath) {
     // save per-folder settings
     Panel::FolderConfig::saveCache();
 
+    return true;
+}
+
+QString Settings::lastProfileDiagnosticsReportJson() const {
+    const QJsonDocument reportDoc(diagnosticsReportToJsonObject(lastProfileDiagnosticsReport_));
+    return QString::fromUtf8(reportDoc.toJson(QJsonDocument::Indented));
+}
+
+bool Settings::dumpNormalizedEffectiveProfileSettings(QString* output, QString* errorMessage) {
+    if (output == nullptr) {
+        if (errorMessage != nullptr) {
+            *errorMessage = QStringLiteral("Output target is null");
+        }
+        return false;
+    }
+    output->clear();
+    if (errorMessage != nullptr) {
+        errorMessage->clear();
+    }
+
+    QVector<SchemaKey> schemaKeys;
+    if (!loadProfileSchema(schemaKeys)) {
+        if (errorMessage != nullptr) {
+            *errorMessage = QStringLiteral("Failed to load profile settings schema");
+        }
+        return false;
+    }
+
+    const QHash<QString, QVariant> normalized = normalizeAstBySchema(schemaKeys, buildProfileAstForPersistence());
+    QStringList orderedKeys;
+    orderedKeys.reserve(schemaKeys.size());
+    for (const SchemaKey& schemaKey : schemaKeys) {
+        orderedKeys.append(schemaKey.key);
+    }
+    *output = renderCanonicalIni(orderedKeys, normalized);
     return true;
 }
 

@@ -7,6 +7,9 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QObject>
 #include <QRandomGenerator>
 #include <QSettings>
@@ -39,6 +42,8 @@ class TestSettingsFunctionality : public QObject {
     void testDirectorySchemaMigrationFromVersionZero();
     void testProfileUnknownKeysPreservedAndReported();
     void testProfileUnknownKeysStrictModeRejectsLoad();
+    void testProfileDiagnosticsReportIncludesSchemaSourcesAndMigration();
+    void testProfileDiagnosticsReportCapturesValidationErrors();
     void testFolderSettingsDirectoryOverridesProfileDefaults();
     void testProfileDuplicateKeysLastWriteWins();
     void testDirectoryDuplicateKeysLastWriteWins();
@@ -49,6 +54,7 @@ class TestSettingsFunctionality : public QObject {
     void testProfileSchemaMigrationFixtureV0();
     void testDirectorySchemaMigrationFixtureV0();
     void testProfileLoadFuzzSafetySmoke();
+    void testDumpNormalizedEffectiveProfileSettings();
 
    private:
     QString sourcePath(const QString& relative) const;
@@ -708,6 +714,129 @@ void TestSettingsFunctionality::testProfileUnknownKeysStrictModeRejectsLoad() {
     }
 }
 
+void TestSettingsFunctionality::testProfileDiagnosticsReportIncludesSchemaSourcesAndMigration() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    QVERIFY(qputenv("XDG_CONFIG_HOME", tempDir.path().toUtf8()));
+
+    const QByteArray oldStrictUnknownKeys = qgetenv("ONEG4FM_SETTINGS_STRICT_UNKNOWN_KEYS");
+    qunsetenv("ONEG4FM_SETTINGS_STRICT_UNKNOWN_KEYS");
+
+    const QString profileName = QStringLiteral("diagnostics-report-profile");
+    const QString profileDir = tempDir.path() + QStringLiteral("/oneg4fm/") + profileName;
+    QVERIFY(QDir().mkpath(profileDir));
+
+    const QString settingsPath = profileDir + QStringLiteral("/settings.conf");
+    QFile settingsFile(settingsPath);
+    QVERIFY(settingsFile.open(QIODevice::WriteOnly | QIODevice::Text));
+    settingsFile.write(
+        "[Meta]\n"
+        "schema_version=0\n"
+        "\n"
+        "[Window]\n"
+        "AlwaysShowTabs=false\n"
+        "\n"
+        "[Search]\n"
+        "searchHidden=true\n"
+        "\n"
+        "[Future]\n"
+        "ExperimentalFlag=enabled\n");
+    settingsFile.close();
+
+    const QString expectedWarning = QStringLiteral(
+                                        "Unknown settings keys in %1: Future/ExperimentalFlag (line 11), "
+                                        "Search/searchHidden (line 8)")
+                                        .arg(settingsPath);
+    QTest::ignoreMessage(QtWarningMsg, qPrintable(expectedWarning));
+
+    Oneg4FM::Settings settings;
+    QVERIFY(settings.load(profileName));
+
+    const Oneg4FM::SettingsDiagnosticsReport report = settings.lastProfileDiagnosticsReport();
+    QCOMPARE(report.profileName, profileName);
+    QCOMPARE(report.profileSettingsPath, QFileInfo(settingsPath).absoluteFilePath());
+    QVERIFY2(!report.schemaPath.isEmpty(), "schemaPath should be populated in diagnostics report");
+    QCOMPARE(report.schemaVersion, 1);
+    QCOMPARE(report.sourceSchemaVersion, 0);
+    QCOMPARE(report.targetSchemaVersion, 1);
+    QVERIFY(report.sourcesUsed.contains(QFileInfo(settingsPath).absoluteFilePath()));
+    QCOMPARE(report.unknownKeys, QStringList({QStringLiteral("Future/ExperimentalFlag (line 11)"),
+                                              QStringLiteral("Search/searchHidden (line 8)")}));
+    QVERIFY(report.deprecatedKeysUsed.contains(QStringLiteral("Search/searchHidden")));
+    QVERIFY(report.migrationActions.contains(
+        QStringLiteral("rename_key|Search/searchHidden|migrated to Search/searchhHidden")));
+    QVERIFY(report.migrationActions.contains(QStringLiteral("schema_version_bump|Meta/schema_version|0 -> 1")));
+    QVERIFY(report.errors.isEmpty());
+
+    QJsonParseError parseError;
+    const QJsonDocument reportJson =
+        QJsonDocument::fromJson(settings.lastProfileDiagnosticsReportJson().toUtf8(), &parseError);
+    QCOMPARE(parseError.error, QJsonParseError::NoError);
+    QVERIFY(reportJson.isObject());
+    const QJsonObject root = reportJson.object();
+    QCOMPARE(root.value(QStringLiteral("profile_name")).toString(), profileName);
+    QCOMPARE(root.value(QStringLiteral("source_schema_version")).toInt(), 0);
+    QCOMPARE(root.value(QStringLiteral("target_schema_version")).toInt(), 1);
+    QCOMPARE(root.value(QStringLiteral("valid")).toBool(), true);
+    QVERIFY(root.value(QStringLiteral("unknown_keys"))
+                .toArray()
+                .contains(QStringLiteral("Future/ExperimentalFlag "
+                                         "(line 11)")));
+    QVERIFY(root.value(QStringLiteral("unknown_keys"))
+                .toArray()
+                .contains(QStringLiteral("Search/searchHidden "
+                                         "(line 8)")));
+
+    if (oldStrictUnknownKeys.isNull()) {
+        qunsetenv("ONEG4FM_SETTINGS_STRICT_UNKNOWN_KEYS");
+    }
+    else {
+        qputenv("ONEG4FM_SETTINGS_STRICT_UNKNOWN_KEYS", oldStrictUnknownKeys);
+    }
+}
+
+void TestSettingsFunctionality::testProfileDiagnosticsReportCapturesValidationErrors() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    QVERIFY(qputenv("XDG_CONFIG_HOME", tempDir.path().toUtf8()));
+
+    const QString profileName = QStringLiteral("diagnostics-error-profile");
+    const QString profileDir = tempDir.path() + QStringLiteral("/oneg4fm/") + profileName;
+    QVERIFY(QDir().mkpath(profileDir));
+
+    const QString settingsPath = profileDir + QStringLiteral("/settings.conf");
+    QFile settingsFile(settingsPath);
+    QVERIFY(settingsFile.open(QIODevice::WriteOnly | QIODevice::Text));
+    QVERIFY(settingsFile.write("[Meta]\n"
+                               "schema_version=1\n"
+                               "\n"
+                               "[System]\n"
+                               "Terminal=") > 0);
+    const QByteArray oversizedValue(1024 * 1024 + 128, 'x');
+    QVERIFY(settingsFile.write(oversizedValue) == oversizedValue.size());
+    QVERIFY(settingsFile.write("\n") > 0);
+    settingsFile.close();
+
+    Oneg4FM::Settings settings;
+    QVERIFY(!settings.load(profileName));
+
+    const Oneg4FM::SettingsDiagnosticsReport report = settings.lastProfileDiagnosticsReport();
+    QCOMPARE(report.profileName, profileName);
+    QVERIFY2(!report.schemaPath.isEmpty(), "schemaPath should be populated even on load failure");
+    QVERIFY2(!report.errors.isEmpty(), "diagnostics errors should be present for invalid settings");
+    QVERIFY(report.errors.join(QStringLiteral("\n")).contains(QStringLiteral("Settings file rejected by bounds:")));
+
+    QJsonParseError parseError;
+    const QJsonDocument reportJson =
+        QJsonDocument::fromJson(settings.lastProfileDiagnosticsReportJson().toUtf8(), &parseError);
+    QCOMPARE(parseError.error, QJsonParseError::NoError);
+    QVERIFY(reportJson.isObject());
+    const QJsonObject root = reportJson.object();
+    QCOMPARE(root.value(QStringLiteral("profile_name")).toString(), profileName);
+    QCOMPARE(root.value(QStringLiteral("valid")).toBool(), false);
+    QVERIFY2(!root.value(QStringLiteral("errors")).toArray().isEmpty(), "errors array should not be empty");
+}
+
 void TestSettingsFunctionality::testFolderSettingsDirectoryOverridesProfileDefaults() {
     QTemporaryDir tempDir;
     QVERIFY(tempDir.isValid());
@@ -996,6 +1125,33 @@ void TestSettingsFunctionality::testDirectorySchemaMigrationFixtureV0() {
     QSettings saved(dirConfigPath, QSettings::IniFormat);
     QCOMPARE(saved.value(QStringLiteral("File Manager/schema_version")).toInt(), 1);
     QCOMPARE(saved.value(QStringLiteral("File Manager/SortOrder")).toString(), QStringLiteral("descending"));
+}
+
+void TestSettingsFunctionality::testDumpNormalizedEffectiveProfileSettings() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    QVERIFY(qputenv("XDG_CONFIG_HOME", tempDir.path().toUtf8()));
+
+    const QString profileName = QStringLiteral("dump-normalized-profile");
+    Oneg4FM::Settings settings;
+    QVERIFY(settings.load(profileName));
+    settings.setAlwaysShowTabs(false);
+    settings.setTabPaths(QStringList({QStringLiteral("/tmp/a"), QStringLiteral("/tmp/b")}));
+    settings.setHiddenColumns(QList<int>({3, 1}));
+
+    QString normalizedDump;
+    QString dumpError;
+    QVERIFY(settings.dumpNormalizedEffectiveProfileSettings(&normalizedDump, &dumpError));
+    QVERIFY2(dumpError.isEmpty(), qPrintable(dumpError));
+
+    QVERIFY(normalizedDump.contains(QStringLiteral("[Meta]")));
+    QVERIFY(normalizedDump.contains(QStringLiteral("schema_version=1")));
+    QVERIFY(normalizedDump.contains(QStringLiteral("[Window]")));
+    QVERIFY(normalizedDump.contains(QStringLiteral("AlwaysShowTabs=false")));
+    QVERIFY(normalizedDump.contains(QStringLiteral("TabPaths=/tmp/a,/tmp/b")));
+    QVERIFY(normalizedDump.contains(QStringLiteral("[FolderView]")));
+    QVERIFY(normalizedDump.contains(QStringLiteral("HiddenColumns=1,3")));
+    QVERIFY(!normalizedDump.contains(QStringLiteral("@Variant")));
 }
 
 void TestSettingsFunctionality::testProfileLoadFuzzSafetySmoke() {

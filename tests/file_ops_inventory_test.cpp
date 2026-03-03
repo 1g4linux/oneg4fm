@@ -36,6 +36,7 @@ class FileOpsInventoryTest : public QObject {
     void userFacingIdentitySweepUsesExplicitCompatibilityAllowlist();
     void applicationUsesTypedMainWindowChecks();
     void applicationLifecycleAndWindowOrchestrationAreSplitIntoDedicatedUnits();
+    void applicationExposesSettingsDiagnosticsCliActions();
     void shutdownOrderingIsExplicitInLifecycleUnit();
     void mainWindowUiKeysAndMimeTypesAreCentralized();
     void hackingDocCoversLinuxSecurityModelAndContract();
@@ -684,6 +685,30 @@ void FileOpsInventoryTest::applicationLifecycleAndWindowOrchestrationAreSplitInt
             windowContent.contains(signature, Qt::CaseSensitive),
             qPrintable(QStringLiteral("application_window_orchestration.cpp missing signature: %1").arg(signature)));
     }
+}
+
+void FileOpsInventoryTest::applicationExposesSettingsDiagnosticsCliActions() {
+    const auto [applicationContent, applicationError] = readTextFile(QStringLiteral("oneg4fm/application.cpp"));
+    QVERIFY2(applicationError.isEmpty(), qPrintable(applicationError));
+
+    QVERIFY2(applicationContent.contains(QStringLiteral("validate-settings"), Qt::CaseSensitive),
+             "application.cpp must register --validate-settings");
+    QVERIFY2(applicationContent.contains(QStringLiteral("dump-settings"), Qt::CaseSensitive),
+             "application.cpp must register --dump-settings");
+    QVERIFY2(applicationContent.contains(QStringLiteral("lastProfileDiagnosticsReportJson"), Qt::CaseSensitive),
+             "application.cpp must print structured settings diagnostics reports");
+    QVERIFY2(applicationContent.contains(QStringLiteral("dumpNormalizedEffectiveProfileSettings"), Qt::CaseSensitive),
+             "application.cpp must support normalized settings dump output");
+
+    const auto [lifecycleContent, lifecycleError] = readTextFile(QStringLiteral("oneg4fm/application_lifecycle.cpp"));
+    QVERIFY2(lifecycleError.isEmpty(), qPrintable(lifecycleError));
+    QVERIFY2(lifecycleContent.contains(QStringLiteral("return startupExitCode_;"), Qt::CaseSensitive),
+             "application_lifecycle.cpp must return diagnostics exit status from Application::exec()");
+
+    const auto [headerContent, headerError] = readTextFile(QStringLiteral("oneg4fm/application.h"));
+    QVERIFY2(headerError.isEmpty(), qPrintable(headerError));
+    QVERIFY2(headerContent.contains(QStringLiteral("startupExitCode_"), Qt::CaseSensitive),
+             "application.h must store startup exit status for diagnostics actions");
 }
 
 void FileOpsInventoryTest::shutdownOrderingIsExplicitInLifecycleUnit() {

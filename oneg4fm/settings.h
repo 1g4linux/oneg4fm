@@ -24,11 +24,26 @@
 
 #include <QObject>
 #include <QHash>
+#include <QStringList>
 #include <QVariant>
 
 namespace Oneg4FM {
 
 enum OpenDirTargetType { OpenInCurrentTab, OpenInNewTab, OpenInNewWindow, OpenInLastActiveWindow };
+
+struct SettingsDiagnosticsReport {
+    QString profileName;
+    QString profileSettingsPath;
+    QString schemaPath;
+    int schemaVersion = 0;
+    int sourceSchemaVersion = 0;
+    int targetSchemaVersion = 0;
+    QStringList sourcesUsed;
+    QStringList unknownKeys;
+    QStringList deprecatedKeysUsed;
+    QStringList migrationActions;
+    QStringList errors;
+};
 
 class FolderSettings {
    public:
@@ -110,6 +125,9 @@ class Settings : public QObject {
 
     bool load(QString profile = QStringLiteral("default"));
     bool save(QString profile = QString());
+    SettingsDiagnosticsReport lastProfileDiagnosticsReport() const { return lastProfileDiagnosticsReport_; }
+    QString lastProfileDiagnosticsReportJson() const;
+    bool dumpNormalizedEffectiveProfileSettings(QString* output, QString* errorMessage = nullptr);
     int lastProfileMigrationSourceVersion() const { return lastProfileMigrationSourceVersion_; }
     int lastProfileMigrationTargetVersion() const { return lastProfileMigrationTargetVersion_; }
     QStringList lastProfileMigrationActions() const { return lastProfileMigrationActions_; }
@@ -523,6 +541,7 @@ class Settings : public QObject {
    private:
     bool loadFile(QString filePath);
     bool saveFile(QString filePath);
+    QHash<QString, QVariant> buildProfileAstForPersistence() const;
 
     int toIconSize(int size, IconType type) const;
 
@@ -628,6 +647,7 @@ class Settings : public QObject {
     int lastProfileMigrationSourceVersion_;
     int lastProfileMigrationTargetVersion_;
     QStringList lastProfileMigrationActions_;
+    SettingsDiagnosticsReport lastProfileDiagnosticsReport_;
 
     mutable int lastDirectoryMigrationSourceVersion_;
     mutable int lastDirectoryMigrationTargetVersion_;

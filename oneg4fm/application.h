@@ -112,6 +112,7 @@ class Application : public QApplication {
     Settings settings_;
     QString profileName_;
     bool daemonMode_;
+    int startupExitCode_;
     QPointer<PreferencesDialog> preferencesDialog_;
     QPointer<Panel::EditBookmarksDialog> editBookmarksialog_;
     QTranslator translator;

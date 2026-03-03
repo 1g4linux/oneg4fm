@@ -43,6 +43,8 @@ Options:
   -n, --new-window
   -f, --find-files
   --show-pref <NAME>
+  --validate-settings
+  --dump-settings
 ```
 
 What just happened: the first command confirms the binary and CLI surface; the second opens a window rooted at your home directory.
@@ -89,6 +91,16 @@ oneg4fm --show-pref advanced
 ```
 What to look for: Find Files dialog or Preferences opened to the requested page.
 Common mistake + fix: invalid `--show-pref` value. Use one of `behavior|display|ui|thumbnail|volume|advanced`.
+
+5. Validate and inspect effective settings
+Goal: collect actionable settings diagnostics and dump normalized effective profile settings.
+Command:
+```bash
+oneg4fm --profile work --validate-settings
+oneg4fm --profile work --dump-settings
+```
+What to look for: `--validate-settings` prints a structured JSON report and exits with code `0` on valid config or `1` on validation failure; `--dump-settings` prints the same report plus canonical normalized settings output.
+Common mistake + fix: expecting these actions to forward to an already running GUI instance. They run as local diagnostics actions and exit without starting the window lifecycle.
 
 ## 5. Concepts you must understand
 
@@ -215,6 +227,6 @@ Fix: rerun without canceling; for recurring cancels, check input size/tree depth
 
 - Build requirements in this tree: `CMake >= 3.18`, `Qt >= 6.6`.
 - Core implementation relies on POSIX syscalls (`openat`, `fstatat`, `utimensat`, etc.); treat Linux/Unix-like systems as the intended runtime target.
-- CLI options are stable enough for user invocation (`--profile`, `--daemon-mode`, `--quit`, `--new-window`, `--find-files`, `--show-pref`), but no strict semantic-versioning policy is documented yet.
+- CLI options are stable enough for user invocation (`--profile`, `--daemon-mode`, `--quit`, `--new-window`, `--find-files`, `--show-pref`, `--validate-settings`, `--dump-settings`), but no strict semantic-versioning policy is documented yet.
 - Config format is INI (`settings.conf`), with unknown keys generally ignored and missing keys defaulted.
 - TODO: define explicit compatibility promises (settings schema and automation guarantees) if you want downstream packagers/scripts to rely on them.

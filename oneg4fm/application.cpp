@@ -16,6 +16,7 @@
 #include <QDBusInterface>
 #include <QDir>
 #include <QIcon>
+#include <QTextStream>
 
 // Local Headers
 #include "applicationadaptor.h"
@@ -66,6 +67,7 @@ Application::Application(int& argc, char** argv)
       settings_(),
       profileName_(QStringLiteral("default")),
       daemonMode_(false),
+      startupExitCode_(0),
       preferencesDialog_(),
       editBookmarksialog_(),
       userDirsWatcher_(nullptr),
@@ -152,9 +154,58 @@ bool Application::parseCommandLineArgs() {
                                       tr("NAME"));
     parser.addOption(showPrefOption);
 
+    QCommandLineOption validateSettingsOption(
+        QStringLiteral("validate-settings"),
+        tr("Validate profile settings via the schema pipeline and print diagnostics, then exit"));
+    parser.addOption(validateSettingsOption);
+
+    QCommandLineOption dumpSettingsOption(QStringLiteral("dump-settings"),
+                                          tr("Dump normalized effective profile settings and diagnostics, then exit"));
+    parser.addOption(dumpSettingsOption);
+
     parser.addPositionalArgument(QStringLiteral("files"), tr("Files or directories to open"), tr("[FILE1, FILE2,...]"));
 
     parser.process(arguments());
+    const QString requestedProfile = parser.isSet(profileOption) ? parser.value(profileOption) : profileName_;
+    const bool validateSettings = parser.isSet(validateSettingsOption);
+    const bool dumpSettings = parser.isSet(dumpSettingsOption);
+    if (validateSettings || dumpSettings) {
+        QTextStream out(stdout);
+        QTextStream err(stderr);
+
+        const bool loaded = settings_.load(requestedProfile);
+        out << settings_.lastProfileDiagnosticsReportJson();
+
+        if (!loaded) {
+            const SettingsDiagnosticsReport report = settings_.lastProfileDiagnosticsReport();
+            if (report.errors.isEmpty()) {
+                err << QStringLiteral("Settings validation failed for profile '%1'").arg(requestedProfile) << Qt::endl;
+            }
+            else {
+                for (const QString& message : report.errors) {
+                    err << message << Qt::endl;
+                }
+            }
+            startupExitCode_ = 1;
+            return false;
+        }
+
+        if (dumpSettings) {
+            QString normalizedDump;
+            QString dumpError;
+            if (!settings_.dumpNormalizedEffectiveProfileSettings(&normalizedDump, &dumpError)) {
+                err << (dumpError.isEmpty() ? QStringLiteral("Failed to dump normalized settings") : dumpError)
+                    << Qt::endl;
+                startupExitCode_ = 1;
+                return false;
+            }
+            out << normalizedDump;
+        }
+
+        startupExitCode_ = 0;
+        return false;
+    }
+
     Startup::CliIntent intent;
     intent.profileName = profileName_;
     intent.daemonMode = parser.isSet(daemonOption);
@@ -167,7 +218,7 @@ bool Application::parseCommandLineArgs() {
     intent.newWindow = parser.isSet(newWindowOption);
     intent.positionalPaths = parser.positionalArguments();
     if (parser.isSet(profileOption)) {
-        intent.profileName = parser.value(profileOption);
+        intent.profileName = requestedProfile;
     }
 
     if (isPrimaryInstance) {

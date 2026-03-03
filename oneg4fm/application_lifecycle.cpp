@@ -71,7 +71,7 @@ void Application::init() {
 
 int Application::exec() {
     if (!parseCommandLineArgs()) {
-        return 0;
+        return startupExitCode_;
     }
 
     if (daemonMode_) {
