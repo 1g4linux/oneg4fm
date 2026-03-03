@@ -3,6 +3,7 @@
  * tests/test_settings_functionality.cpp
  */
 
+#include <QDir>
 #include <QFile>
 #include <QObject>
 #include <QSettings>
@@ -22,6 +23,7 @@ class TestSettingsFunctionality : public QObject {
     void testSettingsProfileDir();
     void testSettingsStringConversions();
     void testSettingsLoadSave();
+    void testSchemaNormalizationConstraints();
 };
 
 void TestSettingsFunctionality::testSettingsInitialization() {
@@ -267,6 +269,47 @@ void TestSettingsFunctionality::testSettingsLoadSave() {
     QCOMPARE(loadedSettings.maxSearchHistory(), settings.maxSearchHistory());
     QCOMPARE(loadedSettings.namePatterns(), settings.namePatterns());
     QCOMPARE(loadedSettings.contentPatterns(), settings.contentPatterns());
+}
+
+void TestSettingsFunctionality::testSchemaNormalizationConstraints() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    QVERIFY(qputenv("XDG_CONFIG_HOME", tempDir.path().toUtf8()));
+
+    const QString profileName = QStringLiteral("schema-normalization-profile");
+    const QString profileDir = tempDir.path() + QStringLiteral("/oneg4fm/") + profileName;
+    QVERIFY(QDir().mkpath(profileDir));
+
+    const QString settingsPath = profileDir + QStringLiteral("/settings.conf");
+    QFile settingsFile(settingsPath);
+    QVERIFY(settingsFile.open(QIODevice::WriteOnly | QIODevice::Text));
+    settingsFile.write(
+        "[Behavior]\n"
+        "AutoSelectionDelay=-5\n"
+        "\n"
+        "[FolderView]\n"
+        "BigIconSize=5\n"
+        "FolderViewCellMargins=@Size(-7 99)\n"
+        "\n"
+        "[Window]\n"
+        "FixedWidth=0\n"
+        "SplitViewTabsNum=-3\n"
+        "TabPaths=/tmp/a/../b, /tmp/c//d\n"
+        "\n"
+        "[Search]\n"
+        "MaxSearchHistory=999\n");
+    settingsFile.close();
+
+    Oneg4FM::Settings settings;
+    QVERIFY(settings.load(profileName));
+
+    QCOMPARE(settings.autoSelectionDelay(), 0);
+    QCOMPARE(settings.bigIconSize(), 32);
+    QCOMPARE(settings.folderViewCellMargins(), QSize(0, 48));
+    QCOMPARE(settings.fixedWindowWidth(), 1);
+    QCOMPARE(settings.splitViewTabsNum(), 0);
+    QCOMPARE(settings.tabPaths(), QStringList({QStringLiteral("/tmp/b"), QStringLiteral("/tmp/c/d")}));
+    QCOMPARE(settings.maxSearchHistory(), 50);
 }
 
 QTEST_MAIN(TestSettingsFunctionality)
