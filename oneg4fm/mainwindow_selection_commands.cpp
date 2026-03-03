@@ -39,6 +39,27 @@ class InvertSelectionCommand final : public Command {
     void execute(Context& context) const override { context.invertFileSelection(); }
 };
 
+class CopyCommand final : public Command {
+   public:
+    bool canExecute(const Context& context) const override { return context.hasAccessibleSelection(); }
+
+    void execute(Context& context) const override { context.copySelectionToClipboard(); }
+};
+
+class CutCommand final : public Command {
+   public:
+    bool canExecute(const Context& context) const override { return context.hasDeletableSelection(); }
+
+    void execute(Context& context) const override { context.cutSelectionToClipboard(); }
+};
+
+class PasteCommand final : public Command {
+   public:
+    bool canExecute(const Context& context) const override { return context.canPasteIntoCurrentFolder(); }
+
+    void execute(Context& context) const override { context.pasteClipboardIntoCurrentFolder(); }
+};
+
 class CopyFullPathCommand final : public Command {
    public:
     bool canExecute(const Context& context) const override { return context.hasSingleSelectedPath(); }
@@ -50,6 +71,9 @@ const Command& commandForId(Id id) {
     static const SelectAllCommand selectAll;
     static const DeselectAllCommand deselectAll;
     static const InvertSelectionCommand invertSelection;
+    static const CopyCommand copy;
+    static const CutCommand cut;
+    static const PasteCommand paste;
     static const CopyFullPathCommand copyFullPath;
 
     switch (id) {
@@ -59,6 +83,12 @@ const Command& commandForId(Id id) {
             return deselectAll;
         case Id::InvertSelection:
             return invertSelection;
+        case Id::Copy:
+            return copy;
+        case Id::Cut:
+            return cut;
+        case Id::Paste:
+            return paste;
         case Id::CopyFullPath:
             return copyFullPath;
     }

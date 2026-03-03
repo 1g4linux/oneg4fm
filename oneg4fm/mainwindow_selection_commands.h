@@ -12,6 +12,9 @@ enum class Id {
     SelectAll,
     DeselectAll,
     InvertSelection,
+    Copy,
+    Cut,
+    Paste,
     CopyFullPath,
 };
 
@@ -20,11 +23,17 @@ class Context {
     virtual ~Context() = default;
 
     virtual bool hasCurrentPage() const = 0;
+    virtual bool hasAccessibleSelection() const = 0;
+    virtual bool hasDeletableSelection() const = 0;
+    virtual bool canPasteIntoCurrentFolder() const = 0;
     virtual bool hasSingleSelectedPath() const = 0;
 
     virtual void selectAllFiles() = 0;
     virtual void deselectAllFiles() = 0;
     virtual void invertFileSelection() = 0;
+    virtual void copySelectionToClipboard() = 0;
+    virtual void cutSelectionToClipboard() = 0;
+    virtual void pasteClipboardIntoCurrentFolder() = 0;
     virtual void copySelectedPathToClipboard() = 0;
 };
 

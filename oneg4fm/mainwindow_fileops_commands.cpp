@@ -32,27 +32,6 @@ class FolderPropertiesCommand final : public Command {
     void execute(Context& context) const override { context.showFolderProperties(); }
 };
 
-class CopyCommand final : public Command {
-   public:
-    bool canExecute(const Context& context) const override { return context.hasAccessibleSelection(); }
-
-    void execute(Context& context) const override { context.copySelectionToClipboard(); }
-};
-
-class CutCommand final : public Command {
-   public:
-    bool canExecute(const Context& context) const override { return context.hasDeletableSelection(); }
-
-    void execute(Context& context) const override { context.cutSelectionToClipboard(); }
-};
-
-class PasteCommand final : public Command {
-   public:
-    bool canExecute(const Context& context) const override { return context.canPasteIntoCurrentFolder(); }
-
-    void execute(Context& context) const override { context.pasteClipboardIntoCurrentFolder(); }
-};
-
 class DeleteCommand final : public Command {
    public:
     bool canExecute(const Context& context) const override { return context.hasDeletableSelection(); }
@@ -77,9 +56,6 @@ class BulkRenameCommand final : public Command {
 const Command& commandForId(Id id) {
     static const FilePropertiesCommand fileProperties;
     static const FolderPropertiesCommand folderProperties;
-    static const CopyCommand copy;
-    static const CutCommand cut;
-    static const PasteCommand paste;
     static const DeleteCommand remove;
     static const RenameCommand rename;
     static const BulkRenameCommand bulkRename;
@@ -89,12 +65,6 @@ const Command& commandForId(Id id) {
             return fileProperties;
         case Id::FolderProperties:
             return folderProperties;
-        case Id::Copy:
-            return copy;
-        case Id::Cut:
-            return cut;
-        case Id::Paste:
-            return paste;
         case Id::Delete:
             return remove;
         case Id::Rename:

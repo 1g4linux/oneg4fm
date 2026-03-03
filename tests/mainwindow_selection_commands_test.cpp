@@ -12,20 +12,38 @@ class FakeSelectionContext final : public Oneg4FM::MainWindowSelectionCommands::
    public:
     bool hasPage = false;
     bool hasSinglePath = false;
+    bool hasAccessible = false;
+    bool hasDeletable = false;
+    bool canPaste = false;
     int selectAllCalls = 0;
     int deselectAllCalls = 0;
     int invertSelectionCalls = 0;
+    int copyCalls = 0;
+    int cutCalls = 0;
+    int pasteCalls = 0;
     int copySelectedPathCalls = 0;
 
     bool hasCurrentPage() const override { return hasPage; }
 
     bool hasSingleSelectedPath() const override { return hasSinglePath; }
 
+    bool hasAccessibleSelection() const override { return hasAccessible; }
+
+    bool hasDeletableSelection() const override { return hasDeletable; }
+
+    bool canPasteIntoCurrentFolder() const override { return canPaste; }
+
     void selectAllFiles() override { ++selectAllCalls; }
 
     void deselectAllFiles() override { ++deselectAllCalls; }
 
     void invertFileSelection() override { ++invertSelectionCalls; }
+
+    void copySelectionToClipboard() override { ++copyCalls; }
+
+    void cutSelectionToClipboard() override { ++cutCalls; }
+
+    void pasteClipboardIntoCurrentFolder() override { ++pasteCalls; }
 
     void copySelectedPathToClipboard() override { ++copySelectedPathCalls; }
 };
@@ -37,6 +55,7 @@ class MainWindowSelectionCommandsTest : public QObject {
 
    private Q_SLOTS:
     void selectionCommandsRequireCurrentPage();
+    void clipboardCommandsRespectCapabilityGuards();
     void copyFullPathRequiresExactlyOnePath();
 };
 
@@ -84,6 +103,38 @@ void MainWindowSelectionCommandsTest::copyFullPathRequiresExactlyOnePath() {
                                                              context));
     Oneg4FM::MainWindowSelectionCommands::execute(Oneg4FM::MainWindowSelectionCommands::Id::CopyFullPath, context);
     QCOMPARE(context.copySelectedPathCalls, 1);
+}
+
+void MainWindowSelectionCommandsTest::clipboardCommandsRespectCapabilityGuards() {
+    using namespace Oneg4FM::MainWindowSelectionCommands;
+
+    FakeSelectionContext context;
+    context.hasAccessible = false;
+    context.hasDeletable = false;
+    context.canPaste = false;
+
+    QVERIFY(!canExecute(Id::Copy, context));
+    QVERIFY(!canExecute(Id::Cut, context));
+    QVERIFY(!canExecute(Id::Paste, context));
+    execute(Id::Copy, context);
+    execute(Id::Cut, context);
+    execute(Id::Paste, context);
+    QCOMPARE(context.copyCalls, 0);
+    QCOMPARE(context.cutCalls, 0);
+    QCOMPARE(context.pasteCalls, 0);
+
+    context.hasAccessible = true;
+    context.hasDeletable = true;
+    context.canPaste = true;
+    QVERIFY(canExecute(Id::Copy, context));
+    QVERIFY(canExecute(Id::Cut, context));
+    QVERIFY(canExecute(Id::Paste, context));
+    execute(Id::Copy, context);
+    execute(Id::Cut, context);
+    execute(Id::Paste, context);
+    QCOMPARE(context.copyCalls, 1);
+    QCOMPARE(context.cutCalls, 1);
+    QCOMPARE(context.pasteCalls, 1);
 }
 
 QTEST_MAIN(MainWindowSelectionCommandsTest)

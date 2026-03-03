@@ -12,32 +12,22 @@ class FakeFileOpsContext final : public Oneg4FM::MainWindowFileOpsCommands::Cont
    public:
     bool hasPage = false;
     bool hasSelection = false;
-    bool hasAccessible = false;
     bool hasDeletable = false;
-    bool canPaste = false;
     int renamableCount = 0;
 
     int showFilePropertiesCalls = 0;
     int showFolderPropertiesCalls = 0;
-    int copyCalls = 0;
-    int cutCalls = 0;
-    int pasteCalls = 0;
     int deleteCalls = 0;
     int renameCalls = 0;
     int bulkRenameCalls = 0;
 
     bool hasCurrentPage() const override { return hasPage; }
     bool hasSelectedFiles() const override { return hasSelection; }
-    bool hasAccessibleSelection() const override { return hasAccessible; }
     bool hasDeletableSelection() const override { return hasDeletable; }
-    bool canPasteIntoCurrentFolder() const override { return canPaste; }
     int renamableSelectionCount() const override { return renamableCount; }
 
     void showFileProperties() override { ++showFilePropertiesCalls; }
     void showFolderProperties() override { ++showFolderPropertiesCalls; }
-    void copySelectionToClipboard() override { ++copyCalls; }
-    void cutSelectionToClipboard() override { ++cutCalls; }
-    void pasteClipboardIntoCurrentFolder() override { ++pasteCalls; }
     void deleteSelection() override { ++deleteCalls; }
     void renameSelection() override { ++renameCalls; }
     void bulkRenameSelection() override { ++bulkRenameCalls; }
@@ -50,7 +40,7 @@ class MainWindowFileOpsCommandsTest : public QObject {
 
    private Q_SLOTS:
     void fileAndFolderPropertiesCommandGuards();
-    void transferCommandGuards();
+    void deleteCommandGuard();
     void renameCommandGuards();
 };
 
@@ -79,43 +69,21 @@ void MainWindowFileOpsCommandsTest::fileAndFolderPropertiesCommandGuards() {
     QCOMPARE(context.showFolderPropertiesCalls, 1);
 }
 
-void MainWindowFileOpsCommandsTest::transferCommandGuards() {
+void MainWindowFileOpsCommandsTest::deleteCommandGuard() {
     using namespace Oneg4FM::MainWindowFileOpsCommands;
     FakeFileOpsContext context;
 
-    context.hasAccessible = false;
     context.hasDeletable = false;
-    context.canPaste = false;
-    QVERIFY(!canExecute(Id::Copy, context));
-    QVERIFY(!canExecute(Id::Cut, context));
     QVERIFY(!canExecute(Id::Delete, context));
-    QVERIFY(!canExecute(Id::Paste, context));
 
-    execute(Id::Copy, context);
-    execute(Id::Cut, context);
     execute(Id::Delete, context);
-    execute(Id::Paste, context);
-    QCOMPARE(context.copyCalls, 0);
-    QCOMPARE(context.cutCalls, 0);
     QCOMPARE(context.deleteCalls, 0);
-    QCOMPARE(context.pasteCalls, 0);
 
-    context.hasAccessible = true;
     context.hasDeletable = true;
-    context.canPaste = true;
-    QVERIFY(canExecute(Id::Copy, context));
-    QVERIFY(canExecute(Id::Cut, context));
     QVERIFY(canExecute(Id::Delete, context));
-    QVERIFY(canExecute(Id::Paste, context));
 
-    execute(Id::Copy, context);
-    execute(Id::Cut, context);
     execute(Id::Delete, context);
-    execute(Id::Paste, context);
-    QCOMPARE(context.copyCalls, 1);
-    QCOMPARE(context.cutCalls, 1);
     QCOMPARE(context.deleteCalls, 1);
-    QCOMPARE(context.pasteCalls, 1);
 }
 
 void MainWindowFileOpsCommandsTest::renameCommandGuards() {

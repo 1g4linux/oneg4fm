@@ -190,7 +190,7 @@ void MainWindow::showFolderProperties() {
 }
 
 void MainWindow::on_actionCopy_triggered() {
-    MainWindowFileOpsCommands::execute(MainWindowFileOpsCommands::Id::Copy, *this);
+    MainWindowSelectionCommands::execute(MainWindowSelectionCommands::Id::Copy, *this);
 }
 
 void MainWindow::copySelectionToClipboard() {
@@ -208,7 +208,7 @@ void MainWindow::copySelectionToClipboard() {
 }
 
 void MainWindow::on_actionCut_triggered() {
-    MainWindowFileOpsCommands::execute(MainWindowFileOpsCommands::Id::Cut, *this);
+    MainWindowSelectionCommands::execute(MainWindowSelectionCommands::Id::Cut, *this);
 }
 
 void MainWindow::cutSelectionToClipboard() {
@@ -226,7 +226,7 @@ void MainWindow::cutSelectionToClipboard() {
 }
 
 void MainWindow::on_actionPaste_triggered() {
-    MainWindowFileOpsCommands::execute(MainWindowFileOpsCommands::Id::Paste, *this);
+    MainWindowSelectionCommands::execute(MainWindowSelectionCommands::Id::Paste, *this);
 }
 
 void MainWindow::pasteClipboardIntoCurrentFolder() {

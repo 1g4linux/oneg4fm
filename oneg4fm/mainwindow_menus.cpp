@@ -192,13 +192,13 @@ void MainWindow::updateSelectedActions() {
         MainWindowFileOpsCommands::canExecute(MainWindowFileOpsCommands::Id::FileProperties, *this));
     ui.actionFolderProperties->setEnabled(
         MainWindowFileOpsCommands::canExecute(MainWindowFileOpsCommands::Id::FolderProperties, *this));
-    ui.actionCopy->setEnabled(MainWindowFileOpsCommands::canExecute(MainWindowFileOpsCommands::Id::Copy, *this));
-    ui.actionCut->setEnabled(MainWindowFileOpsCommands::canExecute(MainWindowFileOpsCommands::Id::Cut, *this));
+    ui.actionCopy->setEnabled(MainWindowSelectionCommands::canExecute(MainWindowSelectionCommands::Id::Copy, *this));
+    ui.actionCut->setEnabled(MainWindowSelectionCommands::canExecute(MainWindowSelectionCommands::Id::Cut, *this));
     ui.actionDelete->setEnabled(MainWindowFileOpsCommands::canExecute(MainWindowFileOpsCommands::Id::Delete, *this));
     ui.actionRename->setEnabled(MainWindowFileOpsCommands::canExecute(MainWindowFileOpsCommands::Id::Rename, *this));
     ui.actionBulkRename->setEnabled(
         MainWindowFileOpsCommands::canExecute(MainWindowFileOpsCommands::Id::BulkRename, *this));
-    ui.actionPaste->setEnabled(MainWindowFileOpsCommands::canExecute(MainWindowFileOpsCommands::Id::Paste, *this));
+    ui.actionPaste->setEnabled(MainWindowSelectionCommands::canExecute(MainWindowSelectionCommands::Id::Paste, *this));
     ui.actionCopyFullPath->setEnabled(
         MainWindowSelectionCommands::canExecute(MainWindowSelectionCommands::Id::CopyFullPath, *this));
 
