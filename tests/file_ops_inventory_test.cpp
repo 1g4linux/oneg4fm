@@ -862,6 +862,10 @@ void FileOpsInventoryTest::libfmQtCoreRoutedAdaptersAvoidPlannerRetryProbeLogic(
              "FileTransferJob core-routed section must not implement adapter retry loops");
     QVERIFY2(!transferCoreBlock.contains(QStringLiteral("renameRequest"), Qt::CaseSensitive),
              "FileTransferJob core-routed conflict handling must not duplicate rename retry policy");
+    QVERIFY2(!transferCoreBlock.contains(QStringLiteral("queryInfoOrFallback"), Qt::CaseSensitive),
+             "FileTransferJob core-routed conflict handling must avoid filesystem metadata probing helpers");
+    QVERIFY2(!transferCoreBlock.contains(QStringLiteral("g_file_query_info"), Qt::CaseSensitive),
+             "FileTransferJob core-routed conflict handling must not query filesystem metadata");
     QVERIFY2(transferCoreBlock.contains(QStringLiteral("case FileOperationJob::RENAME"), Qt::CaseSensitive),
              "FileTransferJob core-routed section must map rename prompt choices");
     QVERIFY2(transferCoreBlock.contains(QStringLiteral("CoreFileOps::ConflictResolution::Rename"), Qt::CaseSensitive),
@@ -956,6 +960,10 @@ void FileOpsInventoryTest::libfmQtCoreRoutedAdaptersAvoidPlannerRetryProbeLogic(
              "UntrashJob core-routed section must not implement adapter retry loops");
     QVERIFY2(!untrashCoreBlock.contains(QStringLiteral("while (!isCancelled())"), Qt::CaseSensitive),
              "UntrashJob core-routed section must not wrap core execution in retry loops");
+    QVERIFY2(!untrashCoreBlock.contains(QStringLiteral("queryInfoOrFallback"), Qt::CaseSensitive),
+             "UntrashJob core-routed conflict handling must avoid filesystem metadata probing helpers");
+    QVERIFY2(!untrashCoreBlock.contains(QStringLiteral("g_file_query_info"), Qt::CaseSensitive),
+             "UntrashJob core-routed conflict handling must not query filesystem metadata");
     QVERIFY2(untrashCoreBlock.contains(QStringLiteral("case FileOperationJob::OVERWRITE_ALL"), Qt::CaseSensitive),
              "UntrashJob core-routed section must map overwrite-all prompt choices");
     QVERIFY2(

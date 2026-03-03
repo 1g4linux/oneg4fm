@@ -65,16 +65,7 @@ bool toCoreEndpointPath(const FilePath& path, std::string& out, CoreFileOps::End
     return toUriPath(path, out);
 }
 
-GFileInfoPtr queryInfoOrFallback(const FilePath& path, GCancellable* cancellable) {
-    if (path) {
-        GErrorPtr err;
-        GFileInfo* info = g_file_query_info(path.gfile().get(), defaultGFileInfoQueryAttribs,
-                                            G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, cancellable, &err);
-        if (info) {
-            return GFileInfoPtr{info, false};
-        }
-    }
-
+GFileInfoPtr makePromptInfoFromPath(const FilePath& path) {
     GFileInfo* fallback = g_file_info_new();
     if (path) {
         const auto basename = path.baseName();
@@ -915,8 +906,8 @@ void FileTransferJob::exec() {
             const FilePath eventSource = toFilePathFromCorePath(event.sourcePath, srcPath);
             const FilePath eventDestination = toFilePathFromCorePath(event.destinationPath, originalDestPath);
 
-            GFileInfoPtr sourceInfo = queryInfoOrFallback(eventSource, cancellable().get());
-            GFileInfoPtr destinationInfo = queryInfoOrFallback(eventDestination, cancellable().get());
+            GFileInfoPtr sourceInfo = makePromptInfoFromPath(eventSource);
+            GFileInfoPtr destinationInfo = makePromptInfoFromPath(eventDestination);
 
             FilePath ignoredNewDestination;
             const FileExistsAction action = askRename(

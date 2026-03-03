@@ -5,7 +5,6 @@
 #endif
 
 #if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
-#include "fileinfo_p.h"
 #include "../../../src/core/file_ops_contract.h"
 #endif
 
@@ -64,16 +63,7 @@ FilePath toFilePathFromCorePath(const std::string& path, const FilePath& fallbac
     return FilePath::fromLocalPath(path.c_str());
 }
 
-GFileInfoPtr queryInfoOrFallback(const FilePath& path, GCancellable* cancellable) {
-    if (path) {
-        GErrorPtr err;
-        GFileInfo* info = g_file_query_info(path.gfile().get(), defaultGFileInfoQueryAttribs,
-                                            G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, cancellable, &err);
-        if (info) {
-            return GFileInfoPtr{info, false};
-        }
-    }
-
+GFileInfoPtr makePromptInfoFromPath(const FilePath& path) {
     GFileInfo* fallback = g_file_info_new();
     if (path) {
         const auto basename = path.baseName();
@@ -173,8 +163,8 @@ void UntrashJob::exec() {
             const FilePath eventSource = toFilePathFromCorePath(event.sourcePath, srcPath);
             const FilePath eventDestination = toFilePathFromCorePath(event.destinationPath, FilePath{});
 
-            GFileInfoPtr sourceInfo = queryInfoOrFallback(eventSource, cancellable().get());
-            GFileInfoPtr destinationInfo = queryInfoOrFallback(eventDestination, cancellable().get());
+            GFileInfoPtr sourceInfo = makePromptInfoFromPath(eventSource);
+            GFileInfoPtr destinationInfo = makePromptInfoFromPath(eventDestination);
 
             FilePath ignoredNewDestination;
             const FileExistsAction action = askRename(
