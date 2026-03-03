@@ -5,6 +5,7 @@
 
 #include "application.h"
 #include "mainwindow.h"
+#include "mainwindow_view_controller.h"
 #include "tabpage.h"
 
 // Qt Headers
@@ -25,19 +26,7 @@ void MainWindow::chdir(Panel::FilePath path, ViewFrame* viewFrame) {
         if (TabPage* page = currentPage(viewFrame)) {
             page->chdir(path, true);
             setTabIcon(page);
-
-            if (viewFrame == activeViewFrame_) {
-                updateUIForCurrentPage();
-            }
-            else {
-                // Update background view frames' location bar
-                if (auto* pathBar = qobject_cast<Panel::PathBar*>(viewFrame->getTopBar())) {
-                    pathBar->setPath(page->path());
-                }
-                else if (auto* pathEntry = qobject_cast<Panel::PathEdit*>(viewFrame->getTopBar())) {
-                    pathEntry->setText(page->pathName());
-                }
-            }
+            MainWindowViewController::handlePageStateChange(*this, viewFrame, true);
         }
     });
 }
@@ -132,11 +121,7 @@ void MainWindow::reloadCurrent() {
     }
 
     page->reload();
-
-    // In single-view mode, update the main location bar
-    if (pathEntry_) {
-        pathEntry_->setText(page->pathName());
-    }
+    MainWindowViewController::handlePageStateChange(*this, activeViewFrame_, false);
 }
 
 void MainWindow::openApplicationsRoot() {

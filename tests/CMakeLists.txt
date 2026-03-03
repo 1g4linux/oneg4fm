@@ -83,6 +83,12 @@ oneg4fm_add_test(oneg4fm-mainwindow-view-commands-tests
         ../oneg4fm/mainwindow_view_commands.cpp
 )
 
+oneg4fm_add_test(oneg4fm-mainwindow-view-controller-tests
+    SOURCES
+        mainwindow_view_controller_test.cpp
+        ../oneg4fm/mainwindow_view_controller.cpp
+)
+
 oneg4fm_add_test(oneg4fm-core-utils-tests
     SOURCES
         test_core_utils.cpp

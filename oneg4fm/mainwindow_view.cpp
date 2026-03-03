@@ -5,6 +5,7 @@
 
 #include "application.h"
 #include "mainwindow.h"
+#include "mainwindow_view_controller.h"
 #include "tabpage.h"
 
 // Qt Headers
@@ -90,31 +91,19 @@ void MainWindow::on_actionThumbnailView_triggered() {
 }
 
 void MainWindow::setIconMode() {
-    if (auto* page = currentPage()) {
-        page->setViewMode(Panel::FolderView::IconMode);
-        setTabIcon(page);
-    }
+    MainWindowViewController::setViewMode(*this, MainWindowViewController::ViewMode::Icon);
 }
 
 void MainWindow::setCompactMode() {
-    if (auto* page = currentPage()) {
-        page->setViewMode(Panel::FolderView::CompactMode);
-        setTabIcon(page);
-    }
+    MainWindowViewController::setViewMode(*this, MainWindowViewController::ViewMode::Compact);
 }
 
 void MainWindow::setDetailedMode() {
-    if (auto* page = currentPage()) {
-        page->setViewMode(Panel::FolderView::DetailedListMode);
-        setTabIcon(page);
-    }
+    MainWindowViewController::setViewMode(*this, MainWindowViewController::ViewMode::Detailed);
 }
 
 void MainWindow::setThumbnailMode() {
-    if (auto* page = currentPage()) {
-        page->setViewMode(Panel::FolderView::ThumbnailMode);
-        setTabIcon(page);
-    }
+    MainWindowViewController::setViewMode(*this, MainWindowViewController::ViewMode::Thumbnail);
 }
 
 //-----------------------------------------------------------------------------
@@ -142,25 +131,15 @@ void MainWindow::on_actionShowThumbnails_triggered(bool checked) {
 }
 
 void MainWindow::on_actionFilter_triggered(bool checked) {
-    appSettings().setShowFilter(checked);
-
-    // Show/hide filter-bars and disable/enable their transience for all tabs
-    // in all windows because this is a global setting.
-    forEachTabPageGlobal([checked](MainWindow* mw, TabPage* page) {
-        mw->ui.actionFilter->setChecked(checked);
-        page->transientFilterBar(!checked);
-    });
+    MainWindowViewController::setFilterBarsPersistent(*this, checked);
 }
 
 void MainWindow::on_actionUnfilter_triggered() {
-    // Clear filters for all tabs in the CURRENT window only
-    forEachTabPageLocal([](TabPage* page) { page->clearFilter(); });
+    MainWindowViewController::clearFilters(*this);
 }
 
 void MainWindow::on_actionShowFilter_triggered() {
-    if (auto* page = currentPage()) {
-        page->showFilterBar();
-    }
+    MainWindowViewController::showFilterBar(*this);
 }
 
 void MainWindow::on_actionPreserveView_triggered(bool checked) {
@@ -229,51 +208,35 @@ void MainWindow::on_actionByFileType_triggered(bool /*checked*/) {
 }
 
 void MainWindow::sortByFileName() {
-    if (auto* page = currentPage()) {
-        page->sort(Panel::FolderModel::ColumnFileName, page->sortOrder());
-    }
+    MainWindowViewController::sortByColumn(*this, MainWindowViewController::SortColumn::FileName);
 }
 
 void MainWindow::sortByMTime() {
-    if (auto* page = currentPage()) {
-        page->sort(Panel::FolderModel::ColumnFileMTime, page->sortOrder());
-    }
+    MainWindowViewController::sortByColumn(*this, MainWindowViewController::SortColumn::MTime);
 }
 
 void MainWindow::sortByCrTime() {
-    if (auto* page = currentPage()) {
-        page->sort(Panel::FolderModel::ColumnFileCrTime, page->sortOrder());
-    }
+    MainWindowViewController::sortByColumn(*this, MainWindowViewController::SortColumn::CrTime);
 }
 
 void MainWindow::sortByDTime() {
-    if (auto* page = currentPage()) {
-        page->sort(Panel::FolderModel::ColumnFileDTime, page->sortOrder());
-    }
+    MainWindowViewController::sortByColumn(*this, MainWindowViewController::SortColumn::DTime);
 }
 
 void MainWindow::sortByOwner() {
-    if (auto* page = currentPage()) {
-        page->sort(Panel::FolderModel::ColumnFileOwner, page->sortOrder());
-    }
+    MainWindowViewController::sortByColumn(*this, MainWindowViewController::SortColumn::Owner);
 }
 
 void MainWindow::sortByGroup() {
-    if (auto* page = currentPage()) {
-        page->sort(Panel::FolderModel::ColumnFileGroup, page->sortOrder());
-    }
+    MainWindowViewController::sortByColumn(*this, MainWindowViewController::SortColumn::Group);
 }
 
 void MainWindow::sortByFileSize() {
-    if (auto* page = currentPage()) {
-        page->sort(Panel::FolderModel::ColumnFileSize, page->sortOrder());
-    }
+    MainWindowViewController::sortByColumn(*this, MainWindowViewController::SortColumn::FileSize);
 }
 
 void MainWindow::sortByFileType() {
-    if (auto* page = currentPage()) {
-        page->sort(Panel::FolderModel::ColumnFileType, page->sortOrder());
-    }
+    MainWindowViewController::sortByColumn(*this, MainWindowViewController::SortColumn::FileType);
 }
 
 void MainWindow::on_actionAscending_triggered(bool /*checked*/) {
@@ -285,27 +248,178 @@ void MainWindow::on_actionDescending_triggered(bool /*checked*/) {
 }
 
 void MainWindow::sortAscending() {
-    if (auto* page = currentPage()) {
-        page->sort(page->sortColumn(), Qt::AscendingOrder);
-    }
+    MainWindowViewController::sortByOrder(*this, Qt::AscendingOrder);
 }
 
 void MainWindow::sortDescending() {
-    if (auto* page = currentPage()) {
-        page->sort(page->sortColumn(), Qt::DescendingOrder);
-    }
+    MainWindowViewController::sortByOrder(*this, Qt::DescendingOrder);
 }
 
 void MainWindow::on_actionCaseSensitive_triggered(bool checked) {
-    if (auto* page = currentPage()) {
-        page->setSortCaseSensitive(checked);
-    }
+    MainWindowViewController::setSortCaseSensitive(*this, checked);
 }
 
 void MainWindow::on_actionFolderFirst_triggered(bool checked) {
+    MainWindowViewController::setSortFolderFirst(*this, checked);
+}
+
+ViewFrame* MainWindow::activeViewFrame() const {
+    return activeViewFrame_;
+}
+
+void MainWindow::applyViewMode(MainWindowViewController::ViewMode mode) {
     if (auto* page = currentPage()) {
-        page->setSortFolderFirst(checked);
+        Panel::FolderView::ViewMode viewMode = Panel::FolderView::DetailedListMode;
+
+        switch (mode) {
+            case MainWindowViewController::ViewMode::Icon:
+                viewMode = Panel::FolderView::IconMode;
+                break;
+            case MainWindowViewController::ViewMode::Compact:
+                viewMode = Panel::FolderView::CompactMode;
+                break;
+            case MainWindowViewController::ViewMode::Detailed:
+                viewMode = Panel::FolderView::DetailedListMode;
+                break;
+            case MainWindowViewController::ViewMode::Thumbnail:
+                viewMode = Panel::FolderView::ThumbnailMode;
+                break;
+        }
+
+        page->setViewMode(viewMode);
+        setTabIcon(page);
     }
+}
+
+void MainWindow::applySort(MainWindowViewController::SortColumn column, Qt::SortOrder order) {
+    if (auto* page = currentPage()) {
+        Panel::FolderModel::ColumnId columnId = Panel::FolderModel::ColumnFileName;
+        switch (column) {
+            case MainWindowViewController::SortColumn::FileName:
+                columnId = Panel::FolderModel::ColumnFileName;
+                break;
+            case MainWindowViewController::SortColumn::MTime:
+                columnId = Panel::FolderModel::ColumnFileMTime;
+                break;
+            case MainWindowViewController::SortColumn::CrTime:
+                columnId = Panel::FolderModel::ColumnFileCrTime;
+                break;
+            case MainWindowViewController::SortColumn::DTime:
+                columnId = Panel::FolderModel::ColumnFileDTime;
+                break;
+            case MainWindowViewController::SortColumn::Owner:
+                columnId = Panel::FolderModel::ColumnFileOwner;
+                break;
+            case MainWindowViewController::SortColumn::Group:
+                columnId = Panel::FolderModel::ColumnFileGroup;
+                break;
+            case MainWindowViewController::SortColumn::FileSize:
+                columnId = Panel::FolderModel::ColumnFileSize;
+                break;
+            case MainWindowViewController::SortColumn::FileType:
+                columnId = Panel::FolderModel::ColumnFileType;
+                break;
+        }
+        page->sort(columnId, order);
+    }
+}
+
+Qt::SortOrder MainWindow::currentSortOrder() const {
+    if (auto* page = currentPage()) {
+        return page->sortOrder();
+    }
+    return Qt::AscendingOrder;
+}
+
+MainWindowViewController::SortColumn MainWindow::currentSortColumn() const {
+    if (auto* page = currentPage()) {
+        switch (page->sortColumn()) {
+            case Panel::FolderModel::ColumnFileName:
+                return MainWindowViewController::SortColumn::FileName;
+            case Panel::FolderModel::ColumnFileMTime:
+                return MainWindowViewController::SortColumn::MTime;
+            case Panel::FolderModel::ColumnFileCrTime:
+                return MainWindowViewController::SortColumn::CrTime;
+            case Panel::FolderModel::ColumnFileDTime:
+                return MainWindowViewController::SortColumn::DTime;
+            case Panel::FolderModel::ColumnFileOwner:
+                return MainWindowViewController::SortColumn::Owner;
+            case Panel::FolderModel::ColumnFileGroup:
+                return MainWindowViewController::SortColumn::Group;
+            case Panel::FolderModel::ColumnFileSize:
+                return MainWindowViewController::SortColumn::FileSize;
+            case Panel::FolderModel::ColumnFileType:
+                return MainWindowViewController::SortColumn::FileType;
+            default:
+                break;
+        }
+    }
+
+    return MainWindowViewController::SortColumn::FileName;
+}
+
+void MainWindow::applySortCaseSensitive(bool enabled) {
+    if (auto* page = currentPage()) {
+        page->setSortCaseSensitive(enabled);
+    }
+}
+
+void MainWindow::applySortFolderFirst(bool enabled) {
+    if (auto* page = currentPage()) {
+        page->setSortFolderFirst(enabled);
+    }
+}
+
+void MainWindow::setFilterBarsPersistent(bool enabled) {
+    appSettings().setShowFilter(enabled);
+    forEachTabPageGlobal([enabled](MainWindow* mw, TabPage* page) {
+        mw->ui.actionFilter->setChecked(enabled);
+        page->transientFilterBar(!enabled);
+    });
+}
+
+void MainWindow::clearFiltersInCurrentWindow() {
+    forEachTabPageLocal([](TabPage* page) { page->clearFilter(); });
+}
+
+void MainWindow::showCurrentFilterBar() {
+    if (auto* page = currentPage()) {
+        page->showFilterBar();
+    }
+}
+
+void MainWindow::syncPathBarForFrame(ViewFrame* frame) {
+    if (!frame) {
+        return;
+    }
+
+    TabPage* page = currentPage(frame);
+    if (!page) {
+        return;
+    }
+
+    if (auto* pathBar = qobject_cast<Panel::PathBar*>(frame->getTopBar())) {
+        pathBar->setPath(page->path());
+        return;
+    }
+
+    if (auto* pathEntry = qobject_cast<Panel::PathEdit*>(frame->getTopBar())) {
+        pathEntry->setText(page->pathName());
+        return;
+    }
+
+    if (frame == activeViewFrame_ && !splitView_) {
+        if (pathBar_) {
+            pathBar_->setPath(page->path());
+        }
+        else if (pathEntry_) {
+            pathEntry_->setText(page->pathName());
+        }
+    }
+}
+
+void MainWindow::projectCurrentPageUi(bool setFocus) {
+    updateUIForCurrentPage(setFocus);
 }
 
 }  // namespace Oneg4FM

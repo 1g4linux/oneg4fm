@@ -43,6 +43,7 @@
 #include "mainwindow_navigation_commands.h"
 #include "mainwindow_selection_commands.h"
 #include "mainwindow_tab_commands.h"
+#include "mainwindow_view_controller.h"
 #include "mainwindow_view_commands.h"
 #include "tabbar.h"
 #include "tabpage.h"
@@ -80,6 +81,7 @@ class MainWindow : public QMainWindow,
                    public MainWindowNavigationCommands::Context,
                    public MainWindowSelectionCommands::Context,
                    public MainWindowTabCommands::Context,
+                   public MainWindowViewController::Context,
                    public MainWindowViewCommands::Context {
     Q_OBJECT
    public:
@@ -308,6 +310,19 @@ class MainWindow : public QMainWindow,
     void sortByGroup() override;
     void sortByFileSize() override;
     void sortByFileType() override;
+
+    ViewFrame* activeViewFrame() const override;
+    void applyViewMode(MainWindowViewController::ViewMode mode) override;
+    void applySort(MainWindowViewController::SortColumn column, Qt::SortOrder order) override;
+    Qt::SortOrder currentSortOrder() const override;
+    MainWindowViewController::SortColumn currentSortColumn() const override;
+    void applySortCaseSensitive(bool enabled) override;
+    void applySortFolderFirst(bool enabled) override;
+    void setFilterBarsPersistent(bool enabled) override;
+    void clearFiltersInCurrentWindow() override;
+    void showCurrentFilterBar() override;
+    void syncPathBarForFrame(ViewFrame* frame) override;
+    void projectCurrentPageUi(bool setFocus) override;
 
     template <typename Func>
     void forEachTabPageLocal(Func func);

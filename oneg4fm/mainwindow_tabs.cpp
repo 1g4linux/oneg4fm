@@ -10,6 +10,7 @@
 
 #include "application.h"
 #include "mainwindow.h"
+#include "mainwindow_view_controller.h"
 #include "tabbar.h"  // Assuming custom TabBar header
 #include "tabpage.h"
 #include "view.h"  // Assuming View definition is needed for access
@@ -225,20 +226,7 @@ void MainWindow::onTabBarCurrentChanged(int index) {
         }
     }
 
-    if (viewFrame == activeViewFrame_) {
-        updateUIForCurrentPage();
-    }
-    else {
-        // If updating a background frame, strictly update its location bar, not the main window UI
-        if (TabPage* page = currentPage(viewFrame)) {
-            if (auto* pathBar = qobject_cast<Panel::PathBar*>(viewFrame->getTopBar())) {
-                pathBar->setPath(page->path());
-            }
-            else if (auto* pathEntry = qobject_cast<Panel::PathEdit*>(viewFrame->getTopBar())) {
-                pathEntry->setText(page->pathName());
-            }
-        }
-    }
+    MainWindowViewController::handlePageStateChange(*this, viewFrame, true);
 }
 
 void MainWindow::onTabBarTabMoved(int from, int to) {

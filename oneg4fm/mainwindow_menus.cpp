@@ -215,31 +215,7 @@ void MainWindow::updateUIForCurrentPage(bool setFocus) {
     if (tabPage) {
         setWindowTitle(tabPage->title());
 
-        // Update Location Bar
-        // NOTE: This logic supports both path bar and path entry modes
-        Panel::PathBar* pathBar = nullptr;
-        Panel::PathEdit* pathEdit = nullptr;
-
-        if (splitView_) {
-            if (activeViewFrame_) {
-                pathBar = qobject_cast<Panel::PathBar*>(activeViewFrame_->getTopBar());
-                if (!pathBar) {
-                    pathEdit = qobject_cast<Panel::PathEdit*>(activeViewFrame_->getTopBar());
-                }
-            }
-        }
-        else {
-            // In single view, use the member variables if available
-            pathBar = pathBar_;
-            pathEdit = pathEntry_;
-        }
-
-        if (pathBar) {
-            pathBar->setPath(tabPage->path());
-        }
-        else if (pathEdit) {
-            pathEdit->setText(tabPage->pathName());
-        }
+        syncPathBarForFrame(activeViewFrame_);
 
         ui.statusbar->showMessage(tabPage->statusText());
 
