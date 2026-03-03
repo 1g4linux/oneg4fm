@@ -29,6 +29,8 @@ class TestSettingsFunctionality : public QObject {
     void testDirectorySchemaVersionCompatibility();
     void testProfileSchemaMigrationFromVersionZero();
     void testDirectorySchemaMigrationFromVersionZero();
+    void testProfileUnknownKeysPreservedAndReported();
+    void testProfileUnknownKeysStrictModeRejectsLoad();
 };
 
 void TestSettingsFunctionality::testSettingsInitialization() {
@@ -480,6 +482,98 @@ void TestSettingsFunctionality::testDirectorySchemaMigrationFromVersionZero() {
     settings.saveFolderSettings(path, loaded);
     QSettings saved(folderPath + QStringLiteral("/.directory"), QSettings::IniFormat);
     QCOMPARE(saved.value(QStringLiteral("File Manager/schema_version")).toInt(), 1);
+}
+
+void TestSettingsFunctionality::testProfileUnknownKeysPreservedAndReported() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    QVERIFY(qputenv("XDG_CONFIG_HOME", tempDir.path().toUtf8()));
+
+    const QByteArray oldStrictUnknownKeys = qgetenv("ONEG4FM_SETTINGS_STRICT_UNKNOWN_KEYS");
+    qunsetenv("ONEG4FM_SETTINGS_STRICT_UNKNOWN_KEYS");
+
+    const QString profileName = QStringLiteral("schema-unknown-keys-profile");
+    const QString profileDir = tempDir.path() + QStringLiteral("/oneg4fm/") + profileName;
+    QVERIFY(QDir().mkpath(profileDir));
+
+    const QString settingsPath = profileDir + QStringLiteral("/settings.conf");
+    QFile settingsFile(settingsPath);
+    QVERIFY(settingsFile.open(QIODevice::WriteOnly | QIODevice::Text));
+    settingsFile.write(
+        "[Meta]\n"
+        "schema_version=1\n"
+        "\n"
+        "[Window]\n"
+        "AlwaysShowTabs=false\n"
+        "\n"
+        "[Future]\n"
+        "ExperimentalFlag=enabled\n"
+        "\n"
+        "[Search]\n"
+        "unsupportedFutureToken=alpha\n");
+    settingsFile.close();
+
+    const QString expectedWarning =
+        QStringLiteral("Unknown settings keys in %1: Future/ExperimentalFlag, Search/unsupportedFutureToken")
+            .arg(settingsPath);
+    QTest::ignoreMessage(QtWarningMsg, qPrintable(expectedWarning));
+
+    Oneg4FM::Settings settings;
+    QVERIFY(settings.load(profileName));
+    QCOMPARE(settings.alwaysShowTabs(), false);
+
+    QVERIFY(settings.save(profileName));
+    QSettings saved(settingsPath, QSettings::IniFormat);
+    QCOMPARE(saved.value(QStringLiteral("Future/ExperimentalFlag")).toString(), QStringLiteral("enabled"));
+    QCOMPARE(saved.value(QStringLiteral("Search/unsupportedFutureToken")).toString(), QStringLiteral("alpha"));
+
+    if (oldStrictUnknownKeys.isNull()) {
+        qunsetenv("ONEG4FM_SETTINGS_STRICT_UNKNOWN_KEYS");
+    }
+    else {
+        qputenv("ONEG4FM_SETTINGS_STRICT_UNKNOWN_KEYS", oldStrictUnknownKeys);
+    }
+}
+
+void TestSettingsFunctionality::testProfileUnknownKeysStrictModeRejectsLoad() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    QVERIFY(qputenv("XDG_CONFIG_HOME", tempDir.path().toUtf8()));
+
+    const QByteArray oldStrictUnknownKeys = qgetenv("ONEG4FM_SETTINGS_STRICT_UNKNOWN_KEYS");
+    QVERIFY(qputenv("ONEG4FM_SETTINGS_STRICT_UNKNOWN_KEYS", QByteArrayLiteral("1")));
+
+    const QString profileName = QStringLiteral("schema-unknown-keys-strict-profile");
+    const QString profileDir = tempDir.path() + QStringLiteral("/oneg4fm/") + profileName;
+    QVERIFY(QDir().mkpath(profileDir));
+
+    const QString settingsPath = profileDir + QStringLiteral("/settings.conf");
+    QFile settingsFile(settingsPath);
+    QVERIFY(settingsFile.open(QIODevice::WriteOnly | QIODevice::Text));
+    settingsFile.write(
+        "[Meta]\n"
+        "schema_version=1\n"
+        "\n"
+        "[Window]\n"
+        "AlwaysShowTabs=false\n"
+        "\n"
+        "[Future]\n"
+        "ExperimentalFlag=enabled\n");
+    settingsFile.close();
+
+    const QString expectedWarning =
+        QStringLiteral("Unknown settings keys in %1: Future/ExperimentalFlag").arg(settingsPath);
+    QTest::ignoreMessage(QtWarningMsg, qPrintable(expectedWarning));
+
+    Oneg4FM::Settings settings;
+    QVERIFY(!settings.load(profileName));
+
+    if (oldStrictUnknownKeys.isNull()) {
+        qunsetenv("ONEG4FM_SETTINGS_STRICT_UNKNOWN_KEYS");
+    }
+    else {
+        qputenv("ONEG4FM_SETTINGS_STRICT_UNKNOWN_KEYS", oldStrictUnknownKeys);
+    }
 }
 
 QTEST_MAIN(TestSettingsFunctionality)

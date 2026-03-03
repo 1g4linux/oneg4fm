@@ -46,12 +46,15 @@ constexpr const char* kInstalledSchemaRelativePath = "oneg4fm/default/schema.jso
 constexpr const char* kSourceSchemaRelativePath = "config/oneg4fm/schema.json";
 constexpr const char* kProfileSchemaSurfaceId = "profile.settings.conf";
 constexpr const char* kDirectorySchemaSurfaceId = "directory.dir-settings.conf";
+constexpr const char* kStrictUnknownKeysEnv = "ONEG4FM_SETTINGS_STRICT_UNKNOWN_KEYS";
 constexpr int CURRENT_SCHEMA_VERSION = 1;
 constexpr int SUPPORTED_SCHEMA_BACKWARD_WINDOW = 0;
 constexpr const char* kProfileSchemaVersionKey = "Meta/schema_version";
 constexpr const char* kDirectorySchemaVersionKey = "schema_version";
 constexpr const char* kLegacyProfileSearchHiddenKey = "Search/searchHidden";
 constexpr const char* kProfileSearchHiddenKey = "Search/searchhHidden";
+
+enum class UnknownKeyPolicy { Preserve };
 
 struct SchemaKey {
     QString key;
@@ -177,6 +180,50 @@ bool loadProfileSchema(QVector<SchemaKey>& schemaKeys) {
 
 bool loadDirectorySchema(QVector<SchemaKey>& schemaKeys) {
     return loadSchemaSurface(QString::fromUtf8(kDirectorySchemaSurfaceId), schemaKeys);
+}
+
+QSet<QString> schemaKeySet(const QVector<SchemaKey>& schemaKeys) {
+    QSet<QString> knownKeys;
+    knownKeys.reserve(schemaKeys.size());
+    for (const SchemaKey& schemaKey : schemaKeys) {
+        knownKeys.insert(schemaKey.key);
+    }
+    return knownKeys;
+}
+
+QHash<QString, QVariant> collectUnknownAstEntries(const QHash<QString, QVariant>& ast, const QSet<QString>& knownKeys) {
+    QHash<QString, QVariant> unknownEntries;
+    for (auto it = ast.cbegin(); it != ast.cend(); ++it) {
+        if (!knownKeys.contains(it.key())) {
+            unknownEntries.insert(it.key(), it.value());
+        }
+    }
+    return unknownEntries;
+}
+
+QStringList sortedUnknownKeys(const QHash<QString, QVariant>& unknownEntries) {
+    QStringList keys;
+    keys.reserve(unknownEntries.size());
+    for (auto it = unknownEntries.cbegin(); it != unknownEntries.cend(); ++it) {
+        keys.push_back(it.key());
+    }
+    std::sort(keys.begin(), keys.end());
+    return keys;
+}
+
+bool strictUnknownKeysEnabled() {
+    const QByteArray raw = qgetenv(kStrictUnknownKeysEnv);
+    if (raw.isEmpty()) {
+        return false;
+    }
+
+    const QByteArray token = raw.trimmed().toLower();
+    return token == QByteArrayLiteral("1") || token == QByteArrayLiteral("true") || token == QByteArrayLiteral("yes") ||
+           token == QByteArrayLiteral("on");
+}
+
+UnknownKeyPolicy profileUnknownKeyPolicy() {
+    return UnknownKeyPolicy::Preserve;
 }
 
 QHash<QString, QVariant> readIniAst(const QString& filePath) {
@@ -698,6 +745,9 @@ bool Settings::save(QString profile) {
 }
 
 bool Settings::loadFile(QString filePath) {
+    loadedProfileSettingsPath_.clear();
+    preservedUnknownProfileKeys_.clear();
+
     QVector<SchemaKey> schemaKeys;
     if (!loadProfileSchema(schemaKeys)) {
         return false;
@@ -708,6 +758,15 @@ bool Settings::loadFile(QString filePath) {
     if (!migrateAstForward(SettingsSurface::Profile, QString::fromUtf8(kProfileSchemaVersionKey), ast,
                            &migrationReport)) {
         return false;
+    }
+
+    const QHash<QString, QVariant> unknownKeys = collectUnknownAstEntries(ast, schemaKeySet(schemaKeys));
+    if (!unknownKeys.isEmpty()) {
+        qWarning().noquote() << QStringLiteral("Unknown settings keys in %1: %2")
+                                    .arg(filePath, sortedUnknownKeys(unknownKeys).join(QStringLiteral(", ")));
+        if (strictUnknownKeysEnabled()) {
+            return false;
+        }
     }
 
     const QHash<QString, QVariant> normalized = normalizeAstBySchema(schemaKeys, ast);
@@ -813,6 +872,11 @@ bool Settings::loadFile(QString filePath) {
         while (contentPatterns_.size() > maxSearchHistory_) {
             contentPatterns_.removeLast();
         }
+    }
+
+    if (profileUnknownKeyPolicy() == UnknownKeyPolicy::Preserve) {
+        loadedProfileSettingsPath_ = QFileInfo(filePath).absoluteFilePath();
+        preservedUnknownProfileKeys_ = unknownKeys;
     }
 
     return true;
@@ -924,6 +988,13 @@ bool Settings::saveFile(QString filePath) {
     QSettings settings(filePath, QSettings::IniFormat);
     for (const SchemaKey& schemaKey : schemaKeys) {
         settings.setValue(schemaKey.key, normalized.value(schemaKey.key, schemaKey.defaultValue));
+    }
+    if (profileUnknownKeyPolicy() == UnknownKeyPolicy::Preserve &&
+        QFileInfo(filePath).absoluteFilePath() == loadedProfileSettingsPath_) {
+        const QStringList unknownKeys = sortedUnknownKeys(preservedUnknownProfileKeys_);
+        for (const QString& key : unknownKeys) {
+            settings.setValue(key, preservedUnknownProfileKeys_.value(key));
+        }
     }
     settings.sync();
 

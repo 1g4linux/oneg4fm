@@ -23,6 +23,8 @@
 #include "panel/panel.h"
 
 #include <QObject>
+#include <QHash>
+#include <QVariant>
 
 namespace Oneg4FM {
 
@@ -612,6 +614,10 @@ class Settings : public QObject {
     // detailed list columns
     QList<QVariant> customColumnWidths_;
     QList<QVariant> hiddenColumns_;
+
+    // Unknown profile keys are preserved for the loaded profile on save.
+    QString loadedProfileSettingsPath_;
+    QHash<QString, QVariant> preservedUnknownProfileKeys_;
 };
 
 }  // namespace Oneg4FM
