@@ -103,7 +103,8 @@ Rules:
 - Link mode remains on legacy link helpers; only copy/move is in scope for this
   contract adapter path.
 - Adapter builds `FileOpsContract::TransferRequest` and routes via typed
-  `run(...)` overloads.
+  request conversion + event-stream bridge:
+  `run(toRequest(request), handlers, streamHandlers)`.
 - Request assembly is centralized in `FileOpsRequestAssembly::buildTransferRequest`
   with deterministic 1:1 mapping from bridge inputs to contract fields.
 - Request identity is explicit: every assembled request carries a generated
@@ -111,8 +112,9 @@ Rules:
   `common.sourceSnapshots` / `common.uiContext.initiator`.
 - Uses `DestinationMappingMode::ExplicitPerSource` for per-item destination.
 - Conflict dialog integration:
-  - Legacy UI asks user via `askRename(...)`
-  - overwrite/skip/rename map directly to core conflict resolutions
+  - `PromptEvent` triggers legacy UI prompt via `askRename(...)`
+  - `ConflictEvent` consumes that response and maps
+    overwrite/skip/rename (+ `*All`) directly to core conflict resolutions
 - Progress from core is translated into legacy finished/current progress values.
 - Non-conflict errors are surfaced once through legacy error signals; adapter
   does not run retry loops.
@@ -134,8 +136,9 @@ Rules:
   (`Operation::Trash`, `Operation::Untrash`) with backend `Gio` via
   `FileOpsContract::TrashRequest` / `FileOpsContract::UntrashRequest`,
   assembled by `FileOpsRequestAssembly`.
-- Legacy dialogs continue to receive mapped conflict/error/cancel behavior
-  through the same job interfaces.
+- Untrash prompt/conflict UI wiring uses core event-stream callbacks
+  (`PromptEvent` + `ConflictEvent`) and maps responses mechanically to
+  core conflict resolutions.
 - Adapter does not probe mount/filesystem metadata or run retry loops for
   core-routed trash/untrash paths.
 

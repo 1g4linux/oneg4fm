@@ -800,17 +800,41 @@ void FileTransferJob::exec() {
             setFinishedAmount(aggregateFinishedBytes + bytesDone, aggregateFinishedFiles + filesDone);
         };
 
-        handlers.onConflict = [this, srcPath, originalDestPath](const CoreFileOps::ConflictEvent& event) {
-            const FilePath eventSource = FileOpsRequestAssembly::toFilePathFromCorePath(event.sourcePath, srcPath);
+        auto promptForConflictAction = [this, srcPath, originalDestPath](const std::string& sourcePath,
+                                                                         const std::string& destinationPath) {
+            const FilePath eventSource = FileOpsRequestAssembly::toFilePathFromCorePath(sourcePath, srcPath);
             const FilePath eventDestination =
-                FileOpsRequestAssembly::toFilePathFromCorePath(event.destinationPath, originalDestPath);
+                FileOpsRequestAssembly::toFilePathFromCorePath(destinationPath, originalDestPath);
 
             GFileInfoPtr sourceInfo = FileOpsRequestAssembly::makePromptInfoFromPath(eventSource);
             GFileInfoPtr destinationInfo = FileOpsRequestAssembly::makePromptInfoFromPath(eventDestination);
 
             FilePath ignoredNewDestination;
-            const FileExistsAction action = askRename(
-                FileInfo{sourceInfo, eventSource}, FileInfo{destinationInfo, eventDestination}, ignoredNewDestination);
+            return askRename(FileInfo{sourceInfo, eventSource}, FileInfo{destinationInfo, eventDestination},
+                             ignoredNewDestination);
+        };
+
+        bool pendingPromptDecision = false;
+        FileExistsAction pendingPromptAction = FileOperationJob::CANCEL;
+
+        CoreFileOps::EventStreamHandlers streamHandlers;
+        streamHandlers.onPrompt = [&pendingPromptDecision, &pendingPromptAction,
+                                   &promptForConflictAction](const CoreFileOps::PromptEvent& event) {
+            if (event.kind != CoreFileOps::PromptKind::ConflictResolution) {
+                return;
+            }
+
+            pendingPromptAction = promptForConflictAction(event.sourcePath, event.destinationPath);
+            pendingPromptDecision = true;
+        };
+
+        streamHandlers.onConflict = [this, &pendingPromptDecision, &pendingPromptAction,
+                                     &promptForConflictAction](const CoreFileOps::ConflictEvent& event) {
+            const FileExistsAction action = pendingPromptDecision
+                                                ? pendingPromptAction
+                                                : promptForConflictAction(event.sourcePath, event.destinationPath);
+            pendingPromptDecision = false;
+
             switch (action) {
                 case FileOperationJob::OVERWRITE:
                     return CoreFileOps::ConflictResolution::Overwrite;
@@ -832,7 +856,7 @@ void FileTransferJob::exec() {
             }
         };
 
-        const CoreFileOps::Result result = CoreFileOps::run(request, handlers);
+        const CoreFileOps::Result result = CoreFileOps::run(CoreFileOps::toRequest(request), handlers, streamHandlers);
         const std::uint64_t bytesDone = result.finalProgress.bytesDone;
         const std::uint64_t filesDone =
             result.finalProgress.filesDone > 0 ? static_cast<std::uint64_t>(result.finalProgress.filesDone) : 0;

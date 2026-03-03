@@ -884,6 +884,17 @@ void FileOpsInventoryTest::libfmQtCoreRoutedAdaptersAvoidPlannerRetryProbeLogic(
     QVERIFY2(
         transferCoreBlock.contains(QStringLiteral("CoreFileOps::ConflictResolution::RenameAll"), Qt::CaseSensitive),
         "FileTransferJob core-routed section must pass rename-all semantics to core");
+    QVERIFY2(transferCoreBlock.contains(QStringLiteral("CoreFileOps::EventStreamHandlers streamHandlers"),
+                                        Qt::CaseSensitive),
+             "FileTransferJob core-routed section must subscribe to core event-stream handlers");
+    QVERIFY2(transferCoreBlock.contains(QStringLiteral("streamHandlers.onPrompt"), Qt::CaseSensitive),
+             "FileTransferJob core-routed section must handle PromptEvent callbacks");
+    QVERIFY2(transferCoreBlock.contains(QStringLiteral("streamHandlers.onConflict"), Qt::CaseSensitive),
+             "FileTransferJob core-routed section must handle ConflictEvent callbacks");
+    QVERIFY2(transferCoreBlock.contains(
+                 QStringLiteral("CoreFileOps::run(CoreFileOps::toRequest(request), handlers, streamHandlers)"),
+                 Qt::CaseSensitive),
+             "FileTransferJob core-routed section must route typed requests through event-stream run() bridging");
     QVERIFY2(!transferContent.contains(QStringLiteral("G_IO_ERROR_WOULD_RECURSE"), Qt::CaseSensitive),
              "FileTransferJob must not implement adapter-side move-then-copy retry fallback heuristics");
 
@@ -977,6 +988,17 @@ void FileOpsInventoryTest::libfmQtCoreRoutedAdaptersAvoidPlannerRetryProbeLogic(
              "UntrashJob core-routed section must map rename-all prompt choices");
     QVERIFY2(untrashCoreBlock.contains(QStringLiteral("CoreFileOps::ConflictResolution::RenameAll"), Qt::CaseSensitive),
              "UntrashJob core-routed section must pass rename-all semantics to core");
+    QVERIFY2(
+        untrashCoreBlock.contains(QStringLiteral("CoreFileOps::EventStreamHandlers streamHandlers"), Qt::CaseSensitive),
+        "UntrashJob core-routed section must subscribe to core event-stream handlers");
+    QVERIFY2(untrashCoreBlock.contains(QStringLiteral("streamHandlers.onPrompt"), Qt::CaseSensitive),
+             "UntrashJob core-routed section must handle PromptEvent callbacks");
+    QVERIFY2(untrashCoreBlock.contains(QStringLiteral("streamHandlers.onConflict"), Qt::CaseSensitive),
+             "UntrashJob core-routed section must handle ConflictEvent callbacks");
+    QVERIFY2(untrashCoreBlock.contains(
+                 QStringLiteral("CoreFileOps::run(CoreFileOps::toRequest(request), handlers, streamHandlers)"),
+                 Qt::CaseSensitive),
+             "UntrashJob core-routed section must route typed requests through event-stream run() bridging");
     QVERIFY2(untrashLegacyBlock.contains(
                  QStringLiteral("Core file-ops contract unavailable: refusing legacy untrash adapter path"),
                  Qt::CaseSensitive),

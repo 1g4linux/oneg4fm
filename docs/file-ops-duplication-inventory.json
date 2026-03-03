@@ -87,9 +87,9 @@
       },
       {
         "file": "libfm-qt/src/core/filetransferjob.cpp",
-        "symbol": "handlers.onConflict = [this, srcPath, originalDestPath](const CoreFileOps::ConflictEvent& event) {",
+        "symbol": "streamHandlers.onConflict = [this, &pendingPromptDecision, &pendingPromptAction,",
         "state": "active-adapter",
-        "notes": "Core-routed conflict callback maps legacy UI responses to core conflict resolutions without retry heuristics."
+        "notes": "Core-routed event-stream conflict callback maps UI prompt answers to core conflict resolutions; PromptEvent + ConflictEvent remain adapter-side translation only."
       },
       {
         "file": "src/core/file_ops_contract.cpp",

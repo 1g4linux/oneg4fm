@@ -295,6 +295,10 @@ void LibfmQtFileOpsBridgeTest::nativeCopyMoveDeleteRoutingUsesExplicitClassifica
     QVERIFY(transferBytes.contains("CoreFileOps::TransferRequest"));
     QVERIFY(transferBytes.contains("FileOpsRequestAssembly::buildTransferRequest"));
     QVERIFY(transferBytes.contains("FileOpsRequestAssembly::validateRequestPathCount"));
+    QVERIFY(transferBytes.contains("CoreFileOps::EventStreamHandlers streamHandlers"));
+    QVERIFY(transferBytes.contains("streamHandlers.onPrompt"));
+    QVERIFY(transferBytes.contains("streamHandlers.onConflict"));
+    QVERIFY(transferBytes.contains("CoreFileOps::run(CoreFileOps::toRequest(request), handlers, streamHandlers)"));
     QVERIFY(transferBytes.contains("runCoreRoutedPath(srcPath, destPath, srcRouting, destRouting)"));
 
     const QString deletePath = QFINDTESTDATA("../libfm-qt/src/core/deletejob.cpp");
@@ -346,7 +350,10 @@ void LibfmQtFileOpsBridgeTest::trashAndUntrashJobsRouteViaCoreContract() {
     QVERIFY(untrashBytes.contains("CoreFileOps::UntrashRequest request"));
     QVERIFY(untrashBytes.contains("FileOpsRequestAssembly::buildUntrashRequest"));
     QVERIFY(untrashBytes.contains("FileOpsRequestAssembly::validateRequestPathCount"));
-    QVERIFY(untrashBytes.contains("CoreFileOps::run(request, handlers)"));
+    QVERIFY(untrashBytes.contains("CoreFileOps::EventStreamHandlers streamHandlers"));
+    QVERIFY(untrashBytes.contains("streamHandlers.onPrompt"));
+    QVERIFY(untrashBytes.contains("streamHandlers.onConflict"));
+    QVERIFY(untrashBytes.contains("CoreFileOps::run(CoreFileOps::toRequest(request), handlers, streamHandlers)"));
 }
 
 void LibfmQtFileOpsBridgeTest::requestAssemblyIncludesOpIdAndSourceSnapshot() {
