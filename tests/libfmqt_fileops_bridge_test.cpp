@@ -243,6 +243,8 @@ void LibfmQtFileOpsBridgeTest::nativeCopyMoveDeleteRoutingUsesExplicitClassifica
     QVERIFY(transferBytes.contains("RoutingClass::CoreLocal"));
     QVERIFY(transferBytes.contains("RoutingClass::LegacyGio"));
     QVERIFY(transferBytes.contains("RoutingClass::Unsupported"));
+    QVERIFY(transferBytes.contains("CoreFileOps::TransferRequest"));
+    QVERIFY(transferBytes.contains("request.common.options"));
     QVERIFY(transferBytes.contains("runCoreRoutedPath(srcPath, destPath, srcRouting, destRouting)"));
 
     const QString deletePath = QFINDTESTDATA("../libfm-qt/src/core/deletejob.cpp");
@@ -255,7 +257,23 @@ void LibfmQtFileOpsBridgeTest::nativeCopyMoveDeleteRoutingUsesExplicitClassifica
     QVERIFY(deleteBytes.contains("RoutingClass::CoreLocal"));
     QVERIFY(deleteBytes.contains("RoutingClass::LegacyGio"));
     QVERIFY(deleteBytes.contains("RoutingClass::Unsupported"));
+    QVERIFY(deleteBytes.contains("CoreFileOps::DeleteRequest"));
+    QVERIFY(deleteBytes.contains("request.common.options"));
     QVERIFY(deleteBytes.contains("runCoreRoutedDelete(path, pathRouting)"));
+
+    const QString trashPath = QFINDTESTDATA("../libfm-qt/src/core/trashjob.cpp");
+    QVERIFY2(!trashPath.isEmpty(), "Unable to locate libfm-qt/src/core/trashjob.cpp");
+    QFile trashSource(trashPath);
+    QVERIFY(trashSource.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QByteArray trashBytes = trashSource.readAll();
+    QVERIFY(trashBytes.contains("CoreFileOps::TrashRequest"));
+
+    const QString untrashPath = QFINDTESTDATA("../libfm-qt/src/core/untrashjob.cpp");
+    QVERIFY2(!untrashPath.isEmpty(), "Unable to locate libfm-qt/src/core/untrashjob.cpp");
+    QFile untrashSource(untrashPath);
+    QVERIFY(untrashSource.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QByteArray untrashBytes = untrashSource.readAll();
+    QVERIFY(untrashBytes.contains("CoreFileOps::UntrashRequest"));
 }
 
 void LibfmQtFileOpsBridgeTest::trashAndUntrashJobsRouteViaCoreContract() {
@@ -264,8 +282,8 @@ void LibfmQtFileOpsBridgeTest::trashAndUntrashJobsRouteViaCoreContract() {
     QFile trashSource(trashPath);
     QVERIFY(trashSource.open(QIODevice::ReadOnly | QIODevice::Text));
     const QByteArray trashBytes = trashSource.readAll();
-    QVERIFY(trashBytes.contains("request.operation = CoreFileOps::Operation::Trash"));
-    QVERIFY(trashBytes.contains("request.routing.defaultBackend = CoreFileOps::Backend::Gio"));
+    QVERIFY(trashBytes.contains("CoreFileOps::TrashRequest request"));
+    QVERIFY(trashBytes.contains("request.common.options.routing.defaultBackend = CoreFileOps::Backend::Gio"));
     QVERIFY(trashBytes.contains("CoreFileOps::run(request)"));
 
     const QString untrashPath = QFINDTESTDATA("../libfm-qt/src/core/untrashjob.cpp");
@@ -273,8 +291,8 @@ void LibfmQtFileOpsBridgeTest::trashAndUntrashJobsRouteViaCoreContract() {
     QFile untrashSource(untrashPath);
     QVERIFY(untrashSource.open(QIODevice::ReadOnly | QIODevice::Text));
     const QByteArray untrashBytes = untrashSource.readAll();
-    QVERIFY(untrashBytes.contains("request.operation = CoreFileOps::Operation::Untrash"));
-    QVERIFY(untrashBytes.contains("request.routing.defaultBackend = CoreFileOps::Backend::Gio"));
+    QVERIFY(untrashBytes.contains("CoreFileOps::UntrashRequest request"));
+    QVERIFY(untrashBytes.contains("request.common.options.routing.defaultBackend = CoreFileOps::Backend::Gio"));
     QVERIFY(untrashBytes.contains("CoreFileOps::run(request, handlers)"));
 }
 

@@ -37,8 +37,27 @@
 #include <sys/syscall.h>
 #include <thread>
 #include <unistd.h>
+#include <utility>
 
 namespace Oneg4FM::FileOpsContract {
+
+CancelHandle::CancelHandle() : state_(std::make_shared<State>()) {}
+
+void CancelHandle::cancel() const noexcept {
+    if (state_) {
+        state_->cancelled.store(true, std::memory_order_relaxed);
+    }
+}
+
+bool CancelHandle::isCancelled() const noexcept {
+    return state_ && state_->cancelled.load(std::memory_order_relaxed);
+}
+
+std::function<bool()> CancelHandle::callback() const {
+    const std::shared_ptr<State> state = state_;
+    return [state]() { return state && state->cancelled.load(std::memory_order_relaxed); };
+}
+
 namespace {
 
 struct SourceStats {
@@ -306,6 +325,49 @@ bool backend_supports_operation(const BackendCapabilities& backend_capabilities,
             return false;
     }
     return false;
+}
+
+Operation transfer_operation_to_operation(TransferOperation operation) {
+    switch (operation) {
+        case TransferOperation::Copy:
+            return Operation::Copy;
+        case TransferOperation::Move:
+            return Operation::Move;
+    }
+    return Operation::Copy;
+}
+
+Request to_request_common(const RequestCommon& common, Operation operation) {
+    Request request;
+    request.operation = operation;
+    request.sources = common.sources;
+    request.destination = common.destination;
+    request.conflictPolicy = common.policy.conflictPolicy;
+    request.symlinkPolicy = common.options.symlinkPolicy;
+    request.metadata = common.options.metadata;
+    request.atomicity = common.options.atomicity;
+    request.cancelGranularity = common.options.cancelGranularity;
+    request.linuxSafety = common.options.linuxSafety;
+    request.routing = common.options.routing;
+
+    if (common.cancellationRequested) {
+        request.cancellationRequested = common.cancellationRequested;
+    }
+    else {
+        request.cancellationRequested = common.cancelHandle.callback();
+    }
+
+    return request;
+}
+
+OpStatus to_op_status(const Result& result) {
+    if (result.success) {
+        return OpStatus::Success;
+    }
+    if (result.cancelled || result.error.code == EngineErrorCode::Cancelled || result.error.sysErrno == ECANCELED) {
+        return OpStatus::Cancelled;
+    }
+    return OpStatus::Failed;
 }
 
 CapabilityReport make_capability_report() {
@@ -1727,6 +1789,49 @@ CapabilityReport capabilities() {
     return capability_report();
 }
 
+Request toRequest(const TransferRequest& request) {
+    return to_request_common(request.common, transfer_operation_to_operation(request.transferOperation));
+}
+
+Request toRequest(const DeleteRequest& request) {
+    return to_request_common(request.common, Operation::Delete);
+}
+
+Request toRequest(const TrashRequest& request) {
+    return to_request_common(request.common, Operation::Trash);
+}
+
+Request toRequest(const UntrashRequest& request) {
+    return to_request_common(request.common, Operation::Untrash);
+}
+
+OpResult toOpResult(const Result& result, const RequestCommon& common) {
+    OpResult opResult;
+    opResult.status = to_op_status(result);
+    opResult.diagnostics.code = result.error.code;
+    opResult.diagnostics.step = result.error.step;
+    opResult.diagnostics.sysErrno = result.error.sysErrno;
+    opResult.diagnostics.message = result.error.message;
+    opResult.counters.bytesDone = result.finalProgress.bytesDone;
+    opResult.counters.bytesTotal = result.finalProgress.bytesTotal;
+    opResult.counters.filesDone = result.finalProgress.filesDone;
+    opResult.counters.filesTotal = result.finalProgress.filesTotal;
+
+    opResult.perItemResults.reserve(common.sources.size());
+    for (const std::string& source : common.sources) {
+        PerItemResult itemResult;
+        itemResult.sourcePath = source;
+        itemResult.destinationPath = common.destination.targetDir;
+        itemResult.status = opResult.status;
+        if (itemResult.status != OpStatus::Success) {
+            itemResult.error = result.error;
+        }
+        opResult.perItemResults.push_back(std::move(itemResult));
+    }
+
+    return opResult;
+}
+
 Result preflight(const Request& request) {
     Result result;
 
@@ -1744,6 +1849,22 @@ Result preflight(const Request& request) {
     return result;
 }
 
+Result preflight(const TransferRequest& request) {
+    return preflight(toRequest(request));
+}
+
+Result preflight(const DeleteRequest& request) {
+    return preflight(toRequest(request));
+}
+
+Result preflight(const TrashRequest& request) {
+    return preflight(toRequest(request));
+}
+
+Result preflight(const UntrashRequest& request) {
+    return preflight(toRequest(request));
+}
+
 Result run(const Request& request, const EventHandlers& handlers) {
     switch (request.linuxSafety.workerMode) {
         case WorkerMode::InProcess:
@@ -1758,6 +1879,81 @@ Result run(const Request& request, const EventHandlers& handlers) {
     set_error(result.error, EngineErrorCode::InvalidRequest, OperationStep::ValidateRequest, EINVAL,
               "Unknown worker mode");
     return result;
+}
+
+Result run(const Request& request, const EventHandlers& handlers, const EventStreamHandlers& streamHandlers) {
+    EventHandlers bridgedHandlers;
+    bridgedHandlers.onProgress = [&handlers, &streamHandlers](const ProgressSnapshot& progress) {
+        if (handlers.onProgress) {
+            handlers.onProgress(progress);
+        }
+        if (streamHandlers.onProgress) {
+            streamHandlers.onProgress(ProgressEvent{progress});
+        }
+    };
+
+    bridgedHandlers.onConflict = [&handlers, &streamHandlers](const ConflictEvent& conflict) {
+        if (streamHandlers.onPrompt) {
+            PromptEvent prompt;
+            prompt.kind = PromptKind::ConflictResolution;
+            prompt.sourcePath = conflict.sourcePath;
+            prompt.destinationPath = conflict.destinationPath;
+            prompt.message = "Resolve destination conflict";
+            streamHandlers.onPrompt(prompt);
+        }
+
+        if (handlers.onConflict) {
+            return handlers.onConflict(conflict);
+        }
+        if (streamHandlers.onConflict) {
+            return streamHandlers.onConflict(conflict);
+        }
+        return ConflictResolution::Abort;
+    };
+
+    const Result result = run(request, bridgedHandlers);
+    if (result.success) {
+        if (streamHandlers.onDone) {
+            streamHandlers.onDone(DoneEvent{result});
+        }
+    }
+    else if (streamHandlers.onError) {
+        streamHandlers.onError(ErrorEvent{result.error});
+    }
+
+    return result;
+}
+
+Result run(const TransferRequest& request, const EventHandlers& handlers) {
+    return run(toRequest(request), handlers);
+}
+
+Result run(const DeleteRequest& request, const EventHandlers& handlers) {
+    return run(toRequest(request), handlers);
+}
+
+Result run(const TrashRequest& request, const EventHandlers& handlers) {
+    return run(toRequest(request), handlers);
+}
+
+Result run(const UntrashRequest& request, const EventHandlers& handlers) {
+    return run(toRequest(request), handlers);
+}
+
+OpResult runOp(const TransferRequest& request, const EventHandlers& handlers) {
+    return toOpResult(run(request, handlers), request.common);
+}
+
+OpResult runOp(const DeleteRequest& request, const EventHandlers& handlers) {
+    return toOpResult(run(request, handlers), request.common);
+}
+
+OpResult runOp(const TrashRequest& request, const EventHandlers& handlers) {
+    return toOpResult(run(request, handlers), request.common);
+}
+
+OpResult runOp(const UntrashRequest& request, const EventHandlers& handlers) {
+    return toOpResult(run(request, handlers), request.common);
 }
 
 }  // namespace Oneg4FM::FileOpsContract

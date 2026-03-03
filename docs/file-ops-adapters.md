@@ -92,6 +92,8 @@ Rules:
 
 - For copy/move (not link), requests route through core contract for both local
   and legacy-GIO classifications.
+- Adapter builds `FileOpsContract::TransferRequest` and routes via typed
+  `run(...)` overloads.
 - Uses `DestinationMappingMode::ExplicitPerSource` for per-item destination.
 - Conflict dialog integration:
   - Legacy UI asks user via `askRename(...)`
@@ -105,13 +107,15 @@ Rules:
 
 - Delete routes through core contract for both `CoreLocal` and `LegacyGio`
   classifications.
+- Adapter builds `FileOpsContract::DeleteRequest`.
 - Progress is aggregated into legacy `finishedAmount`.
 - Unsupported routing class is reported as a critical error and operation abort.
 
 ### `TrashJob` and `UntrashJob` Bridge
 
 - Trash/untrash requests are translated into core contract operations
-  (`Operation::Trash`, `Operation::Untrash`) with backend `Gio`.
+  (`Operation::Trash`, `Operation::Untrash`) with backend `Gio` via
+  `FileOpsContract::TrashRequest` / `FileOpsContract::UntrashRequest`.
 - Legacy dialogs continue to receive mapped conflict/error/cancel behavior
   through the same job interfaces.
 

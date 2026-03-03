@@ -6,8 +6,10 @@
 #ifndef PCMANFM_FILE_OPS_CONTRACT_H
 #define PCMANFM_FILE_OPS_CONTRACT_H
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -98,6 +100,22 @@ struct RoutingHints {
     EndpointKind destinationKind = EndpointKind::NativePath;
 };
 
+class CancelHandle {
+   public:
+    CancelHandle();
+
+    void cancel() const noexcept;
+    bool isCancelled() const noexcept;
+    std::function<bool()> callback() const;
+
+   private:
+    struct State {
+        std::atomic<bool> cancelled{false};
+    };
+
+    std::shared_ptr<State> state_;
+};
+
 struct Request {
     Operation operation = Operation::Copy;
     std::vector<std::string> sources;
@@ -110,6 +128,56 @@ struct Request {
     std::function<bool()> cancellationRequested;
     LinuxSafetyRequirements linuxSafety;
     RoutingHints routing;
+};
+
+struct RequestOptions {
+    SymlinkPolicy symlinkPolicy;
+    MetadataPolicy metadata;
+    AtomicityHints atomicity;
+    CancelCheckpointGranularity cancelGranularity = CancelCheckpointGranularity::PerChunk;
+    LinuxSafetyRequirements linuxSafety;
+    RoutingHints routing;
+};
+
+struct RequestPolicy {
+    ConflictPolicy conflictPolicy = ConflictPolicy::Overwrite;
+};
+
+struct UiContext {
+    std::string initiator;
+};
+
+struct RequestCommon {
+    std::string opId;
+    std::vector<std::string> sources;
+    DestinationPolicy destination;
+    RequestOptions options;
+    RequestPolicy policy;
+    UiContext uiContext;
+    CancelHandle cancelHandle;
+    std::function<bool()> cancellationRequested;
+};
+
+enum class TransferOperation {
+    Copy,
+    Move,
+};
+
+struct TransferRequest {
+    TransferOperation transferOperation = TransferOperation::Copy;
+    RequestCommon common;
+};
+
+struct DeleteRequest {
+    RequestCommon common;
+};
+
+struct TrashRequest {
+    RequestCommon common;
+};
+
+struct UntrashRequest {
+    RequestCommon common;
 };
 
 enum class ProgressPhase {
@@ -135,6 +203,22 @@ struct ConflictEvent {
     std::string sourcePath;
     std::string destinationPath;
     bool destinationIsDirectory = false;
+};
+
+struct ProgressEvent {
+    ProgressSnapshot progress;
+};
+
+enum class PromptKind {
+    ConflictResolution,
+    Generic,
+};
+
+struct PromptEvent {
+    PromptKind kind = PromptKind::Generic;
+    std::string sourcePath;
+    std::string destinationPath;
+    std::string message;
 };
 
 enum class ConflictResolution {
@@ -179,11 +263,53 @@ struct Error {
     }
 };
 
+struct ErrorEvent {
+    Error error;
+};
+
 struct Result {
     bool success = false;
     bool cancelled = false;
     ProgressSnapshot finalProgress;
     Error error;
+};
+
+struct DoneEvent {
+    Result result;
+};
+
+enum class OpStatus {
+    Success,
+    Cancelled,
+    Failed,
+};
+
+struct OpCounters {
+    std::uint64_t bytesDone = 0;
+    std::uint64_t bytesTotal = 0;
+    int filesDone = 0;
+    int filesTotal = 0;
+};
+
+struct OpDiagnostics {
+    EngineErrorCode code = EngineErrorCode::None;
+    OperationStep step = OperationStep::None;
+    int sysErrno = 0;
+    std::string message;
+};
+
+struct PerItemResult {
+    std::string sourcePath;
+    std::string destinationPath;
+    OpStatus status = OpStatus::Failed;
+    Error error;
+};
+
+struct OpResult {
+    OpStatus status = OpStatus::Failed;
+    std::vector<PerItemResult> perItemResults;
+    OpDiagnostics diagnostics;
+    OpCounters counters;
 };
 
 using ProgressCallback = std::function<void(const ProgressSnapshot&)>;
@@ -192,6 +318,20 @@ using ConflictCallback = std::function<ConflictResolution(const ConflictEvent&)>
 struct EventHandlers {
     ProgressCallback onProgress;
     ConflictCallback onConflict;
+};
+
+using ProgressEventCallback = std::function<void(const ProgressEvent&)>;
+using PromptEventCallback = std::function<void(const PromptEvent&)>;
+using ConflictEventCallback = std::function<ConflictResolution(const ConflictEvent&)>;
+using DoneEventCallback = std::function<void(const DoneEvent&)>;
+using ErrorEventCallback = std::function<void(const ErrorEvent&)>;
+
+struct EventStreamHandlers {
+    ProgressEventCallback onProgress;
+    PromptEventCallback onPrompt;
+    ConflictEventCallback onConflict;
+    DoneEventCallback onDone;
+    ErrorEventCallback onError;
 };
 
 struct BackendCapabilities {
@@ -213,8 +353,30 @@ struct CapabilityReport {
 };
 
 CapabilityReport capabilities();
+Request toRequest(const TransferRequest& request);
+Request toRequest(const DeleteRequest& request);
+Request toRequest(const TrashRequest& request);
+Request toRequest(const UntrashRequest& request);
+
+OpResult toOpResult(const Result& result, const RequestCommon& common);
+
 Result preflight(const Request& request);
+Result preflight(const TransferRequest& request);
+Result preflight(const DeleteRequest& request);
+Result preflight(const TrashRequest& request);
+Result preflight(const UntrashRequest& request);
+
 Result run(const Request& request, const EventHandlers& handlers = {});
+Result run(const Request& request, const EventHandlers& handlers, const EventStreamHandlers& streamHandlers);
+Result run(const TransferRequest& request, const EventHandlers& handlers = {});
+Result run(const DeleteRequest& request, const EventHandlers& handlers = {});
+Result run(const TrashRequest& request, const EventHandlers& handlers = {});
+Result run(const UntrashRequest& request, const EventHandlers& handlers = {});
+
+OpResult runOp(const TransferRequest& request, const EventHandlers& handlers = {});
+OpResult runOp(const DeleteRequest& request, const EventHandlers& handlers = {});
+OpResult runOp(const TrashRequest& request, const EventHandlers& handlers = {});
+OpResult runOp(const UntrashRequest& request, const EventHandlers& handlers = {});
 
 }  // namespace Oneg4FM::FileOpsContract
 

@@ -87,8 +87,9 @@ GFileInfoPtr queryInfoOrFallback(const FilePath& path, GCancellable* cancellable
     return GFileInfoPtr{fallback, false};
 }
 
-CoreFileOps::Operation toCoreOperation(FileTransferJob::Mode mode) {
-    return mode == FileTransferJob::Mode::MOVE ? CoreFileOps::Operation::Move : CoreFileOps::Operation::Copy;
+CoreFileOps::TransferOperation toCoreOperation(FileTransferJob::Mode mode) {
+    return mode == FileTransferJob::Mode::MOVE ? CoreFileOps::TransferOperation::Move
+                                               : CoreFileOps::TransferOperation::Copy;
 }
 
 CoreFileOps::Backend backendForRouting(FileOpsBridgePolicy::RoutingClass sourceRouting,
@@ -867,31 +868,37 @@ void FileTransferJob::exec() {
                 CoreFileOps::EndpointKind destinationKind = CoreFileOps::EndpointKind::NativePath;
             } renameRequest;
 
-            CoreFileOps::Request request;
-            request.operation = toCoreOperation(mode_);
-            request.sources = {sourceEndpoint};
-            request.destination.targetDir = destinationDirEndpoint;
-            request.destination.mappingMode = CoreFileOps::DestinationMappingMode::ExplicitPerSource;
-            request.destination.explicitTargets = {destinationEndpoint};
-            request.conflictPolicy = CoreFileOps::ConflictPolicy::Prompt;
-            request.symlinkPolicy.followSymlinks = false;
-            request.symlinkPolicy.copyMode = CoreFileOps::SymlinkCopyMode::CopyLinkAsLink;
-            request.metadata.preserveOwnership = true;
-            request.metadata.preservePermissions = true;
-            request.metadata.preserveTimestamps = true;
-            request.atomicity.requireAtomicReplace = false;
-            request.atomicity.bestEffortAtomicMove = true;
-            request.cancelGranularity = CoreFileOps::CancelCheckpointGranularity::PerChunk;
-            request.cancellationRequested = [this]() { return isCancelled(); };
-            request.linuxSafety.requireOpenat2Resolve = (requestBackend == CoreFileOps::Backend::LocalHardened);
-            request.linuxSafety.requireLandlock = false;
-            request.linuxSafety.requireSeccomp = false;
-            request.linuxSafety.workerMode = CoreFileOps::WorkerMode::InProcess;
-            request.routing.defaultBackend = requestBackend;
-            request.routing.sourceKinds = {sourceEndpointKind};
-            request.routing.sourceBackends = {requestBackend};
-            request.routing.destinationKind = destinationEndpointKind;
-            request.routing.destinationBackend = requestBackend;
+            CoreFileOps::TransferRequest request;
+            request.transferOperation = toCoreOperation(mode_);
+            request.common.sources = {sourceEndpoint};
+            request.common.destination.targetDir = destinationDirEndpoint;
+            request.common.destination.mappingMode = CoreFileOps::DestinationMappingMode::ExplicitPerSource;
+            request.common.destination.explicitTargets = {destinationEndpoint};
+            request.common.policy.conflictPolicy = CoreFileOps::ConflictPolicy::Prompt;
+            request.common.options.symlinkPolicy.followSymlinks = false;
+            request.common.options.symlinkPolicy.copyMode = CoreFileOps::SymlinkCopyMode::CopyLinkAsLink;
+            request.common.options.metadata.preserveOwnership = true;
+            request.common.options.metadata.preservePermissions = true;
+            request.common.options.metadata.preserveTimestamps = true;
+            request.common.options.atomicity.requireAtomicReplace = false;
+            request.common.options.atomicity.bestEffortAtomicMove = true;
+            request.common.options.cancelGranularity = CoreFileOps::CancelCheckpointGranularity::PerChunk;
+            request.common.cancellationRequested = [this, cancelHandle = request.common.cancelHandle]() mutable {
+                if (isCancelled()) {
+                    cancelHandle.cancel();
+                }
+                return cancelHandle.isCancelled();
+            };
+            request.common.options.linuxSafety.requireOpenat2Resolve =
+                (requestBackend == CoreFileOps::Backend::LocalHardened);
+            request.common.options.linuxSafety.requireLandlock = false;
+            request.common.options.linuxSafety.requireSeccomp = false;
+            request.common.options.linuxSafety.workerMode = CoreFileOps::WorkerMode::InProcess;
+            request.common.options.routing.defaultBackend = requestBackend;
+            request.common.options.routing.sourceKinds = {sourceEndpointKind};
+            request.common.options.routing.sourceBackends = {requestBackend};
+            request.common.options.routing.destinationKind = destinationEndpointKind;
+            request.common.options.routing.destinationBackend = requestBackend;
 
             CoreFileOps::EventHandlers handlers;
             handlers.onProgress = [this, baseFinishedBytes, baseFinishedFiles,

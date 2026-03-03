@@ -6,7 +6,13 @@ This document defines the behavior of `Oneg4FM::FileOpsContract` in
 ## Entry Point
 
 - API: `Oneg4FM::FileOpsContract::run(const Request&, const EventHandlers&)`
+- Typed APIs:
+  - `run(const TransferRequest&, ...)`
+  - `run(const DeleteRequest&, ...)`
+  - `run(const TrashRequest&, ...)`
+  - `run(const UntrashRequest&, ...)`
 - Preflight API: `Oneg4FM::FileOpsContract::preflight(const Request&)`
+- Typed preflight APIs are available for the same request families.
 - Capability API: `Oneg4FM::FileOpsContract::capabilities()`
 - Backend dispatch is resolved in core and executed through one entrypoint:
   - `LocalHardened`: Linux-hardened local engine (`dirfd` + `openat2` policy)
@@ -49,6 +55,30 @@ The contract accepts a `Request` and validates it before planning/execution.
 The `linuxSafety.*` fields are the members of `LinuxSafetyRequirements`.
 The `routing.*` fields are the members of `RoutingHints`.
 
+## Typed Request Families
+
+For adapter-facing usage, the contract also exposes explicit request structs:
+
+- `TransferRequest` (`transferOperation = Copy|Move`)
+- `DeleteRequest`
+- `TrashRequest`
+- `UntrashRequest`
+
+Each typed request includes `RequestCommon`, which contains:
+
+- `opId`
+- `sources`
+- `destination`
+- `options` (`RequestOptions`)
+- `policy` (`RequestPolicy`)
+- `uiContext`
+- `cancelHandle` (`CancelHandle`)
+- `cancellationRequested` (optional callback override)
+
+`toRequest(...)` conversion helpers map typed requests into canonical
+`Request` objects, and typed `run(...)` / `preflight(...)` overloads execute
+through the same core validation and execution paths as canonical requests.
+
 Routing validation currently enforces single-backend execution per request.
 Mixed backend requests are rejected with `EngineErrorCode::UnsupportedPolicy`.
 
@@ -90,6 +120,20 @@ not required for execution.
 
 If prompt mode is requested without `onConflict`, execution fails with
 `EngineErrorCode::UnsupportedPolicy`.
+
+## Typed Event Stream
+
+Alongside `EventHandlers`, adapters can use `EventStreamHandlers` to observe:
+
+- `ProgressEvent`
+- `PromptEvent`
+- `ConflictEvent`
+- `DoneEvent`
+- `ErrorEvent`
+
+`run(const Request&, const EventHandlers&, const EventStreamHandlers&)` bridges
+canonical callbacks and emits stream events without changing execution
+semantics.
 
 ## Backend Capabilities and Early Checks
 
@@ -134,6 +178,16 @@ errors used by `run()`, without executing planning or mutations.
   - message
 
 Cancellation always maps to `EngineErrorCode::Cancelled` with `ECANCELED`.
+
+The adapter-oriented `OpResult` shape is also available:
+
+- `status` (`Success`, `Cancelled`, `Failed`)
+- `perItemResults`
+- `diagnostics`
+- `counters`
+
+`toOpResult(...)` and `runOp(...)` provide typed-result conversion while
+preserving canonical `Result` behavior as source of truth.
 
 ## Error Codes (`EngineErrorCode`)
 

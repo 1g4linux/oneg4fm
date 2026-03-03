@@ -101,6 +101,10 @@ class FileOpsContractTest : public QObject {
     void copyWorksWhenPathsUseSymlinkedDirectoryAlias();
     void moveReportsMonotonicProgressAndStableTotals();
     void deleteReportsMonotonicProgressAndStableTotals();
+    void typedTransferRequestRunsThroughCoreContract();
+    void cancelHandleCancelsTypedTransferRequest();
+    void eventStreamHandlersReceivePromptConflictAndDoneEvents();
+    void opResultConversionCarriesStatusDiagnosticsAndPerItemResults();
     void cancelReturnsEcanceled();
     void moveCancelAfterProgressReturnsEcanceledWithFinalSnapshot();
     void skipConflictPolicyHandlesLateDestinationConflict();
@@ -307,6 +311,163 @@ void FileOpsContractTest::deleteReportsMonotonicProgressAndStableTotals() {
     QCOMPARE(result.finalProgress.filesDone, result.finalProgress.filesTotal);
     QCOMPARE(result.finalProgress.bytesDone, result.finalProgress.bytesTotal);
     QCOMPARE(result.finalProgress.phase, ProgressPhase::Finalizing);
+}
+
+void FileOpsContractTest::typedTransferRequestRunsThroughCoreContract() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcDir = dir.path() + QLatin1String("/src");
+    const QString dstDir = dir.path() + QLatin1String("/dst");
+    QVERIFY(QDir().mkpath(srcDir));
+    QVERIFY(QDir().mkpath(dstDir));
+
+    const QString srcPath = writeTempFile(srcDir + QLatin1String("/typed.txt"), QByteArray("typed-copy"));
+    const QString dstPath = dstDir + QLatin1String("/typed.txt");
+
+    TransferRequest request;
+    request.transferOperation = TransferOperation::Copy;
+    request.common.opId = "typed-transfer-copy";
+    request.common.sources = {toNative(srcPath)};
+    request.common.destination.targetDir = toNative(dstDir);
+    request.common.destination.mappingMode = DestinationMappingMode::SourceBasename;
+    request.common.policy.conflictPolicy = ConflictPolicy::Overwrite;
+
+    const Request canonicalRequest = toRequest(request);
+    QCOMPARE(canonicalRequest.operation, Operation::Copy);
+    QCOMPARE(canonicalRequest.sources.size(), std::size_t(1));
+    QCOMPARE(canonicalRequest.sources[0], toNative(srcPath));
+    QCOMPARE(canonicalRequest.destination.targetDir, toNative(dstDir));
+    QCOMPARE(canonicalRequest.conflictPolicy, ConflictPolicy::Overwrite);
+
+    const Result preflightResult = preflight(request);
+    QVERIFY(preflightResult.success);
+    QVERIFY(!preflightResult.cancelled);
+
+    const Result result = run(request);
+    QVERIFY(result.success);
+    QVERIFY(!result.cancelled);
+    QCOMPARE(result.error.code, EngineErrorCode::None);
+    QCOMPARE(readFile(dstPath), QByteArray("typed-copy"));
+}
+
+void FileOpsContractTest::cancelHandleCancelsTypedTransferRequest() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcPath = dir.path() + QLatin1String("/cancel.bin");
+    const QString dstDir = dir.path() + QLatin1String("/dst");
+    QVERIFY(QDir().mkpath(dstDir));
+    QVERIFY(createSparseFile(srcPath, 64LL * 1024LL * 1024LL));
+
+    TransferRequest request;
+    request.transferOperation = TransferOperation::Copy;
+    request.common.sources = {toNative(srcPath)};
+    request.common.destination.targetDir = toNative(dstDir);
+    request.common.destination.mappingMode = DestinationMappingMode::SourceBasename;
+    request.common.policy.conflictPolicy = ConflictPolicy::Overwrite;
+
+    const CancelHandle cancelHandle = request.common.cancelHandle;
+    EventHandlers handlers;
+    handlers.onProgress = [cancelHandle](const ProgressSnapshot& update) mutable {
+        if (update.bytesDone > 0 && update.bytesDone < update.bytesTotal) {
+            cancelHandle.cancel();
+        }
+    };
+
+    const Result result = run(request, handlers);
+    QVERIFY(!result.success);
+    QVERIFY(result.cancelled);
+    QCOMPARE(result.error.code, EngineErrorCode::Cancelled);
+    QCOMPARE(result.error.sysErrno, ECANCELED);
+}
+
+void FileOpsContractTest::eventStreamHandlersReceivePromptConflictAndDoneEvents() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcDir = dir.path() + QLatin1String("/src");
+    const QString dstDir = dir.path() + QLatin1String("/dst");
+    QVERIFY(QDir().mkpath(srcDir));
+    QVERIFY(QDir().mkpath(dstDir));
+
+    const QString srcPath = writeTempFile(srcDir + QLatin1String("/conflict.txt"), QByteArray("new"));
+    const QString dstPath = writeTempFile(dstDir + QLatin1String("/conflict.txt"), QByteArray("existing"));
+
+    Request request;
+    request.operation = Operation::Copy;
+    request.sources = {toNative(srcPath)};
+    request.destination.targetDir = toNative(dstDir);
+    request.destination.mappingMode = DestinationMappingMode::SourceBasename;
+    request.conflictPolicy = ConflictPolicy::Prompt;
+
+    int progressEvents = 0;
+    int promptEvents = 0;
+    int conflictEvents = 0;
+    int doneEvents = 0;
+    int errorEvents = 0;
+
+    EventStreamHandlers streamHandlers;
+    streamHandlers.onProgress = [&progressEvents](const ProgressEvent&) { ++progressEvents; };
+    streamHandlers.onPrompt = [&promptEvents](const PromptEvent& event) {
+        ++promptEvents;
+        QCOMPARE(event.kind, PromptKind::ConflictResolution);
+        QVERIFY(!event.sourcePath.empty());
+        QVERIFY(!event.destinationPath.empty());
+    };
+    streamHandlers.onConflict = [&conflictEvents](const ConflictEvent&) {
+        ++conflictEvents;
+        return ConflictResolution::Skip;
+    };
+    streamHandlers.onDone = [&doneEvents](const DoneEvent&) { ++doneEvents; };
+    streamHandlers.onError = [&errorEvents](const ErrorEvent&) { ++errorEvents; };
+
+    const Result result = run(request, EventHandlers{}, streamHandlers);
+    QVERIFY(result.success);
+    QVERIFY(!result.cancelled);
+    QVERIFY(progressEvents > 0);
+    QCOMPARE(promptEvents, 1);
+    QCOMPARE(conflictEvents, 1);
+    QCOMPARE(doneEvents, 1);
+    QCOMPARE(errorEvents, 0);
+    QCOMPARE(readFile(dstPath), QByteArray("existing"));
+}
+
+void FileOpsContractTest::opResultConversionCarriesStatusDiagnosticsAndPerItemResults() {
+    RequestCommon common;
+    common.sources = {"/tmp/a", "/tmp/b"};
+    common.destination.targetDir = "/tmp/dst";
+
+    Result cancelled;
+    cancelled.success = false;
+    cancelled.cancelled = true;
+    cancelled.finalProgress.bytesDone = 8;
+    cancelled.finalProgress.bytesTotal = 16;
+    cancelled.finalProgress.filesDone = 1;
+    cancelled.finalProgress.filesTotal = 2;
+    cancelled.error.code = EngineErrorCode::Cancelled;
+    cancelled.error.step = OperationStep::Execute;
+    cancelled.error.sysErrno = ECANCELED;
+    cancelled.error.message = "Operation cancelled";
+
+    const OpResult converted = toOpResult(cancelled, common);
+    QCOMPARE(converted.status, OpStatus::Cancelled);
+    QCOMPARE(converted.diagnostics.code, EngineErrorCode::Cancelled);
+    QCOMPARE(converted.diagnostics.step, OperationStep::Execute);
+    QCOMPARE(converted.diagnostics.sysErrno, ECANCELED);
+    QCOMPARE(converted.counters.bytesDone, std::uint64_t(8));
+    QCOMPARE(converted.counters.bytesTotal, std::uint64_t(16));
+    QCOMPARE(converted.counters.filesDone, 1);
+    QCOMPARE(converted.counters.filesTotal, 2);
+    QCOMPARE(converted.perItemResults.size(), std::size_t(2));
+    QCOMPARE(converted.perItemResults[0].status, OpStatus::Cancelled);
+    QCOMPARE(converted.perItemResults[1].status, OpStatus::Cancelled);
+    QCOMPARE(converted.perItemResults[0].destinationPath, std::string("/tmp/dst"));
+
+    TransferRequest invalidTransfer;
+    const OpResult invalidResult = runOp(invalidTransfer);
+    QCOMPARE(invalidResult.status, OpStatus::Failed);
+    QCOMPARE(invalidResult.diagnostics.code, EngineErrorCode::InvalidRequest);
 }
 
 void FileOpsContractTest::cancelReturnsEcanceled() {

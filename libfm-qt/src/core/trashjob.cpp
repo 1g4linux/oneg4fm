@@ -122,23 +122,27 @@ void TrashJob::exec() {
                 continue;
             }
 
-            CoreFileOps::Request request;
-            request.operation = CoreFileOps::Operation::Trash;
-            request.sources = {sourceEndpoint};
-            request.symlinkPolicy.followSymlinks = false;
-            request.symlinkPolicy.copyMode = CoreFileOps::SymlinkCopyMode::CopyLinkAsLink;
-            request.metadata.preserveOwnership = true;
-            request.metadata.preservePermissions = true;
-            request.metadata.preserveTimestamps = true;
-            request.cancelGranularity = CoreFileOps::CancelCheckpointGranularity::PerChunk;
-            request.cancellationRequested = [this]() { return isCancelled(); };
-            request.linuxSafety.requireOpenat2Resolve = false;
-            request.linuxSafety.requireLandlock = false;
-            request.linuxSafety.requireSeccomp = false;
-            request.linuxSafety.workerMode = CoreFileOps::WorkerMode::InProcess;
-            request.routing.defaultBackend = CoreFileOps::Backend::Gio;
-            request.routing.sourceKinds = {sourceKind};
-            request.routing.sourceBackends = {CoreFileOps::Backend::Gio};
+            CoreFileOps::TrashRequest request;
+            request.common.sources = {sourceEndpoint};
+            request.common.options.symlinkPolicy.followSymlinks = false;
+            request.common.options.symlinkPolicy.copyMode = CoreFileOps::SymlinkCopyMode::CopyLinkAsLink;
+            request.common.options.metadata.preserveOwnership = true;
+            request.common.options.metadata.preservePermissions = true;
+            request.common.options.metadata.preserveTimestamps = true;
+            request.common.options.cancelGranularity = CoreFileOps::CancelCheckpointGranularity::PerChunk;
+            request.common.cancellationRequested = [this, cancelHandle = request.common.cancelHandle]() mutable {
+                if (isCancelled()) {
+                    cancelHandle.cancel();
+                }
+                return cancelHandle.isCancelled();
+            };
+            request.common.options.linuxSafety.requireOpenat2Resolve = false;
+            request.common.options.linuxSafety.requireLandlock = false;
+            request.common.options.linuxSafety.requireSeccomp = false;
+            request.common.options.linuxSafety.workerMode = CoreFileOps::WorkerMode::InProcess;
+            request.common.options.routing.defaultBackend = CoreFileOps::Backend::Gio;
+            request.common.options.routing.sourceKinds = {sourceKind};
+            request.common.options.routing.sourceBackends = {CoreFileOps::Backend::Gio};
 
             const CoreFileOps::Result result = CoreFileOps::run(request);
             if (result.success) {

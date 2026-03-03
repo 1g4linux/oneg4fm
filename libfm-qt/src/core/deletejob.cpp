@@ -273,23 +273,28 @@ void DeleteJob::exec() {
             std::uint64_t baseFinishedFiles = 0;
             finishedAmount(baseFinishedBytes, baseFinishedFiles);
 
-            CoreFileOps::Request request;
-            request.operation = CoreFileOps::Operation::Delete;
-            request.sources = {sourceEndpoint};
-            request.symlinkPolicy.followSymlinks = false;
-            request.symlinkPolicy.copyMode = CoreFileOps::SymlinkCopyMode::CopyLinkAsLink;
-            request.metadata.preserveOwnership = true;
-            request.metadata.preservePermissions = true;
-            request.metadata.preserveTimestamps = true;
-            request.cancelGranularity = CoreFileOps::CancelCheckpointGranularity::PerChunk;
-            request.cancellationRequested = [this]() { return isCancelled(); };
-            request.linuxSafety.requireOpenat2Resolve = (requestBackend == CoreFileOps::Backend::LocalHardened);
-            request.linuxSafety.requireLandlock = false;
-            request.linuxSafety.requireSeccomp = false;
-            request.linuxSafety.workerMode = CoreFileOps::WorkerMode::InProcess;
-            request.routing.defaultBackend = requestBackend;
-            request.routing.sourceKinds = {sourceKind};
-            request.routing.sourceBackends = {requestBackend};
+            CoreFileOps::DeleteRequest request;
+            request.common.sources = {sourceEndpoint};
+            request.common.options.symlinkPolicy.followSymlinks = false;
+            request.common.options.symlinkPolicy.copyMode = CoreFileOps::SymlinkCopyMode::CopyLinkAsLink;
+            request.common.options.metadata.preserveOwnership = true;
+            request.common.options.metadata.preservePermissions = true;
+            request.common.options.metadata.preserveTimestamps = true;
+            request.common.options.cancelGranularity = CoreFileOps::CancelCheckpointGranularity::PerChunk;
+            request.common.cancellationRequested = [this, cancelHandle = request.common.cancelHandle]() mutable {
+                if (isCancelled()) {
+                    cancelHandle.cancel();
+                }
+                return cancelHandle.isCancelled();
+            };
+            request.common.options.linuxSafety.requireOpenat2Resolve =
+                (requestBackend == CoreFileOps::Backend::LocalHardened);
+            request.common.options.linuxSafety.requireLandlock = false;
+            request.common.options.linuxSafety.requireSeccomp = false;
+            request.common.options.linuxSafety.workerMode = CoreFileOps::WorkerMode::InProcess;
+            request.common.options.routing.defaultBackend = requestBackend;
+            request.common.options.routing.sourceKinds = {sourceKind};
+            request.common.options.routing.sourceBackends = {requestBackend};
 
             CoreFileOps::EventHandlers handlers;
             handlers.onProgress = [this, baseFinishedBytes, baseFinishedFiles,
