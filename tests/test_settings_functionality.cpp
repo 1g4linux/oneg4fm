@@ -25,6 +25,8 @@ class TestSettingsFunctionality : public QObject {
     void testSettingsLoadSave();
     void testSchemaNormalizationConstraints();
     void testFolderSettingsSchemaNormalization();
+    void testProfileSchemaVersionCompatibility();
+    void testDirectorySchemaVersionCompatibility();
 };
 
 void TestSettingsFunctionality::testSettingsInitialization() {
@@ -345,6 +347,70 @@ void TestSettingsFunctionality::testFolderSettingsSchemaNormalization() {
     QCOMPARE(folderSettings.sortFolderFirst(), false);
     QCOMPARE(folderSettings.sortCaseSensitive(), false);
     QCOMPARE(folderSettings.recursive(), true);
+}
+
+void TestSettingsFunctionality::testProfileSchemaVersionCompatibility() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    QVERIFY(qputenv("XDG_CONFIG_HOME", tempDir.path().toUtf8()));
+
+    const QString profileName = QStringLiteral("schema-version-profile");
+    const QString profileDir = tempDir.path() + QStringLiteral("/oneg4fm/") + profileName;
+    QVERIFY(QDir().mkpath(profileDir));
+
+    const QString settingsPath = profileDir + QStringLiteral("/settings.conf");
+    QFile settingsFile(settingsPath);
+    QVERIFY(settingsFile.open(QIODevice::WriteOnly | QIODevice::Text));
+    settingsFile.write(
+        "[Meta]\n"
+        "schema_version=999\n"
+        "\n"
+        "[Window]\n"
+        "AlwaysShowTabs=false\n");
+    settingsFile.close();
+
+    Oneg4FM::Settings settings;
+    QVERIFY(!settings.load(profileName));
+
+    settings.setAlwaysShowTabs(false);
+    QVERIFY(settings.save(profileName));
+
+    QSettings saved(settingsPath, QSettings::IniFormat);
+    QCOMPARE(saved.value(QStringLiteral("Meta/schema_version")).toInt(), 1);
+}
+
+void TestSettingsFunctionality::testDirectorySchemaVersionCompatibility() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+
+    const QString folderPath = tempDir.path() + QStringLiteral("/folder");
+    QVERIFY(QDir().mkpath(folderPath));
+
+    QFile folderConfig(folderPath + QStringLiteral("/.directory"));
+    QVERIFY(folderConfig.open(QIODevice::WriteOnly | QIODevice::Text));
+    folderConfig.write(
+        "[File Manager]\n"
+        "schema_version=999\n"
+        "SortOrder=descending\n"
+        "ShowHidden=true\n");
+    folderConfig.close();
+
+    Oneg4FM::Settings settings;
+    const Panel::FilePath path = Panel::FilePath::fromLocalPath(folderPath.toUtf8().constData());
+    const Oneg4FM::FolderSettings loaded = settings.loadFolderSettings(path);
+
+    QVERIFY(!loaded.isCustomized());
+    QCOMPARE(loaded.sortOrder(), settings.sortOrder());
+    QCOMPARE(loaded.showHidden(), settings.showHidden());
+
+    Oneg4FM::FolderSettings toSave;
+    toSave.setCustomized(true);
+    toSave.setSortOrder(Qt::DescendingOrder);
+    toSave.setShowHidden(true);
+    settings.saveFolderSettings(path, toSave);
+
+    QSettings saved(folderPath + QStringLiteral("/.directory"), QSettings::IniFormat);
+    QCOMPARE(saved.value(QStringLiteral("File Manager/schema_version")).toInt(), 1);
 }
 
 QTEST_MAIN(TestSettingsFunctionality)

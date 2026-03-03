@@ -10,6 +10,18 @@
       "scope": "per-profile",
       "keys": [
         {
+          "key": "Meta/schema_version",
+          "type": "int",
+          "constraints": {
+            "min": 1
+          },
+          "default": 1,
+          "stability": "stable",
+          "description": "Schema version for profile settings.conf compatibility checks.",
+          "scope": "per-profile",
+          "secrecy": "ok-to-log"
+        },
+        {
           "key": "System/FallbackIconThemeName",
           "type": "string",
           "constraints": {
@@ -874,6 +886,18 @@
       "format": "libfm-folder-config",
       "scope": "per-directory",
       "keys": [
+        {
+          "key": "schema_version",
+          "type": "int",
+          "constraints": {
+            "min": 1
+          },
+          "default": 1,
+          "stability": "stable",
+          "description": "Schema version for directory-local settings compatibility checks.",
+          "scope": "per-directory",
+          "secrecy": "ok-to-log"
+        },
         {
           "key": "SortOrder",
           "type": "enum",

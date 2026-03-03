@@ -36,6 +36,7 @@
 #include <QStandardPaths>
 #include <algorithm>
 #include <limits>
+#include <utility>
 #include "../src/ui/fsqt.h"
 
 namespace {
@@ -45,6 +46,10 @@ constexpr const char* kInstalledSchemaRelativePath = "oneg4fm/default/schema.jso
 constexpr const char* kSourceSchemaRelativePath = "config/oneg4fm/schema.json";
 constexpr const char* kProfileSchemaSurfaceId = "profile.settings.conf";
 constexpr const char* kDirectorySchemaSurfaceId = "directory.dir-settings.conf";
+constexpr int CURRENT_SCHEMA_VERSION = 1;
+constexpr int SUPPORTED_SCHEMA_BACKWARD_WINDOW = 0;
+constexpr const char* kProfileSchemaVersionKey = "Meta/schema_version";
+constexpr const char* kDirectorySchemaVersionKey = "schema_version";
 
 struct SchemaKey {
     QString key;
@@ -245,6 +250,22 @@ int parseIntValue(const QVariant& rawValue, int fallbackValue) {
         return std::numeric_limits<int>::min();
     }
     return static_cast<int>(parsed);
+}
+
+int oldestSupportedSchemaVersion() {
+    return std::max(1, CURRENT_SCHEMA_VERSION - SUPPORTED_SCHEMA_BACKWARD_WINDOW);
+}
+
+int normalizeSchemaVersion(const QVariant& rawValue) {
+    return parseIntValue(rawValue, CURRENT_SCHEMA_VERSION);
+}
+
+bool isSupportedSchemaVersion(int schemaVersion) {
+    return schemaVersion >= oldestSupportedSchemaVersion() && schemaVersion <= CURRENT_SCHEMA_VERSION;
+}
+
+bool hasSupportedSchemaVersion(const QHash<QString, QVariant>& normalized, const QString& schemaVersionKey) {
+    return isSupportedSchemaVersion(normalizeSchemaVersion(normalized.value(schemaVersionKey)));
 }
 
 QString normalizePathToken(const QString& rawPath) {
@@ -588,6 +609,9 @@ bool Settings::loadFile(QString filePath) {
 
     const QHash<QString, QVariant> normalized = normalizeAstBySchema(schemaKeys, readIniAst(filePath));
     const auto value = [&](const char* key) { return normalized.value(QString::fromUtf8(key)); };
+    if (!isSupportedSchemaVersion(normalizeSchemaVersion(value(kProfileSchemaVersionKey)))) {
+        return false;
+    }
 
     fallbackIconThemeName_ = pickFallbackIconTheme(value("System/FallbackIconThemeName").toString());
     setTerminal(value("System/Terminal").toString());
@@ -698,6 +722,7 @@ bool Settings::saveFile(QString filePath) {
     }
 
     QHash<QString, QVariant> values;
+    values.insert(QString::fromUtf8(kProfileSchemaVersionKey), CURRENT_SCHEMA_VERSION);
     values.insert(QStringLiteral("System/FallbackIconThemeName"), fallbackIconThemeName_);
     values.insert(QStringLiteral("System/Terminal"), terminal_);
     values.insert(QStringLiteral("System/Archiver"), archiver_);
@@ -1059,19 +1084,32 @@ void Settings::setTerminal(QString terminalCommand) {
 // per-folder settings
 FolderSettings Settings::loadFolderSettings(const Panel::FilePath& path) const {
     FolderSettings settings;
-    QVector<SchemaKey> schemaKeys;
-    if (!loadDirectorySchema(schemaKeys)) {
+    const auto applyGlobalDefaults = [&]() {
         settings.setSortOrder(sortOrder());
         settings.setSortColumn(sortColumn());
         settings.setViewMode(viewMode());
         settings.setShowHidden(showHidden());
         settings.setSortFolderFirst(sortFolderFirst());
         settings.setSortCaseSensitive(sortCaseSensitive());
+    };
+
+    QVector<SchemaKey> schemaKeys;
+    if (!loadDirectorySchema(schemaKeys)) {
+        applyGlobalDefaults();
         return settings;
     }
 
+    const auto readCompatibleNormalized = [&](Panel::FolderConfig& cfg, QHash<QString, QVariant>& normalizedOut) {
+        if (cfg.isEmpty()) {
+            return false;
+        }
+        normalizedOut = normalizeAstBySchema(schemaKeys, readFolderConfigAst(cfg, schemaKeys));
+        return hasSupportedSchemaVersion(normalizedOut, QString::fromUtf8(kDirectorySchemaVersionKey));
+    };
+
     Panel::FolderConfig cfg(path);
-    bool customized = !cfg.isEmpty();
+    QHash<QString, QVariant> effectiveNormalized;
+    const bool customized = readCompatibleNormalized(cfg, effectiveNormalized);
     Panel::FilePath inheritedPath;
     if (!customized && !path.isParentOf(path)) {  // WARNING: menu://applications/ is its own parent
         inheritedPath = path.parent();
@@ -1079,12 +1117,11 @@ FolderSettings Settings::loadFolderSettings(const Panel::FilePath& path) const {
             Panel::GErrorPtr err;
             cfg.close(err);
             cfg.open(inheritedPath);
-            if (!cfg.isEmpty()) {
-                const QHash<QString, QVariant> normalized =
-                    normalizeAstBySchema(schemaKeys, readFolderConfigAst(cfg, schemaKeys));
-                if (normalized.value(QStringLiteral("Recursive")).toBool()) {
-                    break;
-                }
+            QHash<QString, QVariant> candidateNormalized;
+            if (readCompatibleNormalized(cfg, candidateNormalized) &&
+                candidateNormalized.value(QStringLiteral("Recursive")).toBool()) {
+                effectiveNormalized = std::move(candidateNormalized);
+                break;
             }
             if (inheritedPath.isParentOf(inheritedPath)) {
                 inheritedPath = Panel::FilePath();  // invalidate it
@@ -1095,24 +1132,17 @@ FolderSettings Settings::loadFolderSettings(const Panel::FilePath& path) const {
     }
     if (!customized && !inheritedPath.isValid()) {
         // the folder is not customized and does not inherit settings; use the general settings
-        settings.setSortOrder(sortOrder());
-        settings.setSortColumn(sortColumn());
-        settings.setViewMode(viewMode());
-        settings.setShowHidden(showHidden());
-        settings.setSortFolderFirst(sortFolderFirst());
-        settings.setSortCaseSensitive(sortCaseSensitive());
+        applyGlobalDefaults();
     }
     else {
         // either the folder is customized or it inherits settings; load folder-specific settings
+        const auto value = [&](const char* key) { return effectiveNormalized.value(QString::fromUtf8(key)); };
         if (!inheritedPath.isValid()) {
             settings.setCustomized(true);
         }
         else {
             settings.seInheritedPath(inheritedPath);
         }
-        const QHash<QString, QVariant> normalized =
-            normalizeAstBySchema(schemaKeys, readFolderConfigAst(cfg, schemaKeys));
-        const auto value = [&](const char* key) { return normalized.value(QString::fromUtf8(key)); };
 
         settings.setSortOrder(FolderSettings::sortOrderFromString(value("SortOrder").toString()));
         settings.setSortColumn(FolderSettings::sortColumnFromString(value("SortColumn").toString()));
@@ -1138,6 +1168,7 @@ void Settings::saveFolderSettings(const Panel::FilePath& path, const FolderSetti
         }
 
         QHash<QString, QVariant> values;
+        values.insert(QString::fromUtf8(kDirectorySchemaVersionKey), CURRENT_SCHEMA_VERSION);
         values.insert(QStringLiteral("SortOrder"), QString::fromUtf8(sortOrderToString(settings.sortOrder())));
         values.insert(QStringLiteral("SortColumn"), QString::fromUtf8(sortColumnToString(settings.sortColumn())));
         values.insert(QStringLiteral("ViewMode"), QString::fromUtf8(viewModeToString(settings.viewMode())));
