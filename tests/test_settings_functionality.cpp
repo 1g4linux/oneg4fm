@@ -24,6 +24,7 @@ class TestSettingsFunctionality : public QObject {
     void testSettingsStringConversions();
     void testSettingsLoadSave();
     void testSchemaNormalizationConstraints();
+    void testFolderSettingsSchemaNormalization();
 };
 
 void TestSettingsFunctionality::testSettingsInitialization() {
@@ -310,6 +311,40 @@ void TestSettingsFunctionality::testSchemaNormalizationConstraints() {
     QCOMPARE(settings.splitViewTabsNum(), 0);
     QCOMPARE(settings.tabPaths(), QStringList({QStringLiteral("/tmp/b"), QStringLiteral("/tmp/c/d")}));
     QCOMPARE(settings.maxSearchHistory(), 50);
+}
+
+void TestSettingsFunctionality::testFolderSettingsSchemaNormalization() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+
+    const QString folderPath = tempDir.path() + QStringLiteral("/folder");
+    QVERIFY(QDir().mkpath(folderPath));
+
+    QFile folderConfig(folderPath + QStringLiteral("/.directory"));
+    QVERIFY(folderConfig.open(QIODevice::WriteOnly | QIODevice::Text));
+    folderConfig.write(
+        "[File Manager]\n"
+        "SortOrder=descending\n"
+        "SortColumn=size\n"
+        "ViewMode=icon\n"
+        "ShowHidden=true\n"
+        "SortFolderFirst=false\n"
+        "SortCaseSensitive=not-a-bool\n"
+        "Recursive=true\n");
+    folderConfig.close();
+
+    Oneg4FM::Settings settings;
+    const Panel::FilePath path = Panel::FilePath::fromLocalPath(folderPath.toUtf8().constData());
+    const Oneg4FM::FolderSettings folderSettings = settings.loadFolderSettings(path);
+
+    QVERIFY(folderSettings.isCustomized());
+    QCOMPARE(folderSettings.sortOrder(), Qt::DescendingOrder);
+    QCOMPARE(folderSettings.sortColumn(), Panel::FolderModel::ColumnFileSize);
+    QCOMPARE(folderSettings.viewMode(), Panel::FolderView::IconMode);
+    QCOMPARE(folderSettings.showHidden(), true);
+    QCOMPARE(folderSettings.sortFolderFirst(), false);
+    QCOMPARE(folderSettings.sortCaseSensitive(), false);
+    QCOMPARE(folderSettings.recursive(), true);
 }
 
 QTEST_MAIN(TestSettingsFunctionality)

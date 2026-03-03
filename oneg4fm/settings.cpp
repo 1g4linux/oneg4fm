@@ -44,8 +44,9 @@ constexpr const char* kSchemaPathEnv = "ONEG4FM_SCHEMA_PATH";
 constexpr const char* kInstalledSchemaRelativePath = "oneg4fm/default/schema.json";
 constexpr const char* kSourceSchemaRelativePath = "config/oneg4fm/schema.json";
 constexpr const char* kProfileSchemaSurfaceId = "profile.settings.conf";
+constexpr const char* kDirectorySchemaSurfaceId = "directory.dir-settings.conf";
 
-struct ProfileSchemaKey {
+struct SchemaKey {
     QString key;
     QString type;
     QVariant defaultValue;
@@ -110,7 +111,7 @@ QString resolveSchemaPath() {
     return QString();
 }
 
-bool loadProfileSchema(QVector<ProfileSchemaKey>& schemaKeys) {
+bool loadSchemaSurface(const QString& surfaceId, QVector<SchemaKey>& schemaKeys) {
     schemaKeys.clear();
 
     const QString schemaPath = resolveSchemaPath();
@@ -136,7 +137,7 @@ bool loadProfileSchema(QVector<ProfileSchemaKey>& schemaKeys) {
         }
 
         const QJsonObject surface = surfaceValue.toObject();
-        if (surface.value(QStringLiteral("id")).toString() != QString::fromUtf8(kProfileSchemaSurfaceId)) {
+        if (surface.value(QStringLiteral("id")).toString() != surfaceId) {
             continue;
         }
 
@@ -148,7 +149,7 @@ bool loadProfileSchema(QVector<ProfileSchemaKey>& schemaKeys) {
             }
 
             const QJsonObject keyObj = keyValue.toObject();
-            ProfileSchemaKey schemaKey;
+            SchemaKey schemaKey;
             schemaKey.key = keyObj.value(QStringLiteral("key")).toString();
             schemaKey.type = keyObj.value(QStringLiteral("type")).toString();
             schemaKey.defaultValue = keyObj.value(QStringLiteral("default")).toVariant();
@@ -163,11 +164,33 @@ bool loadProfileSchema(QVector<ProfileSchemaKey>& schemaKeys) {
     return false;
 }
 
+bool loadProfileSchema(QVector<SchemaKey>& schemaKeys) {
+    return loadSchemaSurface(QString::fromUtf8(kProfileSchemaSurfaceId), schemaKeys);
+}
+
+bool loadDirectorySchema(QVector<SchemaKey>& schemaKeys) {
+    return loadSchemaSurface(QString::fromUtf8(kDirectorySchemaSurfaceId), schemaKeys);
+}
+
 QHash<QString, QVariant> readIniAst(const QString& filePath) {
     QHash<QString, QVariant> ast;
     QSettings settings(filePath, QSettings::IniFormat);
     for (const QString& key : settings.allKeys()) {
         ast.insert(key, settings.value(key));
+    }
+    return ast;
+}
+
+QHash<QString, QVariant> readFolderConfigAst(Panel::FolderConfig& cfg, const QVector<SchemaKey>& schemaKeys) {
+    QHash<QString, QVariant> ast;
+    ast.reserve(schemaKeys.size());
+    for (const SchemaKey& schemaKey : schemaKeys) {
+        const QByteArray keyUtf8 = schemaKey.key.toUtf8();
+        char* rawValue = cfg.getString(keyUtf8.constData());
+        if (rawValue != nullptr) {
+            ast.insert(schemaKey.key, QString::fromUtf8(rawValue));
+            g_free(rawValue);
+        }
     }
     return ast;
 }
@@ -285,7 +308,7 @@ QStringList variantToTokens(const QVariant& rawValue) {
     return {asString};
 }
 
-QVariant normalizeValueBySchema(const ProfileSchemaKey& schemaKey, const QVariant& rawValue) {
+QVariant normalizeValueBySchema(const SchemaKey& schemaKey, const QVariant& rawValue) {
     const QVariant sourceValue = rawValue.isValid() ? rawValue : schemaKey.defaultValue;
 
     if (schemaKey.type == QLatin1String("bool")) {
@@ -382,11 +405,11 @@ QVariant normalizeValueBySchema(const ProfileSchemaKey& schemaKey, const QVarian
     return normalized;
 }
 
-QHash<QString, QVariant> normalizeAstBySchema(const QVector<ProfileSchemaKey>& schemaKeys,
+QHash<QString, QVariant> normalizeAstBySchema(const QVector<SchemaKey>& schemaKeys,
                                               const QHash<QString, QVariant>& ast) {
     QHash<QString, QVariant> normalized;
     normalized.reserve(schemaKeys.size());
-    for (const ProfileSchemaKey& schemaKey : schemaKeys) {
+    for (const SchemaKey& schemaKey : schemaKeys) {
         normalized.insert(schemaKey.key, normalizeValueBySchema(schemaKey, ast.value(schemaKey.key)));
     }
     return normalized;
@@ -558,7 +581,7 @@ bool Settings::save(QString profile) {
 }
 
 bool Settings::loadFile(QString filePath) {
-    QVector<ProfileSchemaKey> schemaKeys;
+    QVector<SchemaKey> schemaKeys;
     if (!loadProfileSchema(schemaKeys)) {
         return false;
     }
@@ -669,7 +692,7 @@ bool Settings::loadFile(QString filePath) {
 }
 
 bool Settings::saveFile(QString filePath) {
-    QVector<ProfileSchemaKey> schemaKeys;
+    QVector<SchemaKey> schemaKeys;
     if (!loadProfileSchema(schemaKeys)) {
         return false;
     }
@@ -771,7 +794,7 @@ bool Settings::saveFile(QString filePath) {
 
     const QHash<QString, QVariant> normalized = normalizeAstBySchema(schemaKeys, values);
     QSettings settings(filePath, QSettings::IniFormat);
-    for (const ProfileSchemaKey& schemaKey : schemaKeys) {
+    for (const SchemaKey& schemaKey : schemaKeys) {
         settings.setValue(schemaKey.key, normalized.value(schemaKey.key, schemaKey.defaultValue));
     }
     settings.sync();
@@ -1036,6 +1059,17 @@ void Settings::setTerminal(QString terminalCommand) {
 // per-folder settings
 FolderSettings Settings::loadFolderSettings(const Panel::FilePath& path) const {
     FolderSettings settings;
+    QVector<SchemaKey> schemaKeys;
+    if (!loadDirectorySchema(schemaKeys)) {
+        settings.setSortOrder(sortOrder());
+        settings.setSortColumn(sortColumn());
+        settings.setViewMode(viewMode());
+        settings.setShowHidden(showHidden());
+        settings.setSortFolderFirst(sortFolderFirst());
+        settings.setSortCaseSensitive(sortCaseSensitive());
+        return settings;
+    }
+
     Panel::FolderConfig cfg(path);
     bool customized = !cfg.isEmpty();
     Panel::FilePath inheritedPath;
@@ -1046,8 +1080,9 @@ FolderSettings Settings::loadFolderSettings(const Panel::FilePath& path) const {
             cfg.close(err);
             cfg.open(inheritedPath);
             if (!cfg.isEmpty()) {
-                bool recursive;
-                if (cfg.getBoolean("Recursive", &recursive) && recursive) {
+                const QHash<QString, QVariant> normalized =
+                    normalizeAstBySchema(schemaKeys, readFolderConfigAst(cfg, schemaKeys));
+                if (normalized.value(QStringLiteral("Recursive")).toBool()) {
                     break;
                 }
             }
@@ -1075,47 +1110,17 @@ FolderSettings Settings::loadFolderSettings(const Panel::FilePath& path) const {
         else {
             settings.seInheritedPath(inheritedPath);
         }
+        const QHash<QString, QVariant> normalized =
+            normalizeAstBySchema(schemaKeys, readFolderConfigAst(cfg, schemaKeys));
+        const auto value = [&](const char* key) { return normalized.value(QString::fromUtf8(key)); };
 
-        char* str;
-        // load sorting
-        str = cfg.getString("SortOrder");
-        if (str != nullptr) {
-            settings.setSortOrder(FolderSettings::sortOrderFromString(QString::fromUtf8(str)));
-            g_free(str);
-        }
-
-        str = cfg.getString("SortColumn");
-        if (str != nullptr) {
-            settings.setSortColumn(FolderSettings::sortColumnFromString(QString::fromUtf8(str)));
-            g_free(str);
-        }
-
-        str = cfg.getString("ViewMode");
-        if (str != nullptr) {
-            // set view mode
-            settings.setViewMode(FolderSettings::viewModeFromString(QString::fromUtf8(str)));
-            g_free(str);
-        }
-
-        bool show_hidden;
-        if (cfg.getBoolean("ShowHidden", &show_hidden)) {
-            settings.setShowHidden(show_hidden);
-        }
-
-        bool folder_first;
-        if (cfg.getBoolean("SortFolderFirst", &folder_first)) {
-            settings.setSortFolderFirst(folder_first);
-        }
-
-        bool case_sensitive;
-        if (cfg.getBoolean("SortCaseSensitive", &case_sensitive)) {
-            settings.setSortCaseSensitive(case_sensitive);
-        }
-
-        bool recursive;
-        if (cfg.getBoolean("Recursive", &recursive)) {
-            settings.setRecursive(recursive);
-        }
+        settings.setSortOrder(FolderSettings::sortOrderFromString(value("SortOrder").toString()));
+        settings.setSortColumn(FolderSettings::sortColumnFromString(value("SortColumn").toString()));
+        settings.setViewMode(FolderSettings::viewModeFromString(value("ViewMode").toString()));
+        settings.setShowHidden(value("ShowHidden").toBool());
+        settings.setSortFolderFirst(value("SortFolderFirst").toBool());
+        settings.setSortCaseSensitive(value("SortCaseSensitive").toBool());
+        settings.setRecursive(value("Recursive").toBool());
     }
     return settings;
 }
@@ -1127,14 +1132,34 @@ void Settings::saveFolderSettings(const Panel::FilePath& path, const FolderSetti
         QString error;
         FsQt::makeDirParents(dirName, error);  // if libfm config dir does not exist, create it
 
+        QVector<SchemaKey> schemaKeys;
+        if (!loadDirectorySchema(schemaKeys)) {
+            return;
+        }
+
+        QHash<QString, QVariant> values;
+        values.insert(QStringLiteral("SortOrder"), QString::fromUtf8(sortOrderToString(settings.sortOrder())));
+        values.insert(QStringLiteral("SortColumn"), QString::fromUtf8(sortColumnToString(settings.sortColumn())));
+        values.insert(QStringLiteral("ViewMode"), QString::fromUtf8(viewModeToString(settings.viewMode())));
+        values.insert(QStringLiteral("ShowHidden"), settings.showHidden());
+        values.insert(QStringLiteral("SortFolderFirst"), settings.sortFolderFirst());
+        values.insert(QStringLiteral("SortCaseSensitive"), settings.sortCaseSensitive());
+        values.insert(QStringLiteral("Recursive"), settings.recursive());
+
+        const QHash<QString, QVariant> normalized = normalizeAstBySchema(schemaKeys, values);
         Panel::FolderConfig cfg(path);
-        cfg.setString("SortOrder", sortOrderToString(settings.sortOrder()));
-        cfg.setString("SortColumn", sortColumnToString(settings.sortColumn()));
-        cfg.setString("ViewMode", viewModeToString(settings.viewMode()));
-        cfg.setBoolean("ShowHidden", settings.showHidden());
-        cfg.setBoolean("SortFolderFirst", settings.sortFolderFirst());
-        cfg.setBoolean("SortCaseSensitive", settings.sortCaseSensitive());
-        cfg.setBoolean("Recursive", settings.recursive());
+        for (const SchemaKey& schemaKey : schemaKeys) {
+            const QByteArray keyUtf8 = schemaKey.key.toUtf8();
+            const QVariant normalizedValue = normalized.value(schemaKey.key, schemaKey.defaultValue);
+            if (schemaKey.type == QLatin1String("bool")) {
+                const bool fallbackValue = parseBoolValue(schemaKey.defaultValue, false);
+                cfg.setBoolean(keyUtf8.constData(), parseBoolValue(normalizedValue, fallbackValue));
+            }
+            else {
+                const QByteArray valueUtf8 = normalizedValue.toString().toUtf8();
+                cfg.setString(keyUtf8.constData(), valueUtf8.constData());
+            }
+        }
     }
 }
 
