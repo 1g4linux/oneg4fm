@@ -32,6 +32,16 @@ QString fromNativePath(const std::string& path) {
     return QString::fromLocal8Bit(path.c_str());
 }
 
+FileOpProgressPhase toQtProgressPhase(FileOpsContract::ProgressPhase phase) {
+    switch (phase) {
+        case FileOpsContract::ProgressPhase::Running:
+            return FileOpProgressPhase::Running;
+        case FileOpsContract::ProgressPhase::Finalizing:
+            return FileOpProgressPhase::Finalizing;
+    }
+    return FileOpProgressPhase::Running;
+}
+
 FileOpProgress toQtProgress(const FileOpsContract::ProgressSnapshot& core) {
     FileOpProgress qt{};
     qt.bytesDone = core.bytesDone;
@@ -39,6 +49,7 @@ FileOpProgress toQtProgress(const FileOpsContract::ProgressSnapshot& core) {
     qt.filesDone = core.filesDone;
     qt.filesTotal = core.filesTotal;
     qt.currentPath = fromNativePath(core.currentPath);
+    qt.phase = toQtProgressPhase(core.phase);
     return qt;
 }
 
@@ -106,7 +117,7 @@ FileOpsContract::ConflictResolution toContractResolution(FileOpConflictResolutio
 
 bool sameProgressSnapshot(const FileOpProgress& lhs, const FileOpProgress& rhs) {
     return lhs.bytesDone == rhs.bytesDone && lhs.bytesTotal == rhs.bytesTotal && lhs.filesDone == rhs.filesDone &&
-           lhs.filesTotal == rhs.filesTotal && lhs.currentPath == rhs.currentPath;
+           lhs.filesTotal == rhs.filesTotal && lhs.currentPath == rhs.currentPath && lhs.phase == rhs.phase;
 }
 
 }  // namespace
@@ -201,7 +212,8 @@ class QtFileOps::Worker : public QObject {
     }
 
     static bool isTerminalProgress(const FileOpProgress& info) {
-        return info.filesTotal >= 0 && info.filesDone >= info.filesTotal && info.bytesDone >= info.bytesTotal;
+        return info.phase == FileOpProgressPhase::Finalizing ||
+               (info.filesTotal >= 0 && info.filesDone >= info.filesTotal && info.bytesDone >= info.bytesTotal);
     }
 
     bool shouldEmitProgressNowLocked(const FileOpProgress& info, const Clock::time_point now) const {
@@ -212,6 +224,9 @@ class QtFileOps::Worker : public QObject {
             return true;
         }
         if (lastEmittedProgress_) {
+            if (info.phase != lastEmittedProgress_->phase) {
+                return true;
+            }
             if (info.filesDone != lastEmittedProgress_->filesDone) {
                 return true;
             }
@@ -437,6 +452,7 @@ QtFileOps::QtFileOps(QObject* parent)
       workerThread_(new QThread) {
     qRegisterMetaType<FileOpRequest>("Oneg4FM::FileOpRequest");
     qRegisterMetaType<FileOpProgress>("Oneg4FM::FileOpProgress");
+    qRegisterMetaType<FileOpProgressPhase>("Oneg4FM::FileOpProgressPhase");
     qRegisterMetaType<FileOpConflict>("Oneg4FM::FileOpConflict");
     qRegisterMetaType<FileOpConflictResolution>("Oneg4FM::FileOpConflictResolution");
 

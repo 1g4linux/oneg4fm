@@ -51,6 +51,7 @@ backend/capability combinations fail early with a clear core-generated reason.
   Delivery is level-triggered/coalesced in the adapter (single pending snapshot,
   latest value wins) with a max ~20 Hz emission target plus a meaningful-byte
   delta gate; pending progress is force-flushed before `finished(...)`.
+  `phase` is forwarded so UI can distinguish `Running` from `Finalizing`.
 - Conflict: core `ConflictEvent` -> Qt `conflictRequested(FileOpConflict)`.
 - Prompt conflict requires a connected responder; otherwise request fails.
 - Cancellation:

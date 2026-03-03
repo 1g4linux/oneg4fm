@@ -643,6 +643,9 @@ void emit_monotonic_progress(const ProgressSnapshot& candidate,
     if (next.currentPath.empty()) {
         next.currentPath = state.currentPath;
     }
+    next.phase = (state.phase == ProgressPhase::Finalizing || next.phase == ProgressPhase::Finalizing)
+                     ? ProgressPhase::Finalizing
+                     : ProgressPhase::Running;
 
     state = next;
     if (handlers.onProgress) {
@@ -665,6 +668,7 @@ void mark_plan_complete_without_execution(const SourcePlan& plan,
     skippedProgress.filesDone = completedUnits;
     skippedProgress.bytesDone = completedBytes;
     skippedProgress.currentPath = plan.sourcePath;
+    skippedProgress.phase = ProgressPhase::Running;
     emit_monotonic_progress(skippedProgress, lastProgress, handlers);
 }
 
@@ -1443,6 +1447,7 @@ Result run_gio_request(const Request& request, const EventHandlers& handlers) {
             aggregate.filesDone = sum_int_saturated(completedUnits, clampedLocalFiles);
             aggregate.bytesDone = sum_u64_saturated(completedBytes, clampedLocalBytes);
             aggregate.currentPath = currentPath.empty() ? plan.sourcePath : currentPath;
+            aggregate.phase = ProgressPhase::Running;
             emit_monotonic_progress(aggregate, lastProgress, handlers);
             return !sync_cancellation(request, cancellable.get());
         };
@@ -1514,8 +1519,18 @@ Result run_gio_request(const Request& request, const EventHandlers& handlers) {
         doneProgress.filesDone = completedUnits;
         doneProgress.bytesDone = completedBytes;
         doneProgress.currentPath = plan.sourcePath;
+        doneProgress.phase = ProgressPhase::Running;
         emit_monotonic_progress(doneProgress, lastProgress, handlers);
     }
+
+    ProgressSnapshot finalizingProgress;
+    finalizingProgress.filesTotal = totals.filesTotal;
+    finalizingProgress.bytesTotal = totals.bytesTotal;
+    finalizingProgress.filesDone = completedUnits;
+    finalizingProgress.bytesDone = completedBytes;
+    finalizingProgress.currentPath = lastProgress.currentPath;
+    finalizingProgress.phase = ProgressPhase::Finalizing;
+    emit_monotonic_progress(finalizingProgress, lastProgress, handlers);
 
     result.success = true;
     result.finalProgress = lastProgress;

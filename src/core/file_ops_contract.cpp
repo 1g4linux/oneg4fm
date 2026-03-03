@@ -1134,6 +1134,9 @@ void emit_monotonic_progress(const ProgressSnapshot& candidate,
     if (next.currentPath.empty()) {
         next.currentPath = state.currentPath;
     }
+    next.phase = (state.phase == ProgressPhase::Finalizing || next.phase == ProgressPhase::Finalizing)
+                     ? ProgressPhase::Finalizing
+                     : ProgressPhase::Running;
 
     state = next;
     if (handlers.onProgress) {
@@ -1211,6 +1214,7 @@ void mark_plan_complete_without_execution(const SourcePlan& plan,
     skipped_progress.filesDone = completed_units;
     skipped_progress.bytesDone = completed_bytes;
     skipped_progress.currentPath = plan.sourcePath;
+    skipped_progress.phase = ProgressPhase::Running;
     emit_monotonic_progress(skipped_progress, last_progress, handlers);
 }
 
@@ -1476,6 +1480,7 @@ Result run_in_process(const Request& request, const EventHandlers& handlers) {
             aggregate.filesDone = sum_int_saturated(completed_units, local_done);
             aggregate.bytesDone = sum_u64_saturated(completed_bytes, local_bytes_done);
             aggregate.currentPath = source_info.currentPath.empty() ? plan.sourcePath : source_info.currentPath;
+            aggregate.phase = ProgressPhase::Running;
 
             emit_monotonic_progress(aggregate, last_progress, handlers);
             return !is_cancel_requested(request);
@@ -1540,8 +1545,18 @@ Result run_in_process(const Request& request, const EventHandlers& handlers) {
         done_progress.filesDone = completed_units;
         done_progress.bytesDone = completed_bytes;
         done_progress.currentPath = plan.sourcePath;
+        done_progress.phase = ProgressPhase::Running;
         emit_monotonic_progress(done_progress, last_progress, handlers);
     }
+
+    ProgressSnapshot finalizing_progress;
+    finalizing_progress.filesTotal = totals.filesTotal;
+    finalizing_progress.bytesTotal = totals.bytesTotal;
+    finalizing_progress.filesDone = completed_units;
+    finalizing_progress.bytesDone = completed_bytes;
+    finalizing_progress.currentPath = last_progress.currentPath;
+    finalizing_progress.phase = ProgressPhase::Finalizing;
+    emit_monotonic_progress(finalizing_progress, last_progress, handlers);
 
     result.success = true;
     result.finalProgress = last_progress;

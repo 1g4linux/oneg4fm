@@ -112,12 +112,18 @@ struct Request {
     RoutingHints routing;
 };
 
+enum class ProgressPhase {
+    Running,
+    Finalizing,
+};
+
 struct ProgressSnapshot {
     std::uint64_t bytesDone = 0;
     std::uint64_t bytesTotal = 0;
     int filesDone = 0;
     int filesTotal = 0;
     std::string currentPath;
+    ProgressPhase phase = ProgressPhase::Running;
 };
 
 enum class ConflictKind {

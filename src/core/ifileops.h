@@ -16,6 +16,10 @@
 namespace Oneg4FM {
 
 enum class FileOpType { Copy, Move, Delete };
+enum class FileOpProgressPhase {
+    Running,
+    Finalizing,
+};
 enum class FileOpConflictResolution {
     Overwrite,
     Skip,
@@ -53,6 +57,7 @@ struct FileOpProgress {
     int filesDone;
     int filesTotal;
     QString currentPath;
+    FileOpProgressPhase phase = FileOpProgressPhase::Running;
 };
 
 class IFileOps : public QObject {
@@ -75,6 +80,7 @@ class IFileOps : public QObject {
 }  // namespace Oneg4FM
 
 Q_DECLARE_METATYPE(Oneg4FM::FileOpType)
+Q_DECLARE_METATYPE(Oneg4FM::FileOpProgressPhase)
 Q_DECLARE_METATYPE(Oneg4FM::FileOpConflictResolution)
 Q_DECLARE_METATYPE(Oneg4FM::FileOpRequest)
 Q_DECLARE_METATYPE(Oneg4FM::FileOpProgress)

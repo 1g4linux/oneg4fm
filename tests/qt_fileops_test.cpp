@@ -138,14 +138,18 @@ void QtFileOpsTest::copyProgressIsMonotonicAndTotalsStable() {
     int stableFilesTotal = -1;
     FileOpProgress prevSnapshot{};
     bool hasPrevSnapshot = false;
+    bool sawFinalizing = false;
     for (const FileOpProgress& info : updates) {
         if (hasPrevSnapshot) {
             QVERIFY(!(info.bytesDone == prevSnapshot.bytesDone && info.bytesTotal == prevSnapshot.bytesTotal &&
                       info.filesDone == prevSnapshot.filesDone && info.filesTotal == prevSnapshot.filesTotal &&
-                      info.currentPath == prevSnapshot.currentPath));
+                      info.currentPath == prevSnapshot.currentPath && info.phase == prevSnapshot.phase));
         }
         prevSnapshot = info;
         hasPrevSnapshot = true;
+        if (info.phase == FileOpProgressPhase::Finalizing) {
+            sawFinalizing = true;
+        }
 
         if (hasPrevBytesDone) {
             QVERIFY(info.bytesDone >= prevBytesDone);
@@ -176,10 +180,12 @@ void QtFileOpsTest::copyProgressIsMonotonicAndTotalsStable() {
     }
 
     const FileOpProgress& last = updates.constLast();
+    QVERIFY(sawFinalizing);
     QCOMPARE(last.filesTotal, 1);
     QCOMPARE(last.filesDone, 1);
     QVERIFY(last.bytesDone > 0);
     QCOMPARE(last.bytesDone, last.bytesTotal);
+    QCOMPARE(last.phase, FileOpProgressPhase::Finalizing);
 }
 
 void QtFileOpsTest::copyConflictRespectsOverwriteExistingFlag() {

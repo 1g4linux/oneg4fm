@@ -71,6 +71,9 @@ not required for execution.
 - Totals (`filesTotal`, `bytesTotal`) are planned first and then kept stable.
 - Done counters are monotonic and clamped to totals.
 - `currentPath` remains stable (non-empty once set).
+- `phase` is monotonic: `Running` during execution, then `Finalizing` once all
+  work units are complete and the operation is committing final completion.
+- Successful runs end with `finalProgress.phase = Finalizing`.
 
 ### `EventHandlers::onConflict`
 

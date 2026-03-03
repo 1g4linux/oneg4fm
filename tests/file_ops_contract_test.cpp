@@ -158,17 +158,23 @@ void FileOpsContractTest::copyReportsMonotonicProgressAndStableTotals() {
     QVERIFY(!updates.isEmpty());
     int prevFilesDone = -1;
     std::uint64_t prevBytesDone = 0;
+    bool sawFinalizing = false;
     for (const ProgressSnapshot& update : updates) {
         QCOMPARE(update.filesTotal, 2);
         QVERIFY(update.filesDone >= prevFilesDone);
         QVERIFY(update.bytesDone >= prevBytesDone);
+        if (update.phase == ProgressPhase::Finalizing) {
+            sawFinalizing = true;
+        }
         prevFilesDone = update.filesDone;
         prevBytesDone = update.bytesDone;
     }
 
+    QVERIFY(sawFinalizing);
     QCOMPARE(result.finalProgress.filesTotal, 2);
     QCOMPARE(result.finalProgress.filesDone, 2);
     QCOMPARE(result.finalProgress.bytesDone, result.finalProgress.bytesTotal);
+    QCOMPARE(result.finalProgress.phase, ProgressPhase::Finalizing);
 }
 
 void FileOpsContractTest::copyWorksWhenPathsUseSymlinkedDirectoryAlias() {
@@ -233,19 +239,25 @@ void FileOpsContractTest::moveReportsMonotonicProgressAndStableTotals() {
     QVERIFY(!updates.isEmpty());
     int prevFilesDone = -1;
     std::uint64_t prevBytesDone = 0;
+    bool sawFinalizing = false;
     for (const ProgressSnapshot& update : updates) {
         QCOMPARE(update.filesTotal, 1);
         QCOMPARE(update.bytesTotal, std::uint64_t(12));
         QVERIFY(update.filesDone >= prevFilesDone);
         QVERIFY(update.bytesDone >= prevBytesDone);
+        if (update.phase == ProgressPhase::Finalizing) {
+            sawFinalizing = true;
+        }
         prevFilesDone = update.filesDone;
         prevBytesDone = update.bytesDone;
     }
 
+    QVERIFY(sawFinalizing);
     QCOMPARE(result.finalProgress.filesTotal, 1);
     QCOMPARE(result.finalProgress.filesDone, 1);
     QCOMPARE(result.finalProgress.bytesTotal, std::uint64_t(12));
     QCOMPARE(result.finalProgress.bytesDone, std::uint64_t(12));
+    QCOMPARE(result.finalProgress.phase, ProgressPhase::Finalizing);
 }
 
 void FileOpsContractTest::deleteReportsMonotonicProgressAndStableTotals() {
@@ -278,17 +290,23 @@ void FileOpsContractTest::deleteReportsMonotonicProgressAndStableTotals() {
     QVERIFY(result.finalProgress.filesTotal >= 4);
     int prevFilesDone = -1;
     std::uint64_t prevBytesDone = 0;
+    bool sawFinalizing = false;
     for (const ProgressSnapshot& update : updates) {
         QCOMPARE(update.filesTotal, result.finalProgress.filesTotal);
         QCOMPARE(update.bytesTotal, result.finalProgress.bytesTotal);
         QVERIFY(update.filesDone >= prevFilesDone);
         QVERIFY(update.bytesDone >= prevBytesDone);
+        if (update.phase == ProgressPhase::Finalizing) {
+            sawFinalizing = true;
+        }
         prevFilesDone = update.filesDone;
         prevBytesDone = update.bytesDone;
     }
 
+    QVERIFY(sawFinalizing);
     QCOMPARE(result.finalProgress.filesDone, result.finalProgress.filesTotal);
     QCOMPARE(result.finalProgress.bytesDone, result.finalProgress.bytesTotal);
+    QCOMPARE(result.finalProgress.phase, ProgressPhase::Finalizing);
 }
 
 void FileOpsContractTest::cancelReturnsEcanceled() {
@@ -712,6 +730,7 @@ void FileOpsContractTest::sandboxedThreadCopyMatchesInProcessBehavior() {
     QCOMPARE(sandboxed.finalProgress.filesDone, in_process.finalProgress.filesDone);
     QCOMPARE(sandboxed.finalProgress.bytesTotal, in_process.finalProgress.bytesTotal);
     QCOMPARE(sandboxed.finalProgress.bytesDone, in_process.finalProgress.bytesDone);
+    QCOMPARE(sandboxed.finalProgress.phase, in_process.finalProgress.phase);
 }
 
 void FileOpsContractTest::sandboxedThreadPromptConflictMatchesInProcessBehavior() {
