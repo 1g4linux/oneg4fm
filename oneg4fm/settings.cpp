@@ -1273,6 +1273,20 @@ FolderSettings Settings::loadFolderSettings(const Panel::FilePath& path) const {
         return settings;
     }
 
+    const auto directoryProfileBaseAst = [&]() {
+        QHash<QString, QVariant> ast;
+        ast.reserve(schemaKeys.size());
+        ast.insert(QString::fromUtf8(kDirectorySchemaVersionKey), CURRENT_SCHEMA_VERSION);
+        ast.insert(QStringLiteral("SortOrder"), QString::fromUtf8(sortOrderToString(sortOrder())));
+        ast.insert(QStringLiteral("SortColumn"), QString::fromUtf8(sortColumnToString(sortColumn())));
+        ast.insert(QStringLiteral("ViewMode"), QString::fromUtf8(viewModeToString(viewMode())));
+        ast.insert(QStringLiteral("ShowHidden"), showHidden());
+        ast.insert(QStringLiteral("SortFolderFirst"), sortFolderFirst());
+        ast.insert(QStringLiteral("SortCaseSensitive"), sortCaseSensitive());
+        ast.insert(QStringLiteral("Recursive"), false);
+        return ast;
+    };
+
     const auto readCompatibleNormalized = [&](Panel::FolderConfig& cfg, QHash<QString, QVariant>& normalizedOut) {
         if (cfg.isEmpty()) {
             return false;
@@ -1283,7 +1297,11 @@ FolderSettings Settings::loadFolderSettings(const Panel::FilePath& path) const {
                                &migrationReport)) {
             return false;
         }
-        normalizedOut = normalizeAstBySchema(schemaKeys, ast);
+        QHash<QString, QVariant> effectiveAst = directoryProfileBaseAst();
+        for (auto it = ast.cbegin(); it != ast.cend(); ++it) {
+            effectiveAst.insert(it.key(), it.value());
+        }
+        normalizedOut = normalizeAstBySchema(schemaKeys, effectiveAst);
         return hasSupportedSchemaVersion(normalizedOut, QString::fromUtf8(kDirectorySchemaVersionKey));
     };
 

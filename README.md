@@ -169,6 +169,13 @@ Where state lives:
 - User directories input watched by app: `~/.config/user-dirs.dirs`
 - Qt `QSettings` stores (file dialog / mount dialog) under organization `oneg4fm` (exact file path depends on Qt platform backend; typically under `~/.config/` on Linux).
 
+Settings conflict/precedence rules:
+
+- Effective value precedence is: explicit directory key (`.directory`) > profile key (`settings.conf`) > schema default.
+- Directory overrides are scalar overrides only; missing directory keys inherit profile effective values.
+- When the same key appears multiple times in a single config file, last write wins.
+- List keys are replace semantics (not append) unless a future schema key explicitly documents otherwise.
+
 ## 8. Troubleshooting
 
 Symptom: `--profile` seems ignored, but windows still open normally.  

@@ -31,6 +31,9 @@ class TestSettingsFunctionality : public QObject {
     void testDirectorySchemaMigrationFromVersionZero();
     void testProfileUnknownKeysPreservedAndReported();
     void testProfileUnknownKeysStrictModeRejectsLoad();
+    void testFolderSettingsDirectoryOverridesProfileDefaults();
+    void testProfileDuplicateKeysLastWriteWins();
+    void testDirectoryDuplicateKeysLastWriteWins();
 };
 
 void TestSettingsFunctionality::testSettingsInitialization() {
@@ -574,6 +577,121 @@ void TestSettingsFunctionality::testProfileUnknownKeysStrictModeRejectsLoad() {
     else {
         qputenv("ONEG4FM_SETTINGS_STRICT_UNKNOWN_KEYS", oldStrictUnknownKeys);
     }
+}
+
+void TestSettingsFunctionality::testFolderSettingsDirectoryOverridesProfileDefaults() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    QVERIFY(qputenv("XDG_CONFIG_HOME", tempDir.path().toUtf8()));
+
+    const QString profileName = QStringLiteral("folder-precedence-profile");
+    const QString profileDir = tempDir.path() + QStringLiteral("/oneg4fm/") + profileName;
+    QVERIFY(QDir().mkpath(profileDir));
+
+    const QString settingsPath = profileDir + QStringLiteral("/settings.conf");
+    QFile settingsFile(settingsPath);
+    QVERIFY(settingsFile.open(QIODevice::WriteOnly | QIODevice::Text));
+    settingsFile.write(
+        "[Meta]\n"
+        "schema_version=1\n"
+        "\n"
+        "[FolderView]\n"
+        "SortOrder=descending\n"
+        "SortColumn=size\n"
+        "Mode=thumbnail\n"
+        "ShowHidden=true\n"
+        "SortFolderFirst=false\n"
+        "SortCaseSensitive=true\n");
+    settingsFile.close();
+
+    Oneg4FM::Settings settings;
+    QVERIFY(settings.load(profileName));
+    QCOMPARE(settings.sortOrder(), Qt::DescendingOrder);
+    QCOMPARE(settings.sortColumn(), Panel::FolderModel::ColumnFileSize);
+    QCOMPARE(settings.viewMode(), Panel::FolderView::ThumbnailMode);
+    QCOMPARE(settings.showHidden(), true);
+    QCOMPARE(settings.sortFolderFirst(), false);
+    QCOMPARE(settings.sortCaseSensitive(), true);
+
+    const QString folderPath = tempDir.path() + QStringLiteral("/folder");
+    QVERIFY(QDir().mkpath(folderPath));
+    QFile folderConfig(folderPath + QStringLiteral("/.directory"));
+    QVERIFY(folderConfig.open(QIODevice::WriteOnly | QIODevice::Text));
+    folderConfig.write(
+        "[File Manager]\n"
+        "schema_version=1\n"
+        "SortOrder=ascending\n"
+        "Recursive=true\n");
+    folderConfig.close();
+
+    const Panel::FilePath path = Panel::FilePath::fromLocalPath(folderPath.toUtf8().constData());
+    const Oneg4FM::FolderSettings loaded = settings.loadFolderSettings(path);
+
+    QVERIFY(loaded.isCustomized());
+    QCOMPARE(loaded.sortOrder(), Qt::AscendingOrder);
+    QCOMPARE(loaded.sortColumn(), Panel::FolderModel::ColumnFileSize);
+    QCOMPARE(loaded.viewMode(), Panel::FolderView::ThumbnailMode);
+    QCOMPARE(loaded.showHidden(), true);
+    QCOMPARE(loaded.sortFolderFirst(), false);
+    QCOMPARE(loaded.sortCaseSensitive(), true);
+    QCOMPARE(loaded.recursive(), true);
+}
+
+void TestSettingsFunctionality::testProfileDuplicateKeysLastWriteWins() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    QVERIFY(qputenv("XDG_CONFIG_HOME", tempDir.path().toUtf8()));
+
+    const QString profileName = QStringLiteral("duplicate-keys-profile");
+    const QString profileDir = tempDir.path() + QStringLiteral("/oneg4fm/") + profileName;
+    QVERIFY(QDir().mkpath(profileDir));
+
+    const QString settingsPath = profileDir + QStringLiteral("/settings.conf");
+    QFile settingsFile(settingsPath);
+    QVERIFY(settingsFile.open(QIODevice::WriteOnly | QIODevice::Text));
+    settingsFile.write(
+        "[Meta]\n"
+        "schema_version=1\n"
+        "\n"
+        "[Window]\n"
+        "AlwaysShowTabs=false\n"
+        "AlwaysShowTabs=true\n"
+        "TabPaths=/tmp/first\n"
+        "TabPaths=/tmp/final\n");
+    settingsFile.close();
+
+    Oneg4FM::Settings settings;
+    QVERIFY(settings.load(profileName));
+
+    QCOMPARE(settings.alwaysShowTabs(), true);
+    QCOMPARE(settings.tabPaths(), QStringList({QStringLiteral("/tmp/final")}));
+}
+
+void TestSettingsFunctionality::testDirectoryDuplicateKeysLastWriteWins() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+
+    const QString folderPath = tempDir.path() + QStringLiteral("/folder");
+    QVERIFY(QDir().mkpath(folderPath));
+
+    QFile folderConfig(folderPath + QStringLiteral("/.directory"));
+    QVERIFY(folderConfig.open(QIODevice::WriteOnly | QIODevice::Text));
+    folderConfig.write(
+        "[File Manager]\n"
+        "schema_version=1\n"
+        "SortOrder=ascending\n"
+        "SortOrder=descending\n"
+        "ShowHidden=false\n"
+        "ShowHidden=true\n");
+    folderConfig.close();
+
+    Oneg4FM::Settings settings;
+    const Panel::FilePath path = Panel::FilePath::fromLocalPath(folderPath.toUtf8().constData());
+    const Oneg4FM::FolderSettings loaded = settings.loadFolderSettings(path);
+
+    QVERIFY(loaded.isCustomized());
+    QCOMPARE(loaded.sortOrder(), Qt::DescendingOrder);
+    QCOMPARE(loaded.showHidden(), true);
 }
 
 QTEST_MAIN(TestSettingsFunctionality)
