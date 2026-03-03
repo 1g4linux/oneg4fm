@@ -86,6 +86,9 @@ Rules:
 - Copy/move/delete requests route through `FileOpsContract::run` for both
   `RoutingClass::CoreLocal` and `RoutingClass::LegacyGio`.
 - `RoutingClass::Unsupported` is a hard error; no unsafe local fallback.
+- When `LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT=0`, copy/move/delete/trash/untrash
+  fail fast with `G_IO_ERROR_NOT_SUPPORTED`; adapter jobs do not execute legacy
+  retry-capable mutation paths.
 - `classifyPathForFileOps` is deterministic and does not probe filesystem
   metadata to choose behavior.
 - Adapters do not call GIO file-op mutation APIs directly for these operations.
@@ -94,6 +97,8 @@ Rules:
 
 - For copy/move (not link), requests route through core contract for both local
   and legacy-GIO classifications.
+- Link mode remains on legacy link helpers; only copy/move is in scope for this
+  contract adapter path.
 - Adapter builds `FileOpsContract::TransferRequest` and routes via typed
   `run(...)` overloads.
 - Uses `DestinationMappingMode::ExplicitPerSource` for per-item destination.

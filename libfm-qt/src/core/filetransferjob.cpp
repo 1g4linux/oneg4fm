@@ -251,13 +251,6 @@ bool FileTransferJob::moveFileSameFs(const FilePath& srcPath, const GFileInfoPtr
         // do the file operation
         if (!g_file_move(srcPath.gfile().get(), destPath.gfile().get(), GFileCopyFlags(flags), cancellable().get(),
                          nullptr, this, &err)) {
-            // Specially with mounts bound to /mnt, g_file_move() may give the recursive error
-            // and fail, in which case, we ignore the error and try copying and deleting.
-            if (err.code() == G_IO_ERROR_WOULD_RECURSE) {
-                if (auto parent = destPath.parent()) {
-                    return copyFile(srcPath, srcInfo, parent, destPath.baseName().get());
-                }
-            }
             retry = handleError(err, srcPath, srcInfo, destPath, flags);
         }
         else {
@@ -817,6 +810,17 @@ void FileTransferJob::exec() {
     setTotalAmount(0, srcPaths_.size());
 #endif
     Q_EMIT preparedToRun();
+
+#if !LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
+    if (mode_ != Mode::LINK) {
+        GErrorPtr err;
+        g_set_error(&err, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+                    "Core file-ops contract unavailable: refusing legacy copy/move adapter path");
+        emitError(err, ErrorSeverity::CRITICAL);
+        cancel();
+        return;
+    }
+#endif
 
     if (srcPaths_.size() != destPaths_.size()) {
         qWarning("error: srcPaths.size() != destPaths.size() when copying files");

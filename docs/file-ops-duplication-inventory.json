@@ -6,26 +6,26 @@
       {
         "file": "libfm-qt/src/core/filetransferjob.cpp",
         "symbol": "bool FileTransferJob::processPath(",
-        "state": "gio-only-shim",
-        "notes": "Legacy copy/move branch is retained only for GIO-only (non-core-local) routing."
+        "state": "legacy-link-shim",
+        "notes": "Legacy processPath implementation remains for link handling; copy/move paths are core-routed or fail fast when the core contract is unavailable."
       },
       {
         "file": "libfm-qt/src/core/filetransferjob.cpp",
         "symbol": "bool FileTransferJob::moveFile(",
-        "state": "gio-only-shim",
-        "notes": "Legacy move implementation remains only for GIO compatibility paths."
+        "state": "inactive-shim",
+        "notes": "Legacy move implementation remains in source but copy/move execution now fails fast without the core contract."
       },
       {
         "file": "libfm-qt/src/core/filetransferjob.cpp",
         "symbol": "bool FileTransferJob::copyFile(",
-        "state": "gio-only-shim",
-        "notes": "Legacy recursive copy implementation remains only for GIO compatibility paths."
+        "state": "inactive-shim",
+        "notes": "Legacy recursive copy implementation remains in source but copy/move execution now fails fast without the core contract."
       },
       {
         "file": "libfm-qt/src/core/filetransferjob.cpp",
         "symbol": "bool FileTransferJob::moveFileSameFs(",
-        "state": "gio-only-shim",
-        "notes": "Legacy same-filesystem move path remains only for GIO compatibility paths."
+        "state": "inactive-shim",
+        "notes": "Legacy same-filesystem move helper remains in source; adapter-side move-then-copy retry fallback is removed."
       },
       {
         "file": "libfm-qt/src/core/filetransferjob.cpp",
@@ -35,15 +35,9 @@
       },
       {
         "file": "libfm-qt/src/core/deletejob.cpp",
-        "symbol": "bool DeleteJob::deleteFile(",
-        "state": "gio-only-shim",
-        "notes": "Legacy delete implementation remains only for GIO compatibility paths."
-      },
-      {
-        "file": "libfm-qt/src/core/deletejob.cpp",
-        "symbol": "bool DeleteJob::deleteDirContent(",
-        "state": "gio-only-shim",
-        "notes": "Legacy recursive delete traversal remains only for GIO compatibility paths."
+        "symbol": "Core file-ops contract unavailable: refusing legacy delete adapter path",
+        "state": "fail-fast-shim",
+        "notes": "DeleteJob no longer runs legacy recursive delete logic when the core contract is unavailable."
       },
       {
         "file": "libfm-qt/src/core/deletejob.cpp",

@@ -866,6 +866,8 @@ void FileOpsInventoryTest::libfmQtCoreRoutedAdaptersAvoidPlannerRetryProbeLogic(
              "FileTransferJob core-routed section must map rename prompt choices");
     QVERIFY2(transferCoreBlock.contains(QStringLiteral("CoreFileOps::ConflictResolution::Rename"), Qt::CaseSensitive),
              "FileTransferJob core-routed section must pass rename semantics to core");
+    QVERIFY2(!transferContent.contains(QStringLiteral("G_IO_ERROR_WOULD_RECURSE"), Qt::CaseSensitive),
+             "FileTransferJob must not implement adapter-side move-then-copy retry fallback heuristics");
 
     const auto [deleteContent, deleteError] = readTextFile(QStringLiteral("libfm-qt/src/core/deletejob.cpp"));
     QVERIFY2(deleteError.isEmpty(), qPrintable(deleteError));
@@ -880,14 +882,24 @@ void FileOpsInventoryTest::libfmQtCoreRoutedAdaptersAvoidPlannerRetryProbeLogic(
     QVERIFY2(deleteCoreRunnerPos >= 0, "DeleteJob core-routed runner must be present");
     const int deleteCoreIfPos =
         deleteContent.lastIndexOf(QStringLiteral("#if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT"), deleteCoreRunnerPos);
+    const int deleteCoreElsePos = deleteContent.indexOf(QStringLiteral("#else"), deleteCoreRunnerPos);
     const int deleteCoreEndPos = deleteContent.indexOf(QStringLiteral("#endif"), deleteCoreRunnerPos);
-    QVERIFY2(deleteCoreIfPos >= 0 && deleteCoreEndPos > deleteCoreIfPos,
+    QVERIFY2(deleteCoreIfPos >= 0 && deleteCoreElsePos > deleteCoreIfPos && deleteCoreEndPos > deleteCoreElsePos,
              "DeleteJob core-routed section must be present");
-    const QString deleteCoreBlock = deleteContent.mid(deleteCoreIfPos, deleteCoreEndPos - deleteCoreIfPos);
+    const QString deleteCoreBlock = deleteContent.mid(deleteCoreIfPos, deleteCoreElsePos - deleteCoreIfPos);
+    const QString deleteLegacyBlock = deleteContent.mid(deleteCoreElsePos, deleteCoreEndPos - deleteCoreElsePos);
     QVERIFY2(!deleteCoreBlock.contains(QStringLiteral("ErrorAction::RETRY"), Qt::CaseSensitive),
              "DeleteJob core-routed section must not implement adapter retry loops");
     QVERIFY2(!deleteCoreBlock.contains(QStringLiteral("while (!isCancelled())"), Qt::CaseSensitive),
              "DeleteJob core-routed section must not wrap core execution in retry loops");
+    QVERIFY2(deleteLegacyBlock.contains(
+                 QStringLiteral("Core file-ops contract unavailable: refusing legacy delete adapter path"),
+                 Qt::CaseSensitive),
+             "DeleteJob legacy branch must fail fast when the core contract is unavailable");
+    QVERIFY2(!deleteLegacyBlock.contains(QStringLiteral("ErrorAction::RETRY"), Qt::CaseSensitive),
+             "DeleteJob legacy branch must not implement adapter retry loops");
+    QVERIFY2(!deleteLegacyBlock.contains(QStringLiteral("while (!isCancelled())"), Qt::CaseSensitive),
+             "DeleteJob legacy branch must not wrap legacy delete execution in retry loops");
 
     const auto [trashContent, trashError] = readTextFile(QStringLiteral("libfm-qt/src/core/trashjob.cpp"));
     QVERIFY2(trashError.isEmpty(), qPrintable(trashError));
@@ -896,12 +908,23 @@ void FileOpsInventoryTest::libfmQtCoreRoutedAdaptersAvoidPlannerRetryProbeLogic(
     const int trashCoreIfPos =
         trashContent.indexOf(QStringLiteral("#if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT"), trashExecPos);
     const int trashCoreElsePos = trashContent.indexOf(QStringLiteral("#else"), trashCoreIfPos);
-    QVERIFY2(trashCoreIfPos >= 0 && trashCoreElsePos > trashCoreIfPos, "TrashJob core-routed section must be present");
+    const int trashCoreEndPos = trashContent.indexOf(QStringLiteral("#endif"), trashCoreElsePos);
+    QVERIFY2(trashCoreIfPos >= 0 && trashCoreElsePos > trashCoreIfPos && trashCoreEndPos > trashCoreElsePos,
+             "TrashJob core-routed section must be present");
     const QString trashCoreBlock = trashContent.mid(trashCoreIfPos, trashCoreElsePos - trashCoreIfPos);
+    const QString trashLegacyBlock = trashContent.mid(trashCoreElsePos, trashCoreEndPos - trashCoreElsePos);
     QVERIFY2(!trashCoreBlock.contains(QStringLiteral("ErrorAction::RETRY"), Qt::CaseSensitive),
              "TrashJob core-routed section must not implement adapter retry loops");
     QVERIFY2(!trashCoreBlock.contains(QStringLiteral("g_file_find_enclosing_mount"), Qt::CaseSensitive),
              "TrashJob core-routed section must not probe mounts for behavior decisions");
+    QVERIFY2(trashLegacyBlock.contains(
+                 QStringLiteral("Core file-ops contract unavailable: refusing legacy trash adapter path"),
+                 Qt::CaseSensitive),
+             "TrashJob legacy branch must fail fast when the core contract is unavailable");
+    QVERIFY2(!trashLegacyBlock.contains(QStringLiteral("ErrorAction::RETRY"), Qt::CaseSensitive),
+             "TrashJob legacy branch must not implement adapter retry loops");
+    QVERIFY2(!trashLegacyBlock.contains(QStringLiteral("for (;;)"), Qt::CaseSensitive),
+             "TrashJob legacy branch must not wrap legacy trash execution in retry loops");
 
     const auto [untrashContent, untrashError] = readTextFile(QStringLiteral("libfm-qt/src/core/untrashjob.cpp"));
     QVERIFY2(untrashError.isEmpty(), qPrintable(untrashError));
@@ -910,13 +933,23 @@ void FileOpsInventoryTest::libfmQtCoreRoutedAdaptersAvoidPlannerRetryProbeLogic(
     const int untrashCoreIfPos =
         untrashContent.indexOf(QStringLiteral("#if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT"), untrashExecPos);
     const int untrashCoreElsePos = untrashContent.indexOf(QStringLiteral("#else"), untrashCoreIfPos);
-    QVERIFY2(untrashCoreIfPos >= 0 && untrashCoreElsePos > untrashCoreIfPos,
+    const int untrashCoreEndPos = untrashContent.indexOf(QStringLiteral("#endif"), untrashCoreElsePos);
+    QVERIFY2(untrashCoreIfPos >= 0 && untrashCoreElsePos > untrashCoreIfPos && untrashCoreEndPos > untrashCoreElsePos,
              "UntrashJob core-routed section must be present");
     const QString untrashCoreBlock = untrashContent.mid(untrashCoreIfPos, untrashCoreElsePos - untrashCoreIfPos);
+    const QString untrashLegacyBlock = untrashContent.mid(untrashCoreElsePos, untrashCoreEndPos - untrashCoreElsePos);
     QVERIFY2(!untrashCoreBlock.contains(QStringLiteral("ErrorAction::RETRY"), Qt::CaseSensitive),
              "UntrashJob core-routed section must not implement adapter retry loops");
     QVERIFY2(!untrashCoreBlock.contains(QStringLiteral("while (!isCancelled())"), Qt::CaseSensitive),
              "UntrashJob core-routed section must not wrap core execution in retry loops");
+    QVERIFY2(untrashLegacyBlock.contains(
+                 QStringLiteral("Core file-ops contract unavailable: refusing legacy untrash adapter path"),
+                 Qt::CaseSensitive),
+             "UntrashJob legacy branch must fail fast when the core contract is unavailable");
+    QVERIFY2(!untrashLegacyBlock.contains(QStringLiteral("ErrorAction::RETRY"), Qt::CaseSensitive),
+             "UntrashJob legacy branch must not implement adapter retry loops");
+    QVERIFY2(!untrashLegacyBlock.contains(QStringLiteral("while (!isCancelled())"), Qt::CaseSensitive),
+             "UntrashJob legacy branch must not wrap legacy untrash execution in retry loops");
 
     const auto [policyContent, policyError] =
         readTextFile(QStringLiteral("libfm-qt/src/core/fileops_bridge_policy.cpp"));

@@ -21,10 +21,6 @@ class LIBFM_QT_API DeleteJob : public Fm::FileOperationJob {
     void exec() override;
 
    private:
-    bool deleteFile(const FilePath& path, GFileInfoPtr inf);
-    bool deleteDirContent(const FilePath& path, GFileInfoPtr inf);
-
-   private:
     FilePathList paths_;
 };
 

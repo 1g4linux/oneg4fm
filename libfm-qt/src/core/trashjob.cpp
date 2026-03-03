@@ -151,37 +151,12 @@ void TrashJob::exec() {
         }
         addFinishedAmount(1, 1);
 #else
-        for (;;) {  // retry the i/o operation on errors
-            auto gf = path.gfile();
-            bool ret = false;
-            // move the file to trash
-            GErrorPtr err;
-            ret = g_file_trash(gf.get(), cancellable().get(), &err);
-            if (ret) {  // trash operation succeeded
-                break;
-            }
-            else {  // failed
-                // if trashing is not supported by the file system
-                if (err.domain() == G_IO_ERROR && err.code() == G_IO_ERROR_NOT_SUPPORTED) {
-                    unsupportedFiles_.push_back(path);
-                    break;
-                }
-                else {
-                    ErrorAction act = emitError(err, ErrorSeverity::MODERATE);
-                    if (act == ErrorAction::RETRY) {
-                        err.reset();
-                    }
-                    else if (act == ErrorAction::ABORT) {
-                        cancel();
-                        return;
-                    }
-                    else {
-                        break;
-                    }
-                }
-            }
-        }
-        addFinishedAmount(1, 1);
+        GErrorPtr err;
+        g_set_error(&err, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+                    "Core file-ops contract unavailable: refusing legacy trash adapter path");
+        emitError(err, ErrorSeverity::CRITICAL);
+        cancel();
+        return;
 #endif
     }
 }
