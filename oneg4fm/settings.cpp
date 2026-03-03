@@ -50,6 +50,8 @@ constexpr int CURRENT_SCHEMA_VERSION = 1;
 constexpr int SUPPORTED_SCHEMA_BACKWARD_WINDOW = 0;
 constexpr const char* kProfileSchemaVersionKey = "Meta/schema_version";
 constexpr const char* kDirectorySchemaVersionKey = "schema_version";
+constexpr const char* kLegacyProfileSearchHiddenKey = "Search/searchHidden";
+constexpr const char* kProfileSearchHiddenKey = "Search/searchhHidden";
 
 struct SchemaKey {
     QString key;
@@ -200,6 +202,30 @@ QHash<QString, QVariant> readFolderConfigAst(Panel::FolderConfig& cfg, const QVe
     return ast;
 }
 
+enum class SettingsSurface { Profile, Directory };
+
+enum class MigrationActionType { SchemaVersionBump, RenameKey, ValueTransform };
+
+struct MigrationAction {
+    MigrationActionType type;
+    QString key;
+    QString detail;
+};
+
+struct MigrationReport {
+    SettingsSurface surface;
+    int sourceVersion = 0;
+    int targetVersion = 0;
+    QVector<MigrationAction> actions;
+};
+
+void recordMigrationAction(MigrationReport& report,
+                           MigrationActionType type,
+                           const QString& key,
+                           const QString& detail = QString()) {
+    report.actions.push_back(MigrationAction{type, key, detail});
+}
+
 bool parseBoolValue(const QVariant& rawValue, bool fallbackValue) {
     if (!rawValue.isValid() || rawValue.isNull()) {
         return fallbackValue;
@@ -266,6 +292,76 @@ bool isSupportedSchemaVersion(int schemaVersion) {
 
 bool hasSupportedSchemaVersion(const QHash<QString, QVariant>& normalized, const QString& schemaVersionKey) {
     return isSupportedSchemaVersion(normalizeSchemaVersion(normalized.value(schemaVersionKey)));
+}
+
+int readSchemaVersionFromRawAst(const QHash<QString, QVariant>& ast, const QString& schemaVersionKey) {
+    if (!ast.contains(schemaVersionKey)) {
+        return 0;
+    }
+    return parseIntValue(ast.value(schemaVersionKey), 0);
+}
+
+void applyProfileMigrationV0ToV1(QHash<QString, QVariant>& ast, MigrationReport& report) {
+    const QString legacySearchHiddenKey = QString::fromUtf8(kLegacyProfileSearchHiddenKey);
+    const QString currentSearchHiddenKey = QString::fromUtf8(kProfileSearchHiddenKey);
+    if (ast.contains(legacySearchHiddenKey) && !ast.contains(currentSearchHiddenKey)) {
+        ast.insert(currentSearchHiddenKey, ast.value(legacySearchHiddenKey));
+        recordMigrationAction(report, MigrationActionType::RenameKey, legacySearchHiddenKey,
+                              QStringLiteral("migrated to Search/searchhHidden"));
+    }
+}
+
+void applyDirectoryMigrationV0ToV1(QHash<QString, QVariant>& ast, MigrationReport& report) {
+    const QString sortOrderKey = QStringLiteral("SortOrder");
+    const QString token = ast.value(sortOrderKey).toString().trimmed().toLower();
+    if (token == QLatin1String("desc")) {
+        ast.insert(sortOrderKey, QStringLiteral("descending"));
+        recordMigrationAction(report, MigrationActionType::ValueTransform, sortOrderKey,
+                              QStringLiteral("desc -> descending"));
+    }
+    else if (token == QLatin1String("asc")) {
+        ast.insert(sortOrderKey, QStringLiteral("ascending"));
+        recordMigrationAction(report, MigrationActionType::ValueTransform, sortOrderKey,
+                              QStringLiteral("asc -> ascending"));
+    }
+}
+
+bool migrateAstForward(SettingsSurface surface,
+                       const QString& schemaVersionKey,
+                       QHash<QString, QVariant>& ast,
+                       MigrationReport* outReport = nullptr) {
+    MigrationReport report;
+    report.surface = surface;
+    report.sourceVersion = readSchemaVersionFromRawAst(ast, schemaVersionKey);
+    if (report.sourceVersion > CURRENT_SCHEMA_VERSION) {
+        return false;
+    }
+
+    int version = report.sourceVersion;
+    while (version < CURRENT_SCHEMA_VERSION) {
+        if (version == 0) {
+            if (surface == SettingsSurface::Profile) {
+                applyProfileMigrationV0ToV1(ast, report);
+            }
+            else {
+                applyDirectoryMigrationV0ToV1(ast, report);
+            }
+
+            version = 1;
+            ast.insert(schemaVersionKey, version);
+            recordMigrationAction(report, MigrationActionType::SchemaVersionBump, schemaVersionKey,
+                                  QStringLiteral("0 -> 1"));
+            continue;
+        }
+
+        return false;
+    }
+
+    report.targetVersion = version;
+    if (outReport != nullptr) {
+        *outReport = report;
+    }
+    return isSupportedSchemaVersion(version);
 }
 
 QString normalizePathToken(const QString& rawPath) {
@@ -607,7 +703,14 @@ bool Settings::loadFile(QString filePath) {
         return false;
     }
 
-    const QHash<QString, QVariant> normalized = normalizeAstBySchema(schemaKeys, readIniAst(filePath));
+    QHash<QString, QVariant> ast = readIniAst(filePath);
+    MigrationReport migrationReport;
+    if (!migrateAstForward(SettingsSurface::Profile, QString::fromUtf8(kProfileSchemaVersionKey), ast,
+                           &migrationReport)) {
+        return false;
+    }
+
+    const QHash<QString, QVariant> normalized = normalizeAstBySchema(schemaKeys, ast);
     const auto value = [&](const char* key) { return normalized.value(QString::fromUtf8(key)); };
     if (!isSupportedSchemaVersion(normalizeSchemaVersion(value(kProfileSchemaVersionKey)))) {
         return false;
@@ -1103,7 +1206,13 @@ FolderSettings Settings::loadFolderSettings(const Panel::FilePath& path) const {
         if (cfg.isEmpty()) {
             return false;
         }
-        normalizedOut = normalizeAstBySchema(schemaKeys, readFolderConfigAst(cfg, schemaKeys));
+        QHash<QString, QVariant> ast = readFolderConfigAst(cfg, schemaKeys);
+        MigrationReport migrationReport;
+        if (!migrateAstForward(SettingsSurface::Directory, QString::fromUtf8(kDirectorySchemaVersionKey), ast,
+                               &migrationReport)) {
+            return false;
+        }
+        normalizedOut = normalizeAstBySchema(schemaKeys, ast);
         return hasSupportedSchemaVersion(normalizedOut, QString::fromUtf8(kDirectorySchemaVersionKey));
     };
 

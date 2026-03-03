@@ -27,6 +27,8 @@ class TestSettingsFunctionality : public QObject {
     void testFolderSettingsSchemaNormalization();
     void testProfileSchemaVersionCompatibility();
     void testDirectorySchemaVersionCompatibility();
+    void testProfileSchemaMigrationFromVersionZero();
+    void testDirectorySchemaMigrationFromVersionZero();
 };
 
 void TestSettingsFunctionality::testSettingsInitialization() {
@@ -409,6 +411,73 @@ void TestSettingsFunctionality::testDirectorySchemaVersionCompatibility() {
     toSave.setShowHidden(true);
     settings.saveFolderSettings(path, toSave);
 
+    QSettings saved(folderPath + QStringLiteral("/.directory"), QSettings::IniFormat);
+    QCOMPARE(saved.value(QStringLiteral("File Manager/schema_version")).toInt(), 1);
+}
+
+void TestSettingsFunctionality::testProfileSchemaMigrationFromVersionZero() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    QVERIFY(qputenv("XDG_CONFIG_HOME", tempDir.path().toUtf8()));
+
+    const QString profileName = QStringLiteral("schema-migration-profile");
+    const QString profileDir = tempDir.path() + QStringLiteral("/oneg4fm/") + profileName;
+    QVERIFY(QDir().mkpath(profileDir));
+
+    const QString settingsPath = profileDir + QStringLiteral("/settings.conf");
+    QFile settingsFile(settingsPath);
+    QVERIFY(settingsFile.open(QIODevice::WriteOnly | QIODevice::Text));
+    settingsFile.write(
+        "[Meta]\n"
+        "schema_version=0\n"
+        "\n"
+        "[Search]\n"
+        "searchHidden=true\n"
+        "\n"
+        "[Window]\n"
+        "AlwaysShowTabs=false\n");
+    settingsFile.close();
+
+    Oneg4FM::Settings settings;
+    QVERIFY(settings.load(profileName));
+    QCOMPARE(settings.searchhHidden(), true);
+    QCOMPARE(settings.alwaysShowTabs(), false);
+
+    QVERIFY(settings.save(profileName));
+    QSettings saved(settingsPath, QSettings::IniFormat);
+    QCOMPARE(saved.value(QStringLiteral("Meta/schema_version")).toInt(), 1);
+    QCOMPARE(saved.value(QStringLiteral("Search/searchhHidden")).toBool(), true);
+}
+
+void TestSettingsFunctionality::testDirectorySchemaMigrationFromVersionZero() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+
+    const QString folderPath = tempDir.path() + QStringLiteral("/folder");
+    QVERIFY(QDir().mkpath(folderPath));
+
+    QFile folderConfig(folderPath + QStringLiteral("/.directory"));
+    QVERIFY(folderConfig.open(QIODevice::WriteOnly | QIODevice::Text));
+    folderConfig.write(
+        "[File Manager]\n"
+        "schema_version=0\n"
+        "SortOrder=desc\n"
+        "ShowHidden=true\n"
+        "SortFolderFirst=false\n"
+        "Recursive=true\n");
+    folderConfig.close();
+
+    Oneg4FM::Settings settings;
+    const Panel::FilePath path = Panel::FilePath::fromLocalPath(folderPath.toUtf8().constData());
+    const Oneg4FM::FolderSettings loaded = settings.loadFolderSettings(path);
+
+    QVERIFY(loaded.isCustomized());
+    QCOMPARE(loaded.sortOrder(), Qt::DescendingOrder);
+    QCOMPARE(loaded.showHidden(), true);
+    QCOMPARE(loaded.sortFolderFirst(), false);
+    QCOMPARE(loaded.recursive(), true);
+
+    settings.saveFolderSettings(path, loaded);
     QSettings saved(folderPath + QStringLiteral("/.directory"), QSettings::IniFormat);
     QCOMPARE(saved.value(QStringLiteral("File Manager/schema_version")).toInt(), 1);
 }
