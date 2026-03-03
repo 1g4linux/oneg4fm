@@ -27,6 +27,34 @@ class FakeBookmarkContext final : public Oneg4FM::MainWindowBookmarkCommands::Co
     }
 };
 
+class FakeMenuContext final : public Oneg4FM::MainWindowBookmarkCommands::MenuContext {
+   public:
+    enum class Kind {
+        Separator,
+        Bookmark,
+    };
+
+    struct ActionRecord {
+        Kind kind = Kind::Separator;
+        QString label;
+        QString path;
+    };
+
+    int removeDynamicCalls = 0;
+    QList<ActionRecord> actions;
+
+    void removeDynamicBookmarkActions() override {
+        ++removeDynamicCalls;
+        actions.clear();
+    }
+
+    void addBookmarkSeparator() override { actions.append(ActionRecord{Kind::Separator, QString(), QString()}); }
+
+    void addBookmarkAction(const QString& label, const QString& bookmarkPath) override {
+        actions.append(ActionRecord{Kind::Bookmark, label, bookmarkPath});
+    }
+};
+
 }  // namespace
 
 class MainWindowBookmarkCommandsTest : public QObject {
@@ -35,6 +63,9 @@ class MainWindowBookmarkCommandsTest : public QObject {
    private Q_SLOTS:
     void commandsRequireBookmarkPath();
     void commandDispatchesToRequestedTarget();
+    void policyMappingCoversAllTargetsAndFallback();
+    void rebuildMenuClearsDynamicActionsWhenEmpty();
+    void rebuildMenuAddsSeparatorAndBookmarkActions();
 };
 
 void MainWindowBookmarkCommandsTest::commandsRequireBookmarkPath() {
@@ -80,6 +111,57 @@ void MainWindowBookmarkCommandsTest::commandDispatchesToRequestedTarget() {
     QVERIFY(canExecute(Id::OpenInLastActiveWindow, bookmarkPath, context));
     execute(Id::OpenInLastActiveWindow, bookmarkPath, context);
     QCOMPARE(context.openInLastActiveWindowCalls, QList<QString>({bookmarkPath}));
+}
+
+void MainWindowBookmarkCommandsTest::policyMappingCoversAllTargetsAndFallback() {
+    using namespace Oneg4FM::MainWindowBookmarkCommands;
+
+    QCOMPARE(commandIdForPolicy(OpenTargetPolicy::CurrentTab), Id::OpenInCurrentTab);
+    QCOMPARE(commandIdForPolicy(OpenTargetPolicy::NewTab), Id::OpenInNewTab);
+    QCOMPARE(commandIdForPolicy(OpenTargetPolicy::NewWindow), Id::OpenInNewWindow);
+    QCOMPARE(commandIdForPolicy(OpenTargetPolicy::LastActiveWindow), Id::OpenInLastActiveWindow);
+
+    const auto invalidPolicy = static_cast<OpenTargetPolicy>(99);
+    QCOMPARE(commandIdForPolicy(invalidPolicy), Id::OpenInCurrentTab);
+}
+
+void MainWindowBookmarkCommandsTest::rebuildMenuClearsDynamicActionsWhenEmpty() {
+    using namespace Oneg4FM::MainWindowBookmarkCommands;
+
+    FakeMenuContext menu;
+    menu.actions.append(
+        FakeMenuContext::ActionRecord{FakeMenuContext::Kind::Bookmark, QStringLiteral("old"), QStringLiteral("/old")});
+
+    rebuildMenu(QList<MenuEntry>{}, menu);
+
+    QCOMPARE(menu.removeDynamicCalls, 1);
+    QCOMPARE(menu.actions.size(), 0);
+}
+
+void MainWindowBookmarkCommandsTest::rebuildMenuAddsSeparatorAndBookmarkActions() {
+    using namespace Oneg4FM::MainWindowBookmarkCommands;
+
+    FakeMenuContext menu;
+    const QList<MenuEntry> entries = {
+        MenuEntry{QStringLiteral("/first"), QStringLiteral("First Bookmark")},
+        MenuEntry{QString(), QStringLiteral("Should Be Skipped")},
+        MenuEntry{QStringLiteral("/second"), QString()},
+    };
+
+    rebuildMenu(entries, menu);
+
+    QCOMPARE(menu.removeDynamicCalls, 1);
+    QCOMPARE(menu.actions.size(), 3);
+
+    QCOMPARE(menu.actions[0].kind, FakeMenuContext::Kind::Separator);
+
+    QCOMPARE(menu.actions[1].kind, FakeMenuContext::Kind::Bookmark);
+    QCOMPARE(menu.actions[1].label, QStringLiteral("First Bookmark"));
+    QCOMPARE(menu.actions[1].path, QStringLiteral("/first"));
+
+    QCOMPARE(menu.actions[2].kind, FakeMenuContext::Kind::Bookmark);
+    QCOMPARE(menu.actions[2].label, QStringLiteral("/second"));
+    QCOMPARE(menu.actions[2].path, QStringLiteral("/second"));
 }
 
 QTEST_MAIN(MainWindowBookmarkCommandsTest)

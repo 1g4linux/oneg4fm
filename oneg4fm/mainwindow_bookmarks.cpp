@@ -7,6 +7,7 @@
 #include <QApplication>
 #include <QMenu>
 #include <algorithm>
+#include <functional>
 
 #include "panel/panel.h"
 
@@ -26,60 +27,72 @@ Settings& appSettings() {
     return app->settings();
 }
 
-MainWindowBookmarkCommands::Id bookmarkOpenCommand(OpenDirTargetType target) {
-    switch (target) {
-        case OpenInCurrentTab:
-            return MainWindowBookmarkCommands::Id::OpenInCurrentTab;
-        case OpenInNewTab:
-            return MainWindowBookmarkCommands::Id::OpenInNewTab;
-        case OpenInNewWindow:
-            return MainWindowBookmarkCommands::Id::OpenInNewWindow;
-        case OpenInLastActiveWindow:
-            return MainWindowBookmarkCommands::Id::OpenInLastActiveWindow;
-    }
-    return MainWindowBookmarkCommands::Id::OpenInCurrentTab;
-}
-
 Panel::FilePath filePathFromBookmark(const QString& bookmarkPath) {
     const QByteArray encoded = bookmarkPath.toUtf8();
     return Panel::FilePath::fromPathStr(encoded.constData());
 }
 
+class QtBookmarkMenuContext final : public MainWindowBookmarkCommands::MenuContext {
+   public:
+    QtBookmarkMenuContext(QMenu& menu, QObject& owner, std::function<void(const QString&)> openBookmark)
+        : menu_(menu), owner_(owner), openBookmark_(std::move(openBookmark)) {}
+
+    void removeDynamicBookmarkActions() override {
+        const auto actions = menu_.actions();
+        for (auto* action : actions) {
+            if (!action) {
+                continue;
+            }
+            if (action->property(UiConstants::kBookmarkActionProperty).toBool()) {
+                menu_.removeAction(action);
+                action->deleteLater();
+            }
+        }
+    }
+
+    void addBookmarkSeparator() override {
+        auto* separator = new QAction(&menu_);
+        separator->setSeparator(true);
+        separator->setProperty(UiConstants::kBookmarkActionProperty, true);
+        menu_.addAction(separator);
+    }
+
+    void addBookmarkAction(const QString& label, const QString& bookmarkPath) override {
+        auto* action = new QAction(label, &menu_);
+        action->setProperty(UiConstants::kBookmarkActionProperty, true);
+        action->setData(bookmarkPath);
+        QObject::connect(action, &QAction::triggered, &owner_, [this, bookmarkPath] { openBookmark_(bookmarkPath); });
+        menu_.addAction(action);
+    }
+
+   private:
+    QMenu& menu_;
+    QObject& owner_;
+    std::function<void(const QString&)> openBookmark_;
+};
+
 }  // namespace
 
 void MainWindow::loadBookmarksMenu() {
-    // Clear previously inserted dynamic bookmark actions
     auto* menu = ui.menu_Bookmarks;
     if (!menu) {
         return;
     }
 
-    const auto actions = menu->actions();
-    for (auto* action : actions) {
-        if (!action) {
-            continue;
-        }
-
-        // identify bookmark actions via a custom property
-        if (action->property(UiConstants::kBookmarkActionProperty).toBool()) {
-            menu->removeAction(action);
-            action->deleteLater();
-        }
-    }
-
+    QList<MainWindowBookmarkCommands::MenuEntry> entries;
     if (!bookmarks_) {
+        QtBookmarkMenuContext menuContext(*menu, *this, [this](const QString& bookmarkPath) {
+            MainWindowBookmarkCommands::execute(
+                MainWindowBookmarkCommands::commandIdForPolicy(
+                    static_cast<MainWindowBookmarkCommands::OpenTargetPolicy>(appSettings().bookmarkOpenMethod())),
+                bookmarkPath, *this);
+        });
+        MainWindowBookmarkCommands::rebuildMenu(entries, menuContext);
         return;
     }
 
     const auto& items = bookmarks_->items();
-    if (items.empty()) {
-        return;
-    }
-
-    auto* separator = new QAction(menu);
-    separator->setSeparator(true);
-    separator->setProperty(UiConstants::kBookmarkActionProperty, true);
-    menu->addAction(separator);
+    entries.reserve(static_cast<qsizetype>(items.size()));
 
     for (const auto& item : items) {
         if (!item) {
@@ -96,26 +109,20 @@ void MainWindow::loadBookmarksMenu() {
             label = QString::fromUtf8(pathStr.get());
         }
 
-        auto* action = new QAction(label, menu);
-        action->setProperty(UiConstants::kBookmarkActionProperty, true);
-        action->setData(QString::fromUtf8(pathStr.get()));
-        connect(action, &QAction::triggered, this, &MainWindow::onBookmarkActionTriggered);
-        menu->addAction(action);
+        entries.append(MainWindowBookmarkCommands::MenuEntry{QString::fromUtf8(pathStr.get()), label});
     }
+
+    QtBookmarkMenuContext menuContext(*menu, *this, [this](const QString& bookmarkPath) {
+        MainWindowBookmarkCommands::execute(
+            MainWindowBookmarkCommands::commandIdForPolicy(
+                static_cast<MainWindowBookmarkCommands::OpenTargetPolicy>(appSettings().bookmarkOpenMethod())),
+            bookmarkPath, *this);
+    });
+    MainWindowBookmarkCommands::rebuildMenu(entries, menuContext);
 }
 
 void MainWindow::onBookmarksChanged() {
     loadBookmarksMenu();
-}
-
-void MainWindow::onBookmarkActionTriggered() {
-    const auto* action = qobject_cast<QAction*>(sender());
-    if (!action) {
-        return;
-    }
-
-    const QString pathStr = action->data().toString();
-    MainWindowBookmarkCommands::execute(bookmarkOpenCommand(appSettings().bookmarkOpenMethod()), pathStr, *this);
 }
 
 void MainWindow::on_actionAddToBookmarks_triggered() {

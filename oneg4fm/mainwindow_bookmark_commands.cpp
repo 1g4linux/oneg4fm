@@ -22,6 +22,10 @@ bool hasBookmarkPath(const QString& bookmarkPath) {
     return !bookmarkPath.isEmpty();
 }
 
+QString resolvedMenuLabel(const MenuEntry& entry) {
+    return entry.label.isEmpty() ? entry.path : entry.label;
+}
+
 class OpenInCurrentTabCommand final : public Command {
    public:
     bool canExecute(const QString& bookmarkPath, const Context& context) const override {
@@ -92,6 +96,20 @@ const Command& commandForId(Id id) {
 
 }  // namespace
 
+Id commandIdForPolicy(OpenTargetPolicy policy) {
+    switch (policy) {
+        case OpenTargetPolicy::CurrentTab:
+            return Id::OpenInCurrentTab;
+        case OpenTargetPolicy::NewTab:
+            return Id::OpenInNewTab;
+        case OpenTargetPolicy::NewWindow:
+            return Id::OpenInNewWindow;
+        case OpenTargetPolicy::LastActiveWindow:
+            return Id::OpenInLastActiveWindow;
+    }
+    return Id::OpenInCurrentTab;
+}
+
 bool canExecute(Id id, const QString& bookmarkPath, const Context& context) {
     return commandForId(id).canExecute(bookmarkPath, context);
 }
@@ -102,6 +120,28 @@ void execute(Id id, const QString& bookmarkPath, Context& context) {
         return;
     }
     command.execute(bookmarkPath, context);
+}
+
+void rebuildMenu(const QList<MenuEntry>& entries, MenuContext& context) {
+    context.removeDynamicBookmarkActions();
+
+    QList<MenuEntry> validEntries;
+    validEntries.reserve(entries.size());
+    for (const MenuEntry& entry : entries) {
+        if (!hasBookmarkPath(entry.path)) {
+            continue;
+        }
+        validEntries.append(MenuEntry{entry.path, resolvedMenuLabel(entry)});
+    }
+
+    if (validEntries.isEmpty()) {
+        return;
+    }
+
+    context.addBookmarkSeparator();
+    for (const MenuEntry& entry : validEntries) {
+        context.addBookmarkAction(entry.label, entry.path);
+    }
 }
 
 }  // namespace Oneg4FM::MainWindowBookmarkCommands

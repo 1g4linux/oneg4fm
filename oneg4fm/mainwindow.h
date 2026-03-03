@@ -185,8 +185,6 @@ class MainWindow : public QMainWindow,
     void on_actionAbout_triggered();
     void on_actionHiddenShortcuts_triggered();
 
-    void onBookmarkActionTriggered();
-
     void onTabBarCloseRequested(int index);
     void onTabBarCurrentChanged(int index);
     void onTabBarTabMoved(int from, int to);
