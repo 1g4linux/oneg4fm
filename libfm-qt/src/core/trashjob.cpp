@@ -1,6 +1,7 @@
 #include "trashjob.h"
 
 #include "fileops_bridge_policy.h"
+#include "fileops_request_assembly.h"
 
 #include <cerrno>
 #include <string>
@@ -19,38 +20,6 @@ namespace {
 
 #if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
 namespace CoreFileOps = Oneg4FM::FileOpsContract;
-
-bool toNativePath(const FilePath& path, std::string& out) {
-    const auto localPath = path.localPath();
-    if (!localPath || localPath.get()[0] == '\0') {
-        out.clear();
-        return false;
-    }
-
-    out.assign(localPath.get());
-    return true;
-}
-
-bool toUriPath(const FilePath& path, std::string& out) {
-    const auto uri = path.uri();
-    if (!uri || uri.get()[0] == '\0') {
-        out.clear();
-        return false;
-    }
-
-    out.assign(uri.get());
-    return true;
-}
-
-bool toCoreEndpointPath(const FilePath& path, std::string& out, CoreFileOps::EndpointKind& endpointKind) {
-    if (path.isNative()) {
-        endpointKind = CoreFileOps::EndpointKind::NativePath;
-        return toNativePath(path, out);
-    }
-
-    endpointKind = CoreFileOps::EndpointKind::Uri;
-    return toUriPath(path, out);
-}
 
 GErrorPtr coreResultToError(const CoreFileOps::Result& result, const char* fallbackMessage) {
     const int code =
@@ -78,6 +47,15 @@ void TrashJob::exec() {
     setTotalAmount(paths_.size(), paths_.size());
     Q_EMIT preparedToRun();
 
+#if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
+    GErrorPtr countErr;
+    if (!FileOpsRequestAssembly::validateRequestPathCount(paths_.size(), "trash", countErr)) {
+        emitError(countErr, ErrorSeverity::CRITICAL);
+        cancel();
+        return;
+    }
+#endif
+
     /* FIXME: we shouldn't trash a file already in trash:/// */
     for (auto& path : paths_) {
         if (isCancelled()) {
@@ -90,12 +68,11 @@ void TrashJob::exec() {
         //       if there is a Fm::Folder object created for it, block the update for the folder temporarily.
 
 #if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
-        std::string sourceEndpoint;
-        CoreFileOps::EndpointKind sourceKind = CoreFileOps::EndpointKind::NativePath;
-        if (!toCoreEndpointPath(path, sourceEndpoint, sourceKind)) {
-            GErrorPtr err;
-            g_set_error(&err, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "%s", "Unable to encode source path");
-            const ErrorAction action = emitError(err, ErrorSeverity::MODERATE);
+        CoreFileOps::TrashRequest request;
+        GErrorPtr assembleErr;
+        if (!FileOpsRequestAssembly::buildTrashRequest(
+                path, [this]() { return isCancelled(); }, request, assembleErr)) {
+            const ErrorAction action = emitError(assembleErr, ErrorSeverity::MODERATE);
             if (action == ErrorAction::ABORT) {
                 cancel();
                 return;
@@ -103,28 +80,6 @@ void TrashJob::exec() {
             addFinishedAmount(1, 1);
             continue;
         }
-
-        CoreFileOps::TrashRequest request;
-        request.common.sources = {sourceEndpoint};
-        request.common.options.symlinkPolicy.followSymlinks = false;
-        request.common.options.symlinkPolicy.copyMode = CoreFileOps::SymlinkCopyMode::CopyLinkAsLink;
-        request.common.options.metadata.preserveOwnership = true;
-        request.common.options.metadata.preservePermissions = true;
-        request.common.options.metadata.preserveTimestamps = true;
-        request.common.options.cancelGranularity = CoreFileOps::CancelCheckpointGranularity::PerChunk;
-        request.common.cancellationRequested = [this, cancelHandle = request.common.cancelHandle]() mutable {
-            if (isCancelled()) {
-                cancelHandle.cancel();
-            }
-            return cancelHandle.isCancelled();
-        };
-        request.common.options.linuxSafety.requireOpenat2Resolve = false;
-        request.common.options.linuxSafety.requireLandlock = false;
-        request.common.options.linuxSafety.requireSeccomp = false;
-        request.common.options.linuxSafety.workerMode = CoreFileOps::WorkerMode::InProcess;
-        request.common.options.routing.defaultBackend = CoreFileOps::Backend::Gio;
-        request.common.options.routing.sourceKinds = {sourceKind};
-        request.common.options.routing.sourceBackends = {CoreFileOps::Backend::Gio};
 
         const CoreFileOps::Result result = CoreFileOps::run(request);
         if (result.success) {

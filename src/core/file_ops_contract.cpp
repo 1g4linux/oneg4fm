@@ -341,6 +341,7 @@ Request to_request_common(const RequestCommon& common, Operation operation) {
     Request request;
     request.operation = operation;
     request.sources = common.sources;
+    request.sourceSnapshots = common.sourceSnapshots;
     request.destination = common.destination;
     request.conflictPolicy = common.policy.conflictPolicy;
     request.symlinkPolicy = common.options.symlinkPolicy;
@@ -1036,10 +1037,52 @@ bool validate_request_routing(const Request& request, Backend& resolved_backend,
     return has_backend;
 }
 
+bool source_snapshot_matches(const Request& request, std::size_t index, Error& err) {
+    if (request.sourceSnapshots.empty() || index >= request.sourceSnapshots.size()) {
+        return true;
+    }
+
+    const SourceSnapshot& snapshot = request.sourceSnapshots[index];
+    if (!snapshot.available) {
+        return true;
+    }
+
+    if (source_endpoint_kind(request, index) != EndpointKind::NativePath) {
+        return true;
+    }
+
+    const std::string& source = request.sources[index];
+    struct stat st{};
+    if (::lstat(source.c_str(), &st) != 0) {
+        set_errno_error(err, EngineErrorCode::OperationFailed, OperationStep::BuildPlan, errno,
+                        "Failed to stat source for snapshot validation");
+        return false;
+    }
+
+    const bool matches = (static_cast<std::uint64_t>(st.st_dev) == snapshot.device) &&
+                         (static_cast<std::uint64_t>(st.st_ino) == snapshot.inode) &&
+                         (static_cast<std::uint64_t>(st.st_size) == snapshot.size) &&
+                         (static_cast<std::int64_t>(st.st_mtim.tv_sec) == snapshot.mtimeSec) &&
+                         (static_cast<std::int64_t>(st.st_mtim.tv_nsec) == snapshot.mtimeNsec);
+    if (matches) {
+        return true;
+    }
+
+    set_error(err, EngineErrorCode::InvalidRequest, OperationStep::BuildPlan, ESTALE,
+              "Source snapshot mismatch for source[" + std::to_string(index) + "]");
+    return false;
+}
+
 bool validate_request(const Request& request, Error& err) {
     if (request.sources.empty()) {
         set_error(err, EngineErrorCode::InvalidRequest, OperationStep::ValidateRequest, EINVAL,
                   "Request has no sources");
+        return false;
+    }
+
+    if (!request.sourceSnapshots.empty() && request.sourceSnapshots.size() != request.sources.size()) {
+        set_error(err, EngineErrorCode::InvalidRequest, OperationStep::ValidateRequest, EINVAL,
+                  "sourceSnapshots must match source count when provided");
         return false;
     }
 
@@ -1144,6 +1187,10 @@ bool build_plan(const Request& request, std::vector<SourcePlan>& plans, Progress
         if (source.empty()) {
             set_error(err, EngineErrorCode::InvalidRequest, OperationStep::BuildPlan, EINVAL,
                       "Source path must not be empty");
+            return false;
+        }
+
+        if (!source_snapshot_matches(request, index, err)) {
             return false;
         }
 

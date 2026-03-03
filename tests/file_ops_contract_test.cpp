@@ -59,6 +59,25 @@ bool createSparseFile(const QString& path, qint64 sizeBytes) {
     return ok;
 }
 
+SourceSnapshot snapshotForPath(const QString& path, bool& ok) {
+    SourceSnapshot snapshot;
+    const QByteArray native = QFile::encodeName(path);
+    struct stat st{};
+    if (::lstat(native.constData(), &st) != 0) {
+        ok = false;
+        return snapshot;
+    }
+
+    snapshot.available = true;
+    snapshot.device = static_cast<std::uint64_t>(st.st_dev);
+    snapshot.inode = static_cast<std::uint64_t>(st.st_ino);
+    snapshot.size = static_cast<std::uint64_t>(st.st_size);
+    snapshot.mtimeSec = static_cast<std::int64_t>(st.st_mtim.tv_sec);
+    snapshot.mtimeNsec = static_cast<std::int64_t>(st.st_mtim.tv_nsec);
+    ok = true;
+    return snapshot;
+}
+
 class ScopedEnvVar {
    public:
     explicit ScopedEnvVar(const char* name, const char* value) : name_(name) {
@@ -102,6 +121,7 @@ class FileOpsContractTest : public QObject {
     void moveReportsMonotonicProgressAndStableTotals();
     void deleteReportsMonotonicProgressAndStableTotals();
     void typedTransferRequestRunsThroughCoreContract();
+    void typedTransferRejectsStaleSourceSnapshot();
     void cancelHandleCancelsTypedTransferRequest();
     void eventStreamHandlersReceivePromptConflictAndDoneEvents();
     void opResultConversionCarriesStatusDiagnosticsAndPerItemResults();
@@ -329,6 +349,9 @@ void FileOpsContractTest::typedTransferRequestRunsThroughCoreContract() {
     request.transferOperation = TransferOperation::Copy;
     request.common.opId = "typed-transfer-copy";
     request.common.sources = {toNative(srcPath)};
+    bool snapshotOk = false;
+    request.common.sourceSnapshots = {snapshotForPath(srcPath, snapshotOk)};
+    QVERIFY(snapshotOk);
     request.common.destination.targetDir = toNative(dstDir);
     request.common.destination.mappingMode = DestinationMappingMode::SourceBasename;
     request.common.policy.conflictPolicy = ConflictPolicy::Overwrite;
@@ -337,6 +360,9 @@ void FileOpsContractTest::typedTransferRequestRunsThroughCoreContract() {
     QCOMPARE(canonicalRequest.operation, Operation::Copy);
     QCOMPARE(canonicalRequest.sources.size(), std::size_t(1));
     QCOMPARE(canonicalRequest.sources[0], toNative(srcPath));
+    QCOMPARE(canonicalRequest.sourceSnapshots.size(), std::size_t(1));
+    QVERIFY(canonicalRequest.sourceSnapshots[0].available);
+    QCOMPARE(canonicalRequest.sourceSnapshots[0].inode, request.common.sourceSnapshots[0].inode);
     QCOMPARE(canonicalRequest.destination.targetDir, toNative(dstDir));
     QCOMPARE(canonicalRequest.conflictPolicy, ConflictPolicy::Overwrite);
 
@@ -349,6 +375,39 @@ void FileOpsContractTest::typedTransferRequestRunsThroughCoreContract() {
     QVERIFY(!result.cancelled);
     QCOMPARE(result.error.code, EngineErrorCode::None);
     QCOMPARE(readFile(dstPath), QByteArray("typed-copy"));
+}
+
+void FileOpsContractTest::typedTransferRejectsStaleSourceSnapshot() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcDir = dir.path() + QLatin1String("/src");
+    const QString dstDir = dir.path() + QLatin1String("/dst");
+    QVERIFY(QDir().mkpath(srcDir));
+    QVERIFY(QDir().mkpath(dstDir));
+
+    const QString srcPath = writeTempFile(srcDir + QLatin1String("/stale.txt"), QByteArray("original"));
+
+    TransferRequest request;
+    request.transferOperation = TransferOperation::Copy;
+    request.common.sources = {toNative(srcPath)};
+    bool snapshotOk = false;
+    request.common.sourceSnapshots = {snapshotForPath(srcPath, snapshotOk)};
+    QVERIFY(snapshotOk);
+    request.common.destination.targetDir = toNative(dstDir);
+    request.common.destination.mappingMode = DestinationMappingMode::SourceBasename;
+    request.common.policy.conflictPolicy = ConflictPolicy::Overwrite;
+
+    // Mutate the source after snapshot capture to simulate stale UI selection metadata.
+    writeTempFile(srcPath, QByteArray("changed-after-snapshot"));
+    QCOMPARE(readFile(srcPath), QByteArray("changed-after-snapshot"));
+
+    const Result result = run(request);
+    QVERIFY(!result.success);
+    QVERIFY(!result.cancelled);
+    QCOMPARE(result.error.code, EngineErrorCode::InvalidRequest);
+    QCOMPARE(result.error.step, OperationStep::BuildPlan);
+    QCOMPARE(result.error.sysErrno, ESTALE);
 }
 
 void FileOpsContractTest::cancelHandleCancelsTypedTransferRequest() {

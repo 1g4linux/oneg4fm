@@ -12,6 +12,7 @@ set(libfm_core_SRCS
     core/gobjectptr.h
     core/filepath.cpp
     core/fileops_bridge_policy.cpp
+    core/fileops_request_assembly.cpp
     core/iconinfo.cpp
     core/mimetype.cpp
     core/fileinfo.cpp

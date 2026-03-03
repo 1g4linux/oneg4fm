@@ -1,4 +1,5 @@
 #include "untrashjob.h"
+#include "fileops_request_assembly.h"
 
 #ifndef LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
 #define LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT 0
@@ -18,62 +19,6 @@ namespace {
 
 #if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
 namespace CoreFileOps = Oneg4FM::FileOpsContract;
-
-bool toNativePath(const FilePath& path, std::string& out) {
-    const auto localPath = path.localPath();
-    if (!localPath || localPath.get()[0] == '\0') {
-        out.clear();
-        return false;
-    }
-
-    out.assign(localPath.get());
-    return true;
-}
-
-bool toUriPath(const FilePath& path, std::string& out) {
-    const auto uri = path.uri();
-    if (!uri || uri.get()[0] == '\0') {
-        out.clear();
-        return false;
-    }
-
-    out.assign(uri.get());
-    return true;
-}
-
-bool toCoreEndpointPath(const FilePath& path, std::string& out, CoreFileOps::EndpointKind& endpointKind) {
-    if (path.isNative()) {
-        endpointKind = CoreFileOps::EndpointKind::NativePath;
-        return toNativePath(path, out);
-    }
-
-    endpointKind = CoreFileOps::EndpointKind::Uri;
-    return toUriPath(path, out);
-}
-
-FilePath toFilePathFromCorePath(const std::string& path, const FilePath& fallback) {
-    if (path.empty()) {
-        return fallback;
-    }
-
-    if (path.find("://") != std::string::npos) {
-        return FilePath::fromUri(path.c_str());
-    }
-
-    return FilePath::fromLocalPath(path.c_str());
-}
-
-GFileInfoPtr makePromptInfoFromPath(const FilePath& path) {
-    GFileInfo* fallback = g_file_info_new();
-    if (path) {
-        const auto basename = path.baseName();
-        if (basename) {
-            g_file_info_set_name(fallback, basename.get());
-            g_file_info_set_display_name(fallback, basename.get());
-        }
-    }
-    return GFileInfoPtr{fallback, false};
-}
 
 GErrorPtr coreResultToError(const CoreFileOps::Result& result, const char* fallbackMessage) {
     const int code =
@@ -100,17 +45,27 @@ void UntrashJob::exec() {
     setTotalAmount(srcPaths_.size(), srcPaths_.size());
     Q_EMIT preparedToRun();
 
+    GErrorPtr countErr;
+    if (!FileOpsRequestAssembly::validateRequestPathCount(srcPaths_.size(), "untrash", countErr)) {
+        emitError(countErr, ErrorSeverity::CRITICAL);
+        cancel();
+        return;
+    }
+
     for (const auto& srcPath : srcPaths_) {
         if (isCancelled()) {
             break;
         }
 
-        std::string sourceEndpoint;
-        CoreFileOps::EndpointKind sourceKind = CoreFileOps::EndpointKind::NativePath;
-        if (!toCoreEndpointPath(srcPath, sourceEndpoint, sourceKind)) {
-            GErrorPtr err;
-            g_set_error(&err, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "%s", "Unable to encode source path");
-            const ErrorAction action = emitError(err, ErrorSeverity::MODERATE);
+        std::uint64_t baseFinishedBytes = 0;
+        std::uint64_t baseFinishedFiles = 0;
+        finishedAmount(baseFinishedBytes, baseFinishedFiles);
+
+        CoreFileOps::UntrashRequest request;
+        GErrorPtr assembleErr;
+        if (!FileOpsRequestAssembly::buildUntrashRequest(
+                srcPath, [this]() { return isCancelled(); }, request, assembleErr)) {
+            const ErrorAction action = emitError(assembleErr, ErrorSeverity::MODERATE);
             if (action == ErrorAction::ABORT) {
                 cancel();
                 return;
@@ -119,39 +74,10 @@ void UntrashJob::exec() {
             continue;
         }
 
-        std::uint64_t baseFinishedBytes = 0;
-        std::uint64_t baseFinishedFiles = 0;
-        finishedAmount(baseFinishedBytes, baseFinishedFiles);
-
-        CoreFileOps::UntrashRequest request;
-        request.common.sources = {sourceEndpoint};
-        request.common.policy.conflictPolicy = CoreFileOps::ConflictPolicy::Prompt;
-        request.common.options.symlinkPolicy.followSymlinks = false;
-        request.common.options.symlinkPolicy.copyMode = CoreFileOps::SymlinkCopyMode::CopyLinkAsLink;
-        request.common.options.metadata.preserveOwnership = true;
-        request.common.options.metadata.preservePermissions = true;
-        request.common.options.metadata.preserveTimestamps = true;
-        request.common.options.atomicity.requireAtomicReplace = false;
-        request.common.options.atomicity.bestEffortAtomicMove = true;
-        request.common.options.cancelGranularity = CoreFileOps::CancelCheckpointGranularity::PerChunk;
-        request.common.cancellationRequested = [this, cancelHandle = request.common.cancelHandle]() mutable {
-            if (isCancelled()) {
-                cancelHandle.cancel();
-            }
-            return cancelHandle.isCancelled();
-        };
-        request.common.options.linuxSafety.requireOpenat2Resolve = false;
-        request.common.options.linuxSafety.requireLandlock = false;
-        request.common.options.linuxSafety.requireSeccomp = false;
-        request.common.options.linuxSafety.workerMode = CoreFileOps::WorkerMode::InProcess;
-        request.common.options.routing.defaultBackend = CoreFileOps::Backend::Gio;
-        request.common.options.routing.sourceKinds = {sourceKind};
-        request.common.options.routing.sourceBackends = {CoreFileOps::Backend::Gio};
-
         CoreFileOps::EventHandlers handlers;
         handlers.onProgress = [this, baseFinishedBytes, baseFinishedFiles,
                                srcPath](const CoreFileOps::ProgressSnapshot& progress) {
-            setCurrentFile(toFilePathFromCorePath(progress.currentPath, srcPath));
+            setCurrentFile(FileOpsRequestAssembly::toFilePathFromCorePath(progress.currentPath, srcPath));
             setCurrentFileProgress(0, 0);
 
             const std::uint64_t bytesDone = progress.bytesDone;
@@ -160,11 +86,12 @@ void UntrashJob::exec() {
         };
 
         handlers.onConflict = [this, srcPath](const CoreFileOps::ConflictEvent& event) {
-            const FilePath eventSource = toFilePathFromCorePath(event.sourcePath, srcPath);
-            const FilePath eventDestination = toFilePathFromCorePath(event.destinationPath, FilePath{});
+            const FilePath eventSource = FileOpsRequestAssembly::toFilePathFromCorePath(event.sourcePath, srcPath);
+            const FilePath eventDestination =
+                FileOpsRequestAssembly::toFilePathFromCorePath(event.destinationPath, FilePath{});
 
-            GFileInfoPtr sourceInfo = makePromptInfoFromPath(eventSource);
-            GFileInfoPtr destinationInfo = makePromptInfoFromPath(eventDestination);
+            GFileInfoPtr sourceInfo = FileOpsRequestAssembly::makePromptInfoFromPath(eventSource);
+            GFileInfoPtr destinationInfo = FileOpsRequestAssembly::makePromptInfoFromPath(eventDestination);
 
             FilePath ignoredNewDestination;
             const FileExistsAction action = askRename(

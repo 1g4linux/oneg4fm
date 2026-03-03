@@ -100,6 +100,15 @@ struct RoutingHints {
     EndpointKind destinationKind = EndpointKind::NativePath;
 };
 
+struct SourceSnapshot {
+    bool available = false;
+    std::uint64_t device = 0;
+    std::uint64_t inode = 0;
+    std::uint64_t size = 0;
+    std::int64_t mtimeSec = 0;
+    std::int64_t mtimeNsec = 0;
+};
+
 class CancelHandle {
    public:
     CancelHandle();
@@ -119,6 +128,7 @@ class CancelHandle {
 struct Request {
     Operation operation = Operation::Copy;
     std::vector<std::string> sources;
+    std::vector<SourceSnapshot> sourceSnapshots;
     DestinationPolicy destination;
     ConflictPolicy conflictPolicy = ConflictPolicy::Overwrite;
     SymlinkPolicy symlinkPolicy;
@@ -150,6 +160,7 @@ struct UiContext {
 struct RequestCommon {
     std::string opId;
     std::vector<std::string> sources;
+    std::vector<SourceSnapshot> sourceSnapshots;
     DestinationPolicy destination;
     RequestOptions options;
     RequestPolicy policy;

@@ -11,12 +11,14 @@
 
 #include "../libfm-qt/src/core/deletejob.h"
 #include "../libfm-qt/src/core/fileops_bridge_policy.h"
+#include "../libfm-qt/src/core/fileops_request_assembly.h"
 #define private public
 #include "../libfm-qt/src/core/filetransferjob.h"
 #undef private
 #include "../libfm-qt/src/fileoperation.h"
 
 #include <cstdint>
+#include <string>
 
 namespace {
 
@@ -59,6 +61,8 @@ class LibfmQtFileOpsBridgeTest : public QObject {
     void copyFilesWithExplicitDestPathsAcceptsEmptyLists();
     void nativeCopyMoveDeleteRoutingUsesExplicitClassification();
     void trashAndUntrashJobsRouteViaCoreContract();
+    void requestAssemblyIncludesOpIdAndSourceSnapshot();
+    void requestAssemblyRejectsPathCountOverLimit();
 };
 
 void LibfmQtFileOpsBridgeTest::copyConflictSkipCountsAsCompletedWork() {
@@ -289,7 +293,8 @@ void LibfmQtFileOpsBridgeTest::nativeCopyMoveDeleteRoutingUsesExplicitClassifica
     QVERIFY(transferBytes.contains("RoutingClass::LegacyGio"));
     QVERIFY(transferBytes.contains("RoutingClass::Unsupported"));
     QVERIFY(transferBytes.contains("CoreFileOps::TransferRequest"));
-    QVERIFY(transferBytes.contains("request.common.options"));
+    QVERIFY(transferBytes.contains("FileOpsRequestAssembly::buildTransferRequest"));
+    QVERIFY(transferBytes.contains("FileOpsRequestAssembly::validateRequestPathCount"));
     QVERIFY(transferBytes.contains("runCoreRoutedPath(srcPath, destPath, srcRouting, destRouting)"));
 
     const QString deletePath = QFINDTESTDATA("../libfm-qt/src/core/deletejob.cpp");
@@ -303,7 +308,8 @@ void LibfmQtFileOpsBridgeTest::nativeCopyMoveDeleteRoutingUsesExplicitClassifica
     QVERIFY(deleteBytes.contains("RoutingClass::LegacyGio"));
     QVERIFY(deleteBytes.contains("RoutingClass::Unsupported"));
     QVERIFY(deleteBytes.contains("CoreFileOps::DeleteRequest"));
-    QVERIFY(deleteBytes.contains("request.common.options"));
+    QVERIFY(deleteBytes.contains("FileOpsRequestAssembly::buildDeleteRequest"));
+    QVERIFY(deleteBytes.contains("FileOpsRequestAssembly::validateRequestPathCount"));
     QVERIFY(deleteBytes.contains("runCoreRoutedDelete(path, pathRouting)"));
 
     const QString trashPath = QFINDTESTDATA("../libfm-qt/src/core/trashjob.cpp");
@@ -328,7 +334,8 @@ void LibfmQtFileOpsBridgeTest::trashAndUntrashJobsRouteViaCoreContract() {
     QVERIFY(trashSource.open(QIODevice::ReadOnly | QIODevice::Text));
     const QByteArray trashBytes = trashSource.readAll();
     QVERIFY(trashBytes.contains("CoreFileOps::TrashRequest request"));
-    QVERIFY(trashBytes.contains("request.common.options.routing.defaultBackend = CoreFileOps::Backend::Gio"));
+    QVERIFY(trashBytes.contains("FileOpsRequestAssembly::buildTrashRequest"));
+    QVERIFY(trashBytes.contains("FileOpsRequestAssembly::validateRequestPathCount"));
     QVERIFY(trashBytes.contains("CoreFileOps::run(request)"));
 
     const QString untrashPath = QFINDTESTDATA("../libfm-qt/src/core/untrashjob.cpp");
@@ -337,8 +344,53 @@ void LibfmQtFileOpsBridgeTest::trashAndUntrashJobsRouteViaCoreContract() {
     QVERIFY(untrashSource.open(QIODevice::ReadOnly | QIODevice::Text));
     const QByteArray untrashBytes = untrashSource.readAll();
     QVERIFY(untrashBytes.contains("CoreFileOps::UntrashRequest request"));
-    QVERIFY(untrashBytes.contains("request.common.options.routing.defaultBackend = CoreFileOps::Backend::Gio"));
+    QVERIFY(untrashBytes.contains("FileOpsRequestAssembly::buildUntrashRequest"));
+    QVERIFY(untrashBytes.contains("FileOpsRequestAssembly::validateRequestPathCount"));
     QVERIFY(untrashBytes.contains("CoreFileOps::run(request, handlers)"));
+}
+
+void LibfmQtFileOpsBridgeTest::requestAssemblyIncludesOpIdAndSourceSnapshot() {
+#if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString srcPath = writeFile(dir.path() + QLatin1String("/snapshot-src.txt"), QByteArray("snapshot-data"));
+    const QString dstDir = dir.path() + QLatin1String("/dst");
+    QVERIFY(QDir().mkpath(dstDir));
+    const QString dstPath = dstDir + QLatin1String("/snapshot-src.txt");
+
+    const Fm::FilePath source = toLocalFilePath(srcPath);
+    const Fm::FilePath destination = toLocalFilePath(dstPath);
+    const auto srcRouting = Fm::FileOpsBridgePolicy::classifyPathForFileOps(source);
+    const auto dstRouting = Fm::FileOpsBridgePolicy::classifyPathForFileOps(destination);
+    QCOMPARE(srcRouting, Fm::FileOpsBridgePolicy::RoutingClass::CoreLocal);
+    QCOMPARE(dstRouting, Fm::FileOpsBridgePolicy::RoutingClass::CoreLocal);
+
+    Oneg4FM::FileOpsContract::TransferRequest request;
+    GErrorPtr err;
+    QVERIFY(Fm::FileOpsRequestAssembly::buildTransferRequest(
+        source, destination, Fm::FileOpsRequestAssembly::TransferKind::Copy, srcRouting, dstRouting,
+        []() { return false; }, request, err));
+    QVERIFY(!err);
+
+    QVERIFY(!request.common.opId.empty());
+    QCOMPARE(request.common.sources.size(), std::size_t(1));
+    QCOMPARE(request.common.sourceSnapshots.size(), std::size_t(1));
+    QVERIFY(request.common.sourceSnapshots[0].available);
+    QVERIFY(!request.common.uiContext.initiator.empty());
+    QVERIFY(request.common.uiContext.initiator.find("snapshot=") != std::string::npos);
+#else
+    QSKIP("Core file-ops contract disabled");
+#endif
+}
+
+void LibfmQtFileOpsBridgeTest::requestAssemblyRejectsPathCountOverLimit() {
+    Fm::GErrorPtr err;
+    QVERIFY(!Fm::FileOpsRequestAssembly::validateRequestPathCount(Fm::FileOpsRequestAssembly::kMaxPathsPerRequest + 1,
+                                                                  "copy/move", err));
+    QVERIFY(err);
+    QCOMPARE(static_cast<int>(err.domain()), static_cast<int>(G_IO_ERROR));
+    QCOMPARE(static_cast<int>(err.code()), static_cast<int>(G_IO_ERROR_INVALID_ARGUMENT));
 }
 
 QTEST_MAIN(LibfmQtFileOpsBridgeTest)

@@ -71,6 +71,7 @@ Relevant files:
 - `libfm-qt/src/core/trashjob.cpp`
 - `libfm-qt/src/core/untrashjob.cpp`
 - `libfm-qt/src/core/fileops_bridge_policy.cpp`
+- `libfm-qt/src/core/fileops_request_assembly.cpp`
 
 ### Routing Policy (`classifyPathForFileOps`)
 
@@ -86,6 +87,8 @@ Rules:
 - Copy/move/delete requests route through `FileOpsContract::run` for both
   `RoutingClass::CoreLocal` and `RoutingClass::LegacyGio`.
 - `RoutingClass::Unsupported` is a hard error; no unsafe local fallback.
+- Core-routed jobs enforce adapter-side input bounds before assembly:
+  `kMaxPathsPerRequest` (currently 4096).
 - When `LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT=0`, copy/move/delete/trash/untrash
   fail fast with `G_IO_ERROR_NOT_SUPPORTED`; adapter jobs do not execute legacy
   retry-capable mutation paths.
@@ -101,6 +104,11 @@ Rules:
   contract adapter path.
 - Adapter builds `FileOpsContract::TransferRequest` and routes via typed
   `run(...)` overloads.
+- Request assembly is centralized in `FileOpsRequestAssembly::buildTransferRequest`
+  with deterministic 1:1 mapping from bridge inputs to contract fields.
+- Request identity is explicit: every assembled request carries a generated
+  `common.opId` and source snapshot metadata in
+  `common.sourceSnapshots` / `common.uiContext.initiator`.
 - Uses `DestinationMappingMode::ExplicitPerSource` for per-item destination.
 - Conflict dialog integration:
   - Legacy UI asks user via `askRename(...)`
@@ -113,7 +121,8 @@ Rules:
 
 - Delete routes through core contract for both `CoreLocal` and `LegacyGio`
   classifications.
-- Adapter builds `FileOpsContract::DeleteRequest`.
+- Adapter builds `FileOpsContract::DeleteRequest` via
+  `FileOpsRequestAssembly::buildDeleteRequest`.
 - Progress and totals are aggregated from core snapshots into legacy
   `finishedAmount`/`totalAmount`.
 - Adapter does not pre-scan with `TotalSizeJob`.
@@ -123,7 +132,8 @@ Rules:
 
 - Trash/untrash requests are translated into core contract operations
   (`Operation::Trash`, `Operation::Untrash`) with backend `Gio` via
-  `FileOpsContract::TrashRequest` / `FileOpsContract::UntrashRequest`.
+  `FileOpsContract::TrashRequest` / `FileOpsContract::UntrashRequest`,
+  assembled by `FileOpsRequestAssembly`.
 - Legacy dialogs continue to receive mapped conflict/error/cancel behavior
   through the same job interfaces.
 - Adapter does not probe mount/filesystem metadata or run retry loops for

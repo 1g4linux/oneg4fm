@@ -29,6 +29,7 @@ The contract accepts a `Request` and validates it before planning/execution.
 | --- | --- |
 | `operation` | `Copy`, `Move`, `Delete`, `Trash`, `Untrash`, `Mkdir`, `Link`. `Mkdir`/`Link` are currently rejected. `Trash`/`Untrash` require routing to backend `Gio`. |
 | `sources` | Must be non-empty; each source must be non-empty and must be stat-able during plan build by the resolved backend scanner (`lstat` for local, `g_file_query_info` for GIO). |
+| `sourceSnapshots` | Optional per-source stale-selection guard. When provided, count must match `sources`; native-path snapshots are validated (`dev`/`ino`/`size`/`mtime`) during plan build and stale sources fail with `ESTALE`. |
 | `destination.targetDir` | Required for `Copy`/`Move`; must be empty for `Trash`/`Untrash`. |
 | `destination.mappingMode` | `SourceBasename` or `ExplicitPerSource`. |
 | `destination.explicitTargets` | Required count match when `ExplicitPerSource` is used. |
@@ -68,6 +69,7 @@ Each typed request includes `RequestCommon`, which contains:
 
 - `opId`
 - `sources`
+- `sourceSnapshots`
 - `destination`
 - `options` (`RequestOptions`)
 - `policy` (`RequestPolicy`)

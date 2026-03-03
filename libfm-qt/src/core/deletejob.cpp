@@ -1,5 +1,6 @@
 #include "deletejob.h"
 #include "fileops_bridge_policy.h"
+#include "fileops_request_assembly.h"
 #include <cerrno>
 #include <cstdint>
 #include <string>
@@ -18,56 +19,6 @@ namespace {
 
 #if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
 namespace CoreFileOps = Oneg4FM::FileOpsContract;
-
-bool toNativePath(const FilePath& path, std::string& out) {
-    const auto localPath = path.localPath();
-    if (!localPath || localPath.get()[0] == '\0') {
-        out.clear();
-        return false;
-    }
-
-    out.assign(localPath.get());
-    return true;
-}
-
-bool toUriPath(const FilePath& path, std::string& out) {
-    const auto uri = path.uri();
-    if (!uri || uri.get()[0] == '\0') {
-        out.clear();
-        return false;
-    }
-
-    out.assign(uri.get());
-    return true;
-}
-
-FilePath toFilePathFromCorePath(const std::string& path, const FilePath& fallback) {
-    if (path.empty()) {
-        return fallback;
-    }
-
-    if (path.find("://") != std::string::npos) {
-        return FilePath::fromUri(path.c_str());
-    }
-    return FilePath::fromLocalPath(path.c_str());
-}
-
-bool toCoreEndpointPath(const FilePath& path, std::string& out, CoreFileOps::EndpointKind& endpointKind) {
-    if (path.isNative()) {
-        endpointKind = CoreFileOps::EndpointKind::NativePath;
-        return toNativePath(path, out);
-    }
-
-    endpointKind = CoreFileOps::EndpointKind::Uri;
-    return toUriPath(path, out);
-}
-
-CoreFileOps::Backend backendForRouting(FileOpsBridgePolicy::RoutingClass routingClass) {
-    if (routingClass == FileOpsBridgePolicy::RoutingClass::LegacyGio) {
-        return CoreFileOps::Backend::Gio;
-    }
-    return CoreFileOps::Backend::LocalHardened;
-}
 
 GErrorPtr coreResultToError(const CoreFileOps::Result& result, const char* fallbackMessage) {
     const int code =
@@ -146,44 +97,31 @@ void DeleteJob::exec() {
     Q_EMIT preparedToRun();
 
 #if LIBFM_QT_HAS_CORE_FILEOPS_CONTRACT
+    GErrorPtr countErr;
+    if (!FileOpsRequestAssembly::validateRequestPathCount(paths_.size(), "delete", countErr)) {
+        emitError(countErr, ErrorSeverity::CRITICAL);
+        cancel();
+        return;
+    }
+
     auto runCoreRoutedDelete = [this, &aggregateTotalBytes, &aggregateTotalFiles, &aggregateFinishedBytes,
                                 &aggregateFinishedFiles](const FilePath& path,
                                                          FileOpsBridgePolicy::RoutingClass routingClass) -> bool {
-        std::string sourceEndpoint;
-        CoreFileOps::EndpointKind sourceKind = CoreFileOps::EndpointKind::NativePath;
-        if (!toCoreEndpointPath(path, sourceEndpoint, sourceKind)) {
+        CoreFileOps::DeleteRequest request;
+        GErrorPtr assembleErr;
+        if (!FileOpsRequestAssembly::buildDeleteRequest(
+                path, routingClass, [this]() { return isCancelled(); }, request, assembleErr)) {
+            const ErrorAction action = emitError(assembleErr, ErrorSeverity::MODERATE);
+            if (action == ErrorAction::ABORT) {
+                cancel();
+            }
             return false;
         }
-
-        const CoreFileOps::Backend requestBackend = backendForRouting(routingClass);
-
-        CoreFileOps::DeleteRequest request;
-        request.common.sources = {sourceEndpoint};
-        request.common.options.symlinkPolicy.followSymlinks = false;
-        request.common.options.symlinkPolicy.copyMode = CoreFileOps::SymlinkCopyMode::CopyLinkAsLink;
-        request.common.options.metadata.preserveOwnership = true;
-        request.common.options.metadata.preservePermissions = true;
-        request.common.options.metadata.preserveTimestamps = true;
-        request.common.options.cancelGranularity = CoreFileOps::CancelCheckpointGranularity::PerChunk;
-        request.common.cancellationRequested = [this, cancelHandle = request.common.cancelHandle]() mutable {
-            if (isCancelled()) {
-                cancelHandle.cancel();
-            }
-            return cancelHandle.isCancelled();
-        };
-        request.common.options.linuxSafety.requireOpenat2Resolve =
-            (requestBackend == CoreFileOps::Backend::LocalHardened);
-        request.common.options.linuxSafety.requireLandlock = false;
-        request.common.options.linuxSafety.requireSeccomp = false;
-        request.common.options.linuxSafety.workerMode = CoreFileOps::WorkerMode::InProcess;
-        request.common.options.routing.defaultBackend = requestBackend;
-        request.common.options.routing.sourceKinds = {sourceKind};
-        request.common.options.routing.sourceBackends = {requestBackend};
 
         CoreFileOps::EventHandlers handlers;
         handlers.onProgress = [this, &aggregateTotalBytes, &aggregateTotalFiles, &aggregateFinishedBytes,
                                &aggregateFinishedFiles, path](const CoreFileOps::ProgressSnapshot& progress) {
-            setCurrentFile(toFilePathFromCorePath(progress.currentPath, path));
+            setCurrentFile(FileOpsRequestAssembly::toFilePathFromCorePath(progress.currentPath, path));
             setCurrentFileProgress(0, 0);
 
             const std::uint64_t bytesDone = progress.bytesDone;
